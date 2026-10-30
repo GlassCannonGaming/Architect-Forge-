@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
@@ -30,23 +30,28 @@ interface HotelViewport3DProps {
   assets: PlacedAsset[];
   agents: HotelAgentProfile[];
   selectedAssetId: string | null;
+  selectedAssetIds: string[];
+  marqueeModeActive: boolean;
   activeBlueprint: AssetBlueprint | null;
   showTPoseMannequin: boolean;
   isolateSelectedAsset: boolean;
   showExteriorWalls: boolean;
   customCharacterAppearance: CharacterAppearance;
-  onSelectAsset: (assetId: string | null) => void;
+  onSelectAsset: (assetId: string | null, shiftKey?: boolean) => void;
+  onMarqueeSelectAssets: (assetIds: string[], additiveShift?: boolean) => void;
   onPlaceBlueprintAt: (x: number, z: number) => void;
   onBeginAssetDrag: (assetId: string) => void;
   onMoveSelectedAssetTo: (assetId: string, x: number, z: number) => void;
   onToggleAssetOpen: (asset: PlacedAsset) => void;
   onInteractKeyE: (asset: PlacedAsset) => void;
+  onSelectedAssetScreenPosition?: (pos: { x: number; y: number } | null) => void;
   onPlayerRoomChange: (roomLabel: string, nearbyPrompt: string | null) => void;
 }
 
 // Pre-allocated scratch math helpers outside the animation loop (Zero GC)
 const _vec3A = new THREE.Vector3();
 const _vec3B = new THREE.Vector3();
+const _projVec = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 const _mouse = new THREE.Vector2();
 const _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -60,20 +65,30 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
   assets,
   agents,
   selectedAssetId,
+  selectedAssetIds,
+  marqueeModeActive,
   activeBlueprint,
   showTPoseMannequin,
   isolateSelectedAsset,
   showExteriorWalls,
   customCharacterAppearance,
   onSelectAsset,
+  onMarqueeSelectAssets,
   onPlaceBlueprintAt,
   onBeginAssetDrag,
   onMoveSelectedAssetTo,
   onToggleAssetOpen,
   onInteractKeyE,
+  onSelectedAssetScreenPosition,
   onPlayerRoomChange
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<{
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null>(null);
 
   // Store mutable props in ref so React UI updates never tear down the WebGL canvas
   const stateRef = useRef({
@@ -83,17 +98,21 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     assets,
     agents,
     selectedAssetId,
+    selectedAssetIds,
+    marqueeModeActive,
     activeBlueprint,
     showTPoseMannequin,
     isolateSelectedAsset,
     showExteriorWalls,
     customCharacterAppearance,
     onSelectAsset,
+    onMarqueeSelectAssets,
     onPlaceBlueprintAt,
     onBeginAssetDrag,
     onMoveSelectedAssetTo,
     onToggleAssetOpen,
     onInteractKeyE,
+    onSelectedAssetScreenPosition,
     onPlayerRoomChange
   });
 
@@ -105,17 +124,21 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       assets,
       agents,
       selectedAssetId,
+      selectedAssetIds,
+      marqueeModeActive,
       activeBlueprint,
       showTPoseMannequin,
       isolateSelectedAsset,
       showExteriorWalls,
       customCharacterAppearance,
       onSelectAsset,
+      onMarqueeSelectAssets,
       onPlaceBlueprintAt,
       onBeginAssetDrag,
       onMoveSelectedAssetTo,
       onToggleAssetOpen,
       onInteractKeyE,
+      onSelectedAssetScreenPosition,
       onPlayerRoomChange
     };
   });
@@ -155,6 +178,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     floorLayers,
     agents,
     selectedAssetId,
+    selectedAssetIds,
     activeBlueprint,
     showTPoseMannequin,
     isolateSelectedAsset,
@@ -280,9 +304,34 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     ghostPreviewMesh.visible = false;
     worldGroup.add(ghostPreviewMesh);
 
+    // Safely dispose transient child geometries & materials before clearing a group (prevents GPU memory leaks)
+    const disposeGroupChildren = (group: THREE.Group) => {
+      group.traverse((child) => {
+        if (child === group) return;
+        const mesh = child as THREE.Mesh;
+        if (mesh.geometry) {
+          mesh.geometry.dispose();
+        }
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose());
+          } else {
+            mesh.material.dispose();
+          }
+        }
+      });
+      group.clear();
+    };
+
+    let lastBuiltExteriorWalls: boolean | null = null;
+
     // Build Blank 128x128 Square Tiles Lot Canvas
     const buildStaticFloorShell = (_floorId: FloorId, includeExteriorWalls: boolean) => {
-      staticShellGroup.clear();
+      if (lastBuiltExteriorWalls === includeExteriorWalls && staticShellGroup.children.length > 0) {
+        return;
+      }
+      lastBuiltExteriorWalls = includeExteriorWalls;
+      disposeGroupChildren(staticShellGroup);
 
       // Surround green Sims-style neighborhood lawn beneath the 128x128 buildable lot
       const surroundLawn = new THREE.Mesh(
@@ -378,7 +427,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       tPoseGroup.visible = st.mode === 'architect' && st.showTPoseMannequin && !isIsolating;
 
       if (isIsolating && selectedObj) {
-        isolatedAssetGroup.clear();
+        disposeGroupChildren(isolatedAssetGroup);
         const pedestal = new THREE.Mesh(
           new THREE.CylinderGeometry(1.8, 1.95, 0.16, 32),
           new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.1 })
@@ -403,8 +452,8 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       }
 
       buildStaticFloorShell(st.currentFloor, st.showExteriorWalls);
-      referenceLayersGroup.clear();
-      dynamicAssetsGroup.clear();
+      disposeGroupChildren(referenceLayersGroup);
+      disposeGroupChildren(dynamicAssetsGroup);
       interactableObjects.length = 0;
 
       const activeLayer = st.floorLayers.find((l) => l.id === st.currentFloor);
@@ -416,7 +465,6 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         const elevOffset = (layer.elevation - activeElevation) * 3.0;
         const layerAssets = st.assets.filter((a) => a.floor === layer.id);
 
-        // Subtle translucent floor plane indicator for visible non-active layers
         const refGrid = new THREE.GridHelper(32, 32, 0x94a3b8, 0xe2e8f0);
         refGrid.position.y = elevOffset;
         referenceLayersGroup.add(refGrid);
@@ -439,10 +487,13 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         });
       });
 
-      // 2. Render active Floor Layer assets (interactive & selectable)
+      // 2. Render active Floor Layer assets (highlight all assets in selectedAssetIds)
+      const selectedSet = new Set(st.selectedAssetIds);
+      if (st.selectedAssetId) selectedSet.add(st.selectedAssetId);
+
       const floorAssets = st.assets.filter((a) => a.floor === st.currentFloor);
       floorAssets.forEach((asset) => {
-        const isSel = st.selectedAssetId === asset.id;
+        const isSel = selectedSet.has(asset.id);
         const meshGroup = buildAssetMeshGroup(asset, maxAnisotropy, isSel);
         dynamicAssetsGroup.add(meshGroup);
         interactableObjects.push(meshGroup);
@@ -463,7 +514,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
     const rebuildCharacterPreview = () => {
       const st = stateRef.current;
-      characterStudioGroup.clear();
+      disposeGroupChildren(characterStudioGroup);
       const previewChar = buildCharacterToonGroup(st.customCharacterAppearance, true);
       previewChar.position.set(0, -0.35, 0);
       characterStudioGroup.add(previewChar);
@@ -488,9 +539,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       renderer.compile(scene, camera);
     }
 
-    // Input Handling (WASD, Arrows, E Interact, Mouse Orbit/Look & Architect Drag-and-Drop)
+    // Input Handling (WASD, Arrows, E Interact, Shift+Click, Marquee Select, & Simultaneous Drag)
     const keysHeld = new Set<string>();
     let isPointerDown = false;
+    let isMarqueeDragging = false;
+    let marqueeAdditiveShift = false;
     let draggingAssetId: string | null = null;
     let hasRecordedDragStart = false;
     let lastPointerX = 0;
@@ -512,9 +565,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     const clearInputs = () => {
       keysHeld.clear();
       isPointerDown = false;
+      isMarqueeDragging = false;
       draggingAssetId = null;
       hasRecordedDragStart = false;
       ghostPreviewMesh.visible = false;
+      setMarqueeBox(null);
     };
 
     // Dedicated "E" key interaction across Walkthrough and Architect modes
@@ -531,7 +586,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
             obj = obj.parent;
           }
           if (obj?.userData?.asset) {
-            st.onSelectAsset(obj.userData.asset.id);
+            st.onSelectAsset(obj.userData.asset.id, false);
             st.onInteractKeyE(obj.userData.asset);
             return;
           }
@@ -549,7 +604,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           }
         }
         if (nearest) {
-          st.onSelectAsset(nearest.id);
+          st.onSelectAsset(nearest.id, false);
           st.onInteractKeyE(nearest);
         }
         return;
@@ -557,7 +612,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
       const selectedObj = floorAssets.find((a) => a.id === st.selectedAssetId);
       if (selectedObj) {
-        st.onSelectAsset(selectedObj.id);
+        st.onSelectAsset(selectedObj.id, false);
         st.onInteractKeyE(selectedObj);
         return;
       }
@@ -570,14 +625,14 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           obj = obj.parent;
         }
         if (obj?.userData?.asset) {
-          st.onSelectAsset(obj.userData.asset.id);
+          st.onSelectAsset(obj.userData.asset.id, false);
           st.onInteractKeyE(obj.userData.asset);
           return;
         }
       }
 
       if (floorAssets[0]) {
-        st.onSelectAsset(floorAssets[0].id);
+        st.onSelectAsset(floorAssets[0].id, false);
         st.onInteractKeyE(floorAssets[0]);
       }
     };
@@ -615,7 +670,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     const onPointerDown = (e: PointerEvent) => {
       if (e.button === 2) {
         clearInputs();
-        stateRef.current.onSelectAsset(null);
+        stateRef.current.onSelectAsset(null, false);
         return;
       }
       if (e.button !== 0) return;
@@ -631,7 +686,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       _raycaster.setFromCamera(_mouse, camera);
 
       if (st.mode === 'architect' && !st.isolateSelectedAsset) {
-        // Place blueprint if loaded on cursor anywhere on the 128x128 tile grid
+        // 1. Place blueprint if loaded on cursor anywhere on the 128x128 tile grid
         if (st.activeBlueprint) {
           const hitPoint = new THREE.Vector3();
           if (_raycaster.ray.intersectPlane(_groundPlane, hitPoint)) {
@@ -644,21 +699,40 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           }
         }
 
-        // Otherwise raycast against 3D assets to select & modify/drag
+        // 2. Raycast against 3D assets to select (or Shift+Click multi-select) & drag
         const hits = _raycaster.intersectObjects(interactableObjects, true);
-        if (hits.length > 0) {
+        if (hits.length > 0 && !st.marqueeModeActive) {
           let obj: THREE.Object3D | null = hits[0].object;
           while (obj && !obj.userData?.assetId && !obj.userData?.agentId) {
             obj = obj.parent;
           }
           if (obj?.userData?.assetId) {
-            st.onSelectAsset(obj.userData.assetId);
-            draggingAssetId = obj.userData.assetId;
+            const hitId = obj.userData.assetId;
+            // If clicking an already multi-selected object without Shift, keep the multi-selection so dragging moves them all simultaneously
+            if (!e.shiftKey && st.selectedAssetIds.length > 1 && st.selectedAssetIds.includes(hitId)) {
+              draggingAssetId = hitId;
+              return;
+            }
+            st.onSelectAsset(hitId, e.shiftKey);
+            draggingAssetId = hitId;
             return;
           }
-        } else {
-          st.onSelectAsset(null);
         }
+
+        // 3. If Shift is held on empty space OR Marquee Select mode is active, begin Marquee-Select box drag
+        if (e.shiftKey || st.marqueeModeActive) {
+          isMarqueeDragging = true;
+          marqueeAdditiveShift = e.shiftKey;
+          setMarqueeBox({
+            x1: e.clientX,
+            y1: e.clientY,
+            x2: e.clientX,
+            y2: e.clientY
+          });
+          return;
+        }
+
+        st.onSelectAsset(null, false);
       } else if (st.mode === 'walkthrough') {
         const hits = _raycaster.intersectObjects(interactableObjects, true);
         if (hits.length > 0 && hits[0].distance <= 9.0) {
@@ -667,7 +741,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
             obj = obj.parent;
           }
           if (obj?.userData?.asset) {
-            st.onSelectAsset(obj.userData.asset.id);
+            st.onSelectAsset(obj.userData.asset.id, e.shiftKey);
             if (obj.userData.asset.isSecretPassage || obj.userData.asset.category === 'door') {
               st.onToggleAssetOpen(obj.userData.asset);
             }
@@ -689,6 +763,16 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
             isolatedRotation += dx * 0.012;
             lastPointerX = e.clientX;
           }
+          return;
+        }
+
+        if (isMarqueeDragging) {
+          setMarqueeBox({
+            x1: downStartX,
+            y1: downStartY,
+            x2: e.clientX,
+            y2: e.clientY
+          });
           return;
         }
 
@@ -715,9 +799,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
             hasRecordedDragStart = true;
             st.onBeginAssetDrag(draggingAssetId);
           }
-          const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5);
-          const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5);
-          st.onMoveSelectedAssetTo(draggingAssetId, gx, gz);
+          const rawX = Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x));
+          const rawZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z));
+          st.onMoveSelectedAssetTo(draggingAssetId, rawX, rawZ);
           return;
         }
 
@@ -746,7 +830,35 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       }
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (e: PointerEvent) => {
+      const st = stateRef.current;
+      if (isMarqueeDragging) {
+        const minX = Math.min(downStartX, e.clientX);
+        const maxX = Math.max(downStartX, e.clientX);
+        const minY = Math.min(downStartY, e.clientY);
+        const maxY = Math.max(downStartY, e.clientY);
+        const rect = renderer.domElement.getBoundingClientRect();
+
+        if (Math.hypot(maxX - minX, maxY - minY) > 6) {
+          const floorAssets = st.assets.filter((a) => a.floor === st.currentFloor);
+          const matchedIds: string[] = [];
+          floorAssets.forEach((asset) => {
+            _projVec.set(asset.position[0], asset.position[1], asset.position[2]);
+            _projVec.project(camera);
+            if (_projVec.z >= -1 && _projVec.z <= 1) {
+              const sx = ((_projVec.x + 1) * 0.5) * rect.width + rect.left;
+              const sy = ((-_projVec.y + 1) * 0.5) * rect.height + rect.top;
+              if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+                matchedIds.push(asset.id);
+              }
+            }
+          });
+          st.onMarqueeSelectAssets(matchedIds, marqueeAdditiveShift);
+        }
+        isMarqueeDragging = false;
+        setMarqueeBox(null);
+      }
+
       isPointerDown = false;
       draggingAssetId = null;
       hasRecordedDragStart = false;
@@ -776,10 +888,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     });
     resizeObserver.observe(container);
 
-    // 4. Software-WebGL Safe Animation Loop (afterDraw fenceSync)
+    // 4. Software-WebGL Safe Animation Loop (afterDraw fenceSync) using high-precision performance.now()
     let frameId = 0;
     let isDisposed = false;
-    const clock = new THREE.Clock();
+    const startTimeMs = performance.now();
+    let prevTimeMs = startTimeMs;
     let lastHudSyncTime = 0;
 
     function afterDraw(cb: () => void) {
@@ -806,9 +919,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
     function tick() {
       if (isDisposed) return;
-      const rawDt = clock.getDelta();
+      const nowMs = performance.now();
+      const rawDt = Math.max(0, (nowMs - prevTimeMs) * 0.001);
+      prevTimeMs = nowMs;
       const dt = Math.min(rawDt, 0.05);
-      const elapsed = clock.getElapsedTime();
+      const elapsed = (nowMs - startTimeMs) * 0.001;
       const st = stateRef.current;
 
       if (st.mode === 'character') {
@@ -887,9 +1002,30 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         const lookTargetY = 1.62 + pose.pitch * 3 + bobOffset * 0.5;
         const lookTargetZ = pose.z - Math.cos(pose.yaw) * 4;
         camera.lookAt(_vec3B.set(lookTargetX, lookTargetY, lookTargetZ));
+      }
 
-        if (elapsed - lastHudSyncTime > 0.25) {
-          lastHudSyncTime = elapsed;
+      // Periodically project the primary selected asset's 3D position to 2D screen coordinates
+      // so the [F] Quick Edit floating window sits immediately to the right of the asset
+      if (elapsed - lastHudSyncTime > 0.2) {
+        lastHudSyncTime = elapsed;
+        if (st.selectedAssetId && st.onSelectedAssetScreenPosition) {
+          const selObj = st.assets.find((a) => a.id === st.selectedAssetId);
+          if (selObj) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            _projVec.set(
+              selObj.position[0] + selObj.dimensions[0] * 0.55,
+              selObj.position[1] + selObj.dimensions[1] * 0.35,
+              selObj.position[2]
+            );
+            _projVec.project(camera);
+            const sx = Math.round(((_projVec.x + 1) * 0.5) * rect.width + rect.left + 24);
+            const sy = Math.round(((-_projVec.y + 1) * 0.5) * rect.height + rect.top - 40);
+            st.onSelectedAssetScreenPosition({ x: sx, y: sy });
+          }
+        }
+
+        if (st.mode === 'walkthrough') {
+          const pose = playerPoseRef.current;
           const roomName = getRoomLabelAtPosition(st.currentFloor, pose.x, pose.z);
           let nearestObj: PlacedAsset | null = null;
           let bestDist = 4.5;
@@ -905,14 +1041,8 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           st.onPlayerRoomChange(
             roomName,
             nearestObj
-              ? `Press [E] to Interact with "${nearestObj.name}" (${
-                  nearestObj.isSecretPassage || nearestObj.category === 'door'
-                    ? nearestObj.isOpen
-                      ? 'Close Hinge'
-                      : 'Open Hinge'
-                    : 'Select & Modify'
-                })`
-              : '1st-Person Scale Walkthrough: Press [E] or Click any object to interact & modify.'
+              ? `Press [E] to Interact or [F] to Quick-Edit "${nearestObj.name}"`
+              : '1st-Person Scale Walkthrough: Press [E] to interact or [F] to quick-edit selected object.'
           );
         }
       }
@@ -945,10 +1075,25 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
   }, []);
 
   return (
-    <div
-      ref={mountRef}
-      data-testid="hotel-webgl-viewport"
-      className="fixed inset-0 w-full h-full overflow-hidden bg-[#dbeafe]"
-    />
+    <>
+      <div
+        ref={mountRef}
+        data-testid="hotel-webgl-viewport"
+        className="fixed inset-0 w-full h-full overflow-hidden bg-[#dbeafe]"
+      />
+      {/* Visual Marquee-Select Rectangle Overlay */}
+      {marqueeBox && (
+        <div
+          data-testid="marquee-selection-box"
+          style={{
+            left: `${Math.min(marqueeBox.x1, marqueeBox.x2)}px`,
+            top: `${Math.min(marqueeBox.y1, marqueeBox.y2)}px`,
+            width: `${Math.abs(marqueeBox.x2 - marqueeBox.x1)}px`,
+            height: `${Math.abs(marqueeBox.y2 - marqueeBox.y1)}px`
+          }}
+          className="fixed z-20 pointer-events-none border-2 border-[#0284c7] bg-[#38bdf8]/20 rounded-xl shadow-sm"
+        />
+      )}
+    </>
   );
 };

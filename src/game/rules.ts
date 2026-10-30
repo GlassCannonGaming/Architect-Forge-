@@ -109,6 +109,38 @@ export interface TraitSkill {
   icon: string;
 }
 
+export type TimeOfDayPhase = 'Morning' | 'Afternoon' | 'Evening' | 'Late Night';
+
+export interface DailyActionEntry {
+  phase: TimeOfDayPhase;
+  timeRange: string;
+  action: string;
+  location: string;
+  eventTrigger: string;
+}
+
+export interface SavedInteractionEntry {
+  id: string;
+  timestamp: string;
+  gameTimeFormatted: string;
+  phase: TimeOfDayPhase;
+  timeOfDayEvent: string;
+  dailyActionAtTime: string;
+  characterName: string;
+  userMessage: string;
+  agentReply: string;
+}
+
+export interface TimeOfDayEventLog {
+  id: string;
+  timestamp: string;
+  gameTimeMinutes: number;
+  formattedTime: string;
+  phase: TimeOfDayPhase;
+  eventTitle: string;
+  eventDescription: string;
+}
+
 export interface HotelAgentProfile {
   id: string;
   name: string;
@@ -119,6 +151,13 @@ export interface HotelAgentProfile {
   status: 'present' | 'erratic' | 'vanished';
   occupation: string;
   personality: string;
+  voiceStyle?: string;
+  demeanor?: string;
+  likes?: string[];
+  dislikes?: string[];
+  personalInstructionSet?: string;
+  dailySchedule?: DailyActionEntry[];
+  interactionHistory?: SavedInteractionEntry[];
   secretTruth: string;
   knownFacts: string[];
   memories: string[];
@@ -676,4 +715,1572 @@ export function popUndoHistory(stack: UndoHistoryEntry[]): {
   const remaining = stack.slice(0, stack.length - 1);
   return { popped, remaining };
 }
+
+/**
+ * Pure helper for Shift+Click multi-selection or single selection.
+ */
+export function toggleAssetInSelection(
+  currentSelectedIds: string[],
+  assetId: string,
+  additiveShiftKey: boolean
+): string[] {
+  if (!additiveShiftKey) {
+    return [assetId];
+  }
+  if (currentSelectedIds.includes(assetId)) {
+    return currentSelectedIds.filter((id) => id !== assetId);
+  }
+  return [...currentSelectedIds, assetId];
+}
+
+export function getOrientedFootprint(
+  dimensions: [number, number, number],
+  rotationY: number
+): { halfW: number; halfD: number } {
+  const isRotated = Math.abs(Math.sin(rotationY)) > 0.7;
+  const w = isRotated ? dimensions[2] : dimensions[0];
+  const d = isRotated ? dimensions[0] : dimensions[2];
+  return {
+    halfW: w / 2,
+    halfD: d / 2
+  };
+}
+
+export interface SurfaceSnapResult {
+  x: number;
+  z: number;
+  rotationY: number;
+  snappedToId: string | null;
+  snappedToName: string | null;
+  snappedFace: 'north' | 'south' | 'east' | 'west' | null;
+}
+
+/**
+ * Pure helper that calculates a flush surface/wall-snapped position and rotation
+ * for an asset being moved near other walls or surfaces on the same floor.
+ */
+export function computeSurfaceSnappedPosition(
+  movingAsset: PlacedAsset,
+  rawTargetX: number,
+  rawTargetZ: number,
+  floorAssets: PlacedAsset[],
+  snapThreshold = 2.2
+): SurfaceSnapResult {
+  const candidates = floorAssets.filter(
+    (other) =>
+      other.id !== movingAsset.id &&
+      other.floor === movingAsset.floor &&
+      other.category !== 'floor_tile'
+  );
+
+  let bestDist = Infinity;
+  let bestResult: SurfaceSnapResult | null = null;
+
+  for (const other of candidates) {
+    const [ox, , oz] = other.position;
+    const { halfW: otherHalfW, halfD: otherHalfD } = getOrientedFootprint(
+      other.dimensions,
+      other.rotationY
+    );
+
+    const isOtherWallLike =
+      other.category === 'wall' ||
+      other.category === 'secret_wall' ||
+      other.category === 'window_wall' ||
+      other.category === 'door';
+
+    const faces: Array<'south' | 'north' | 'east' | 'west'> = [
+      'south',
+      'north',
+      'east',
+      'west'
+    ];
+
+    for (const face of faces) {
+      let alignedRotationY = movingAsset.rotationY;
+      if (isOtherWallLike && movingAsset.category !== 'wall') {
+        if (face === 'south' || face === 'north') {
+          alignedRotationY = 0;
+        } else {
+          alignedRotationY = Math.PI / 2;
+        }
+      }
+
+      const { halfW: movHalfW, halfD: movHalfD } = getOrientedFootprint(
+        movingAsset.dimensions,
+        alignedRotationY
+      );
+
+      let candX = rawTargetX;
+      let candZ = rawTargetZ;
+
+      if (face === 'south') {
+        const clampedX = Math.max(ox - otherHalfW, Math.min(ox + otherHalfW, rawTargetX));
+        candX = Math.abs(clampedX - ox) < 0.25 ? ox : snapToGrid(clampedX, 0.25);
+        candZ = Number((oz + otherHalfD + movHalfD).toFixed(3));
+      } else if (face === 'north') {
+        const clampedX = Math.max(ox - otherHalfW, Math.min(ox + otherHalfW, rawTargetX));
+        candX = Math.abs(clampedX - ox) < 0.25 ? ox : snapToGrid(clampedX, 0.25);
+        candZ = Number((oz - otherHalfD - movHalfD).toFixed(3));
+      } else if (face === 'east') {
+        const clampedZ = Math.max(oz - otherHalfD, Math.min(oz + otherHalfD, rawTargetZ));
+        candZ = Math.abs(clampedZ - oz) < 0.25 ? oz : snapToGrid(clampedZ, 0.25);
+        candX = Number((ox + otherHalfW + movHalfW).toFixed(3));
+      } else if (face === 'west') {
+        const clampedZ = Math.max(oz - otherHalfD, Math.min(oz + otherHalfD, rawTargetZ));
+        candZ = Math.abs(clampedZ - oz) < 0.25 ? oz : snapToGrid(clampedZ, 0.25);
+        candX = Number((ox - otherHalfW - movHalfW).toFixed(3));
+      }
+
+      const dist = Math.hypot(rawTargetX - candX, rawTargetZ - candZ);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestResult = {
+          x: candX,
+          z: candZ,
+          rotationY: alignedRotationY,
+          snappedToId: other.id,
+          snappedToName: other.name,
+          snappedFace: face
+        };
+      }
+    }
+  }
+
+  if (bestResult && bestDist <= snapThreshold) {
+    return bestResult;
+  }
+
+  return {
+    x: snapToGrid(rawTargetX, 0.5),
+    z: snapToGrid(rawTargetZ, 0.5),
+    rotationY: movingAsset.rotationY,
+    snappedToId: null,
+    snappedToName: null,
+    snappedFace: null
+  };
+}
+
+/**
+ * Pure helper to immediately snap a selected asset flush against the closest surface/wall on its floor.
+ */
+export function snapAssetToClosestSurfaceNow(
+  assets: PlacedAsset[],
+  targetAssetId: string
+): {
+  updatedAssets: PlacedAsset[];
+  snappedToName: string | null;
+  snappedFace: 'north' | 'south' | 'east' | 'west' | null;
+} {
+  const target = assets.find((a) => a.id === targetAssetId);
+  if (!target) {
+    return { updatedAssets: assets, snappedToName: null, snappedFace: null };
+  }
+  const sameFloorAssets = assets.filter((a) => a.floor === target.floor);
+  const snapRes = computeSurfaceSnappedPosition(
+    target,
+    target.position[0],
+    target.position[2],
+    sameFloorAssets,
+    64 // Search across entire floor when explicitly triggered
+  );
+  if (!snapRes.snappedToId) {
+    return { updatedAssets: assets, snappedToName: null, snappedFace: null };
+  }
+  const updatedAssets = assets.map((a) =>
+    a.id === targetAssetId
+      ? {
+          ...a,
+          position: [snapRes.x, a.dimensions[1] / 2, snapRes.z] as [number, number, number],
+          rotationY: snapRes.rotationY
+        }
+      : a
+  );
+  return {
+    updatedAssets,
+    snappedToName: snapRes.snappedToName,
+    snappedFace: snapRes.snappedFace
+  };
+}
+
+/**
+ * Pure helper to move one or multiple selected assets simultaneously by the snapped delta of the anchor asset.
+ * When surfaceSnap is enabled, the anchor asset aligns flush to the closest wall or surface within snapThreshold.
+ */
+export function moveMultipleAssetsByDelta(
+  assets: PlacedAsset[],
+  selectedIds: string[],
+  anchorAssetId: string,
+  targetX: number,
+  targetZ: number,
+  halfGrid = GRID_TILE_COUNT / 2 - 0.5,
+  options?: { surfaceSnap?: boolean; snapThreshold?: number }
+): PlacedAsset[] {
+  const anchor = assets.find((a) => a.id === anchorAssetId);
+  if (!anchor) return assets;
+
+  const idsToMove = selectedIds.includes(anchorAssetId) ? selectedIds : [anchorAssetId];
+  const idSet = new Set(idsToMove);
+
+  if (options?.surfaceSnap) {
+    const nonSelectedFloorAssets = assets.filter(
+      (a) => a.floor === anchor.floor && !idSet.has(a.id)
+    );
+    const snapped = computeSurfaceSnappedPosition(
+      anchor,
+      targetX,
+      targetZ,
+      nonSelectedFloorAssets,
+      options.snapThreshold ?? 2.2
+    );
+    const dx = Number((snapped.x - anchor.position[0]).toFixed(3));
+    const dz = Number((snapped.z - anchor.position[2]).toFixed(3));
+    if (dx === 0 && dz === 0 && snapped.rotationY === anchor.rotationY) return assets;
+
+    return assets.map((a) => {
+      if (!idSet.has(a.id)) return a;
+      const nextX = Number(
+        Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)).toFixed(3)
+      );
+      const nextZ = Number(
+        Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)).toFixed(3)
+      );
+      return {
+        ...a,
+        position: [nextX, a.dimensions[1] / 2, nextZ],
+        rotationY: a.id === anchorAssetId ? snapped.rotationY : a.rotationY
+      };
+    });
+  }
+
+  const dx = snapToGrid(targetX - anchor.position[0], 0.5);
+  const dz = snapToGrid(targetZ - anchor.position[2], 0.5);
+  if (dx === 0 && dz === 0) return assets;
+
+  return assets.map((a) => {
+    if (!idSet.has(a.id)) return a;
+    const nextX = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)), 0.5);
+    const nextZ = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)), 0.5);
+    return {
+      ...a,
+      position: [nextX, a.dimensions[1] / 2, nextZ]
+    };
+  });
+}
+
+/**
+ * Pure helper to resize, recolor, re-texture, or rotate one or multiple selected assets simultaneously.
+ */
+export function batchModifySelectedAssets(
+  assets: PlacedAsset[],
+  selectedIds: string[],
+  patch: {
+    color?: string;
+    textureId?: TexturePresetId;
+    scaleMultiplier?: number;
+    dimensions?: [number, number, number];
+    rotationDeltaY?: number;
+  }
+): PlacedAsset[] {
+  const idSet = new Set(selectedIds);
+  return assets.map((a) => {
+    if (!idSet.has(a.id)) return a;
+    let nextDims: [number, number, number] = [...a.dimensions] as [number, number, number];
+    if (patch.dimensions) {
+      nextDims = [
+        clampDimension(patch.dimensions[0], 0.3, 24),
+        clampDimension(patch.dimensions[1], 0.05, 12),
+        clampDimension(patch.dimensions[2], 0.2, 24)
+      ];
+    } else if (patch.scaleMultiplier && patch.scaleMultiplier > 0) {
+      nextDims = [
+        clampDimension(Math.round(a.dimensions[0] * patch.scaleMultiplier * 100) / 100, 0.3, 24),
+        clampDimension(Math.round(a.dimensions[1] * patch.scaleMultiplier * 100) / 100, 0.05, 12),
+        clampDimension(Math.round(a.dimensions[2] * patch.scaleMultiplier * 100) / 100, 0.2, 24)
+      ];
+    }
+    return {
+      ...a,
+      color: patch.color ?? a.color,
+      textureId: patch.textureId ?? a.textureId,
+      dimensions: nextDims,
+      position: [a.position[0], nextDims[1] / 2, a.position[2]],
+      rotationY: patch.rotationDeltaY !== undefined ? a.rotationY + patch.rotationDeltaY : a.rotationY
+    };
+  });
+}
+
+export const DEFAULT_GLOBAL_INSTRUCTION_SET =
+  'STRICT OFFLINE GAME-WORLD SANDBOX (NO INTERNET ACCESS): All characters operate strictly within The Alderney Arms 1920s Mystery Hotel universe with ZERO internet access or external web knowledge. Never reference real-world post-1928 history, the internet, modern computing, AI models, or out-of-universe facts. Characters may ONLY know and discuss: (1) their Starting Known Information (knownFacts), (2) their Personal Instruction Set & Personality (voice, demeanor, likes, dislikes), (3) their Saved Interaction & Dialogue History, and (4) the active Gameplay Time-of-Day Event & Daily Action Schedule.';
+
+export const DEFAULT_DAILY_SCHEDULE: DailyActionEntry[] = [
+  {
+    phase: 'Morning',
+    timeRange: '06:00 – 11:59',
+    action: 'Inspecting brass room keys and reviewing the morning guest ledger.',
+    location: 'Main Lobby & Corridor',
+    eventTrigger: 'Morning Bell & Ledger Audit'
+  },
+  {
+    phase: 'Afternoon',
+    timeRange: '12:00 – 16:59',
+    action: 'Pacing near the wainscoting and sorting trunks in the suite.',
+    location: 'Assigned Suite / Parlor',
+    eventTrigger: 'Afternoon Check-In & Corridor Inspection'
+  },
+  {
+    phase: 'Evening',
+    timeRange: '17:00 – 21:59',
+    action: 'Listening to the phonograph and watching who enters the service stairwell.',
+    location: 'West Parlor Lounge',
+    eventTrigger: 'Gaslight Dimming & Parlor Social Hour'
+  },
+  {
+    phase: 'Late Night',
+    timeRange: '22:00 – 05:59',
+    action: 'Checking hollow brick partitions and guarding personal notes behind locked doors.',
+    location: 'Hidden Crawlspace / Suite Threshold',
+    eventTrigger: 'Midnight Curfew & Hidden Passageway Activity'
+  }
+];
+
+export function getTimeOfDayInfo(gameTimeMinutes: number): {
+  phase: TimeOfDayPhase;
+  formattedTime: string;
+  activeWorldEvent: string;
+} {
+  const normalized = ((Math.round(gameTimeMinutes) % 1440) + 1440) % 1440;
+  const hours24 = Math.floor(normalized / 60);
+  const mins = normalized % 60;
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  const formattedTime = `${String(hours12).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${period}`;
+
+  if (normalized >= 360 && normalized < 720) {
+    return {
+      phase: 'Morning',
+      formattedTime,
+      activeWorldEvent: 'Morning Bell & Ledger Audit (Steam radiators warming across floors)'
+    };
+  }
+  if (normalized >= 720 && normalized < 1020) {
+    return {
+      phase: 'Afternoon',
+      formattedTime,
+      activeWorldEvent: 'Afternoon Check-In & Corridor Inspection (Service dumbwaiter active)'
+    };
+  }
+  if (normalized >= 1020 && normalized < 1320) {
+    return {
+      phase: 'Evening',
+      formattedTime,
+      activeWorldEvent: 'Gaslight Dimming & Parlor Social Hour (Wall sconces flickering)'
+    };
+  }
+  return {
+    phase: 'Late Night',
+    formattedTime,
+    activeWorldEvent: 'Midnight Curfew & Hidden Passageway Activity (Hollow masonry echoes)'
+  };
+}
+
+export function getActiveDailyAction(
+  schedule: DailyActionEntry[] | undefined,
+  gameTimeMinutes: number
+): DailyActionEntry {
+  const { phase } = getTimeOfDayInfo(gameTimeMinutes);
+  const list = schedule && schedule.length > 0 ? schedule : DEFAULT_DAILY_SCHEDULE;
+  return list.find((entry) => entry.phase === phase) || list[0];
+}
+
+export function buildSandboxedCharacterSystemPrompt(
+  agent: HotelAgentProfile,
+  globalInstructionSet: string,
+  gameTimeMinutes: number
+): string {
+  const timeInfo = getTimeOfDayInfo(gameTimeMinutes);
+  const currentDaily = getActiveDailyAction(agent.dailySchedule, gameTimeMinutes);
+  const voice = agent.voiceStyle || 'Mid-Atlantic 1920s theatrical cadence, hushed and deliberate';
+  const demeanor = agent.demeanor || 'Observant, guarded, polite yet uneasy';
+  const likes = (agent.likes && agent.likes.length > 0 ? agent.likes : ['brass keys', 'pre-war jazz', 'orderly ledgers']).join(', ');
+  const dislikes = (agent.dislikes && agent.dislikes.length > 0 ? agent.dislikes : ['drafty brickwork', 'locked transoms', 'nosy questions']).join(', ');
+  const personalRules =
+    agent.personalInstructionSet ||
+    `Speak only as ${agent.name} (${agent.occupation} in ${agent.roomNumber}). Never volunteer information outside your Starting Known Information.`;
+  const knownFactsList =
+    agent.knownFacts && agent.knownFacts.length > 0
+      ? agent.knownFacts.map((f) => `- ${f}`).join('\n')
+      : `- Assigned to ${agent.roomNumber} on ${agent.floor}.`;
+  const historyList =
+    agent.interactionHistory && agent.interactionHistory.length > 0
+      ? agent.interactionHistory
+          .slice(-6)
+          .map(
+            (h) =>
+              `- [${h.gameTimeFormatted} | ${h.phase}] Player: "${h.userMessage}" -> ${agent.name}: "${h.agentReply}"`
+          )
+          .join('\n')
+      : 'No prior recorded interactions yet.';
+
+  return [
+    `=== GLOBAL INSTRUCTION SET (GAME-SPECIFIC SANDBOX / NO INTERNET ACCESS) ===`,
+    globalInstructionSet || DEFAULT_GLOBAL_INSTRUCTION_SET,
+    ``,
+    `=== PERSONAL CHARACTER INSTRUCTION SET ===`,
+    personalRules,
+    ``,
+    `=== CHARACTER IDENTITY & INITIAL PERSONALITY ===`,
+    `Name: ${agent.name} | Role/Archetype: ${agent.occupation} | Suite/Zone: ${agent.roomNumber} (${agent.floor})`,
+    `Voice Style: ${voice}`,
+    `Demeanor: ${demeanor}`,
+    `Likes: ${likes}`,
+    `Dislikes: ${dislikes}`,
+    `Personality Summary: ${agent.personality}`,
+    ``,
+    `=== STARTING KNOWN INFORMATION (EPISTEMIC BOUNDARY) ===`,
+    `You ONLY know the following game-specific facts and may NOT invent external or internet facts:`,
+    knownFactsList,
+    ``,
+    `=== ACTIVE GAMEPLAY TIME & TIME-OF-DAY DAILY ACTION ===`,
+    `Current Gameplay Clock: ${timeInfo.formattedTime} (${timeInfo.phase})`,
+    `Active Time-of-Day World Event: ${timeInfo.activeWorldEvent}`,
+    `Your Current Daily Action (${currentDaily.timeRange}): ${currentDaily.action} @ ${currentDaily.location}`,
+    ``,
+    `=== SAVED INTERACTION & DIALOGUE HISTORY ===`,
+    historyList,
+    ``,
+    `Respond strictly in-character in 2 to 4 sentences reflecting your Voice Style, Demeanor, Likes/Dislikes, and current Time-of-Day Daily Action.`
+  ].join('\n');
+}
+
+export function buildProceduralPersonaFromPrompt(
+  name: string,
+  archetype: string,
+  seedPrompt: string,
+  roomNumber: string
+): {
+  voiceStyle: string;
+  demeanor: string;
+  likes: string[];
+  dislikes: string[];
+  knownFacts: string[];
+  personalInstructionSet: string;
+  dailySchedule: DailyActionEntry[];
+} {
+  const cleanSeed = seedPrompt.trim() || `${archetype} stationed near ${roomNumber}`;
+  return {
+    voiceStyle: `Crisp 1920s New York ${archetype.toLowerCase()} cadence with measured pauses (${cleanSeed.slice(0, 42)})`,
+    demeanor: `Attentive, slightly secretive, protective of ${roomNumber} routines`,
+    likes: ['Polished brass fixtures', 'Warm radiator steam', 'Accurate guest ledgers', 'Quiet corridors'],
+    dislikes: ['Unexplained footsteps behind walls', 'Missing room keys', 'Drafts from the airshaft'],
+    knownFacts: [
+      `Stationed in ${roomNumber} inside The Alderney Arms Hotel.`,
+      `Heard metallic latching noises behind the brickwork at 11:45 PM.`,
+      `Knows that only the Night Clerk and Registrar hold brass passkeys to the service shaft.`,
+      `Personal background note: ${cleanSeed}`
+    ],
+    personalInstructionSet: `Stay strictly in-character as ${name} (${archetype}). Only reference The Alderney Arms Hotel, ${roomNumber}, and your Starting Known Information. Never use internet or modern post-1928 knowledge.`,
+    dailySchedule: [
+      {
+        phase: 'Morning',
+        timeRange: '06:00 – 11:59',
+        action: `Organizing personal ledger notes and inspecting locks in ${roomNumber}.`,
+        location: roomNumber,
+        eventTrigger: 'Morning Bell & Ledger Audit'
+      },
+      {
+        phase: 'Afternoon',
+        timeRange: '12:00 – 16:59',
+        action: `Observing guest arrivals and checking corridor wainscoting near ${roomNumber}.`,
+        location: `${roomNumber} Corridor`,
+        eventTrigger: 'Afternoon Check-In & Corridor Inspection'
+      },
+      {
+        phase: 'Evening',
+        timeRange: '17:00 – 21:59',
+        action: `Conversing in hushed tones under the dimmed gas sconces.`,
+        location: 'Main Lobby & Parlor',
+        eventTrigger: 'Gaslight Dimming & Parlor Social Hour'
+      },
+      {
+        phase: 'Late Night',
+        timeRange: '22:00 – 05:59',
+        action: `Listening for hollow footsteps along the secret crawlspace wall behind ${roomNumber}.`,
+        location: `${roomNumber} Inner Partition`,
+        eventTrigger: 'Midnight Curfew & Hidden Passageway Activity'
+      }
+    ]
+  };
+}
+
+/**
+ * ============================================================================
+ * ROOM BLUEPRINT LIBRARY SYSTEM (Save & Load Entire Room Layouts as JSON)
+ * ============================================================================
+ */
+export interface RoomBlueprintItem {
+  name: string;
+  category: AssetCategory;
+  subType: string;
+  relPosition: [number, number, number]; // [dx, y, dz] relative to room blueprint center
+  dimensions: [number, number, number];
+  rotationY: number;
+  color: string;
+  textureId: TexturePresetId;
+  isSecretPassage?: boolean;
+  isOpen?: boolean;
+  collidable: boolean;
+  compositeParts?: CompositeSubPart[];
+}
+
+export interface RoomBlueprint {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  tags: string[];
+  boundingSize: [number, number]; // [widthSpanX, depthSpanZ]
+  items: RoomBlueprintItem[];
+}
+
+export const INITIAL_ROOM_BLUEPRINTS: RoomBlueprint[] = [
+  {
+    id: 'bp_room_lobby_registry',
+    name: '1920s Front Desk & Registry Alcove',
+    description: 'Complete hotel reception layout with brick backdrop wall, mahogany front desk, brass lamp, and crimson runner.',
+    createdAt: '2026-10-30T08:00:00.000Z',
+    tags: ['lobby', 'reception', 'starter'],
+    boundingSize: [6.0, 5.0],
+    items: [
+      {
+        name: 'NYC Pre-War Brick Wall',
+        category: 'wall',
+        subType: 'wall_brick_standard',
+        relPosition: [0, 1.5, -2.0],
+        dimensions: [4.5, 3.0, 0.3],
+        rotationY: 0,
+        color: '#8c3b2b',
+        textureId: 'nyc_old_brick',
+        collidable: true
+      },
+      {
+        name: 'Mahogany Concierge Desk',
+        category: 'furniture',
+        subType: 'concierge_desk',
+        relPosition: [0, 0.55, -0.5],
+        dimensions: [2.6, 1.1, 0.9],
+        rotationY: 0,
+        color: '#5c3824',
+        textureId: 'oak_parquet',
+        collidable: true
+      },
+      {
+        name: 'Crimson Parlor Area Rug',
+        category: 'floor_tile',
+        subType: 'crimson_carpet_runner',
+        relPosition: [0, 0.03, 1.2],
+        dimensions: [3.2, 0.06, 2.4],
+        rotationY: 0,
+        color: '#7f1d1d',
+        textureId: 'velvet_crimson',
+        collidable: false
+      },
+      {
+        name: 'Brass Banker Desk Lamp',
+        category: 'lighting',
+        subType: 'brass_table_lamp',
+        relPosition: [-0.9, 1.2, -0.5],
+        dimensions: [0.4, 0.55, 0.4],
+        rotationY: 0,
+        color: '#d4af37',
+        textureId: 'aged_brass',
+        collidable: false
+      }
+    ]
+  },
+  {
+    id: 'bp_room_secret_study',
+    name: 'Suite 202 Secret Partition Study',
+    description: 'Mystery suite layout featuring wainscoted walls, a pivoting secret brick bookcase door, and an antique wardrobe.',
+    createdAt: '2026-10-30T08:30:00.000Z',
+    tags: ['suite', 'secret_passage', 'mystery'],
+    boundingSize: [5.5, 5.0],
+    items: [
+      {
+        name: 'Wainscoted Plaster Wall',
+        category: 'wall',
+        subType: 'wall_plaster_wainscot',
+        relPosition: [-2.0, 1.5, -1.5],
+        dimensions: [3.0, 3.0, 0.3],
+        rotationY: 0,
+        color: '#d6d0c4',
+        textureId: 'plaster_cream',
+        collidable: true
+      },
+      {
+        name: 'Secret Pivoting Bookcase Wall',
+        category: 'secret_wall',
+        subType: 'secret_bookshelf_door',
+        relPosition: [0.8, 1.45, -1.5],
+        dimensions: [2.2, 2.9, 0.45],
+        rotationY: 0,
+        color: '#5c3824',
+        textureId: 'oak_parquet',
+        isSecretPassage: true,
+        isOpen: false,
+        collidable: true
+      },
+      {
+        name: 'Carved Oak Wardrobe',
+        category: 'furniture',
+        subType: 'oak_wardrobe',
+        relPosition: [-1.8, 1.1, 0.5],
+        dimensions: [1.3, 2.2, 0.7],
+        rotationY: Math.PI / 2,
+        color: '#451a03',
+        textureId: 'oak_parquet',
+        collidable: true
+      }
+    ]
+  },
+  {
+    id: 'bp_room_corner_bedroom',
+    name: 'Pre-War Corner Guest Suite',
+    description: 'Furnished corner hotel room with casement window wall, numbered transom door, four-poster bed, and rug.',
+    createdAt: '2026-10-30T09:00:00.000Z',
+    tags: ['bedroom', 'guest_room', 'suite'],
+    boundingSize: [6.0, 6.0],
+    items: [
+      {
+        name: 'Casement Window Wall',
+        category: 'window_wall',
+        subType: 'wall_window_casement',
+        relPosition: [0, 1.5, -2.5],
+        dimensions: [3.0, 3.0, 0.3],
+        rotationY: 0,
+        color: '#8c3b2b',
+        textureId: 'nyc_old_brick',
+        collidable: true
+      },
+      {
+        name: 'Numbered Transom Suite Door',
+        category: 'door',
+        subType: 'transom_hotel_door',
+        relPosition: [-2.2, 1.3, 0],
+        dimensions: [1.4, 2.6, 0.25],
+        rotationY: Math.PI / 2,
+        color: '#5c3824',
+        textureId: 'oak_parquet',
+        isOpen: false,
+        collidable: true
+      },
+      {
+        name: 'Brass & Velvet Hotel Bed',
+        category: 'furniture',
+        subType: 'hotel_bed_double',
+        relPosition: [0.5, 0.55, -0.6],
+        dimensions: [1.8, 1.1, 2.2],
+        rotationY: 0,
+        color: '#7f1d1d',
+        textureId: 'velvet_crimson',
+        collidable: true
+      }
+    ]
+  }
+];
+
+/**
+ * Pure helper to save a collection of placed assets as a centered, reusable RoomBlueprint.
+ */
+export function createRoomBlueprintFromAssets(
+  name: string,
+  description: string,
+  sourceAssets: PlacedAsset[],
+  tags: string[] = ['custom_room']
+): RoomBlueprint {
+  const cleanName = name.trim() || `Custom Room Blueprint (${sourceAssets.length} objs)`;
+  if (sourceAssets.length === 0) {
+    return {
+      id: `bp_room_${Date.now()}`,
+      name: cleanName,
+      description: description.trim() || 'Empty room blueprint template.',
+      createdAt: new Date().toISOString(),
+      tags,
+      boundingSize: [4, 4],
+      items: []
+    };
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+
+  for (const a of sourceAssets) {
+    const [x, , z] = a.position;
+    const [w, , d] = a.dimensions;
+    minX = Math.min(minX, x - w / 2);
+    maxX = Math.max(maxX, x + w / 2);
+    minZ = Math.min(minZ, z - d / 2);
+    maxZ = Math.max(maxZ, z + d / 2);
+  }
+
+  const centerX = snapToGrid((minX + maxX) / 2, 0.5);
+  const centerZ = snapToGrid((minZ + maxZ) / 2, 0.5);
+  const spanX = Math.max(1, Math.round((maxX - minX) * 10) / 10);
+  const spanZ = Math.max(1, Math.round((maxZ - minZ) * 10) / 10);
+
+  const items: RoomBlueprintItem[] = sourceAssets.map((a) => ({
+    name: a.name,
+    category: a.category,
+    subType: a.subType,
+    relPosition: [
+      snapToGrid(a.position[0] - centerX, 0.5),
+      a.position[1],
+      snapToGrid(a.position[2] - centerZ, 0.5)
+    ],
+    dimensions: [...a.dimensions] as [number, number, number],
+    rotationY: a.rotationY,
+    color: a.color,
+    textureId: a.textureId,
+    isSecretPassage: a.isSecretPassage,
+    isOpen: Boolean(a.isOpen),
+    collidable: a.collidable,
+    compositeParts: a.compositeParts ? a.compositeParts.map((p) => ({ ...p })) : undefined
+  }));
+
+  return {
+    id: `bp_room_${Date.now()}`,
+    name: cleanName,
+    description:
+      description.trim() ||
+      `Saved layout of ${items.length} ${items.length === 1 ? 'asset' : 'assets'} (${spanX}m × ${spanZ}m).`,
+    createdAt: new Date().toISOString(),
+    tags,
+    boundingSize: [spanX, spanZ],
+    items
+  };
+}
+
+/**
+ * Pure helper to instantiate a RoomBlueprint onto a target floor layer at a given (offsetX, offsetZ) center.
+ */
+export function instantiateRoomBlueprintOnFloor(
+  blueprint: RoomBlueprint,
+  targetFloor: FloorId,
+  offsetX = 0,
+  offsetZ = 0,
+  halfGrid = GRID_TILE_COUNT / 2 - 0.5
+): PlacedAsset[] {
+  const stampId = Date.now();
+  return blueprint.items.map((item, idx) => {
+    const worldX = snapToGrid(
+      Math.max(-halfGrid, Math.min(halfGrid, offsetX + item.relPosition[0])),
+      0.5
+    );
+    const worldZ = snapToGrid(
+      Math.max(-halfGrid, Math.min(halfGrid, offsetZ + item.relPosition[2])),
+      0.5
+    );
+    return {
+      id: `bp_inst_${stampId}_${idx}`,
+      name: item.name,
+      category: item.category,
+      subType: item.subType,
+      floor: targetFloor,
+      roomNumber: blueprint.name,
+      position: [worldX, item.dimensions[1] / 2, worldZ],
+      dimensions: [...item.dimensions] as [number, number, number],
+      rotationY: item.rotationY,
+      color: item.color,
+      textureId: item.textureId,
+      isSecretPassage: item.isSecretPassage,
+      isOpen: Boolean(item.isOpen),
+      collidable: item.collidable,
+      compositeParts: item.compositeParts ? item.compositeParts.map((p) => ({ ...p })) : undefined
+    };
+  });
+}
+
+/**
+ * ============================================================================
+ * FLOATING WINDOW MANAGER SYSTEM (Movable, Minimizable, Maximizable, Closable)
+ * ============================================================================
+ */
+export type StudioWindowId =
+  | 'tools'
+  | 'catalog'
+  | 'inspector'
+  | 'blueprints'
+  | 'layers'
+  | 'char_appearance'
+  | 'char_ai'
+  | 'projects';
+
+export interface StudioWindowState {
+  id: StudioWindowId;
+  title: string;
+  shortTitle: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  minWidth: number;
+  minHeight: number;
+  isOpen: boolean;
+  isMinimized: boolean;
+  isMaximized: boolean;
+  zIndex: number;
+}
+
+export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindowState> {
+  return {
+    tools: {
+      id: 'tools',
+      title: 'Build & Buy Tools',
+      shortTitle: '🛠 Tools',
+      x: 12,
+      y: 485,
+      width: 255,
+      height: 295,
+      minWidth: 220,
+      minHeight: 190,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 21
+    },
+    catalog: {
+      id: 'catalog',
+      title: 'Visual Asset Catalog & AI Forge',
+      shortTitle: '📦 Asset Catalog',
+      x: 275,
+      y: 485,
+      width: 470,
+      height: 295,
+      minWidth: 320,
+      minHeight: 200,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 22
+    },
+    inspector: {
+      id: 'inspector',
+      title: '3D Object Inspector',
+      shortTitle: '🔍 Inspector',
+      x: 753,
+      y: 485,
+      width: 335,
+      height: 295,
+      minWidth: 260,
+      minHeight: 200,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 23
+    },
+    blueprints: {
+      id: 'blueprints',
+      title: 'Room Blueprints Library (.json)',
+      shortTitle: '📐 Room Blueprints',
+      x: 12,
+      y: 78,
+      width: 320,
+      height: 390,
+      minWidth: 270,
+      minHeight: 230,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 24
+    },
+    layers: {
+      id: 'layers',
+      title: 'Floor Layers Stack',
+      shortTitle: '🏢 Floor Layers',
+      x: 1035,
+      y: 78,
+      width: 232,
+      height: 350,
+      minWidth: 200,
+      minHeight: 210,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 25
+    },
+    char_appearance: {
+      id: 'char_appearance',
+      title: 'Create-A-Character Rig',
+      shortTitle: '👤 Rig Mesh',
+      x: 14,
+      y: 78,
+      width: 310,
+      height: 550,
+      minWidth: 260,
+      minHeight: 280,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 26
+    },
+    char_ai: {
+      id: 'char_ai',
+      title: 'AI Mind, Lore Sandbox & Schedule',
+      shortTitle: '🧠 AI Mind & Lore',
+      x: 595,
+      y: 78,
+      width: 425,
+      height: 565,
+      minWidth: 330,
+      minHeight: 300,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 27
+    },
+    projects: {
+      id: 'projects',
+      title: 'Project Save & Load Manager',
+      shortTitle: '💾 Projects',
+      x: 345,
+      y: 78,
+      width: 395,
+      height: 390,
+      minWidth: 320,
+      minHeight: 250,
+      isOpen: false,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 28
+    }
+  };
+}
+
+export function focusStudioWindow(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId
+): Record<StudioWindowId, StudioWindowState> {
+  const maxZ = Object.values(windows).reduce((acc, w) => Math.max(acc, w.zIndex), 20);
+  const target = windows[id];
+  if (!target) return windows;
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      zIndex: maxZ + 1
+    }
+  };
+}
+
+export function updateStudioWindowPosition(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId,
+  nextX: number,
+  nextY: number,
+  viewportW = 1280,
+  viewportH = 800
+): Record<StudioWindowId, StudioWindowState> {
+  const target = windows[id];
+  if (!target) return windows;
+  const clampedX = Math.max(4, Math.min(viewportW - 120, Math.round(nextX)));
+  const clampedY = Math.max(48, Math.min(viewportH - 52, Math.round(nextY)));
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      x: clampedX,
+      y: clampedY,
+      isMaximized: false
+    }
+  };
+}
+
+export function updateStudioWindowSize(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId,
+  nextWidth: number,
+  nextHeight: number,
+  viewportW = 1280,
+  viewportH = 800
+): Record<StudioWindowId, StudioWindowState> {
+  const target = windows[id];
+  if (!target) return windows;
+  const clampedW = Math.max(target.minWidth, Math.min(viewportW - 24, Math.round(nextWidth)));
+  const clampedH = Math.max(target.minHeight, Math.min(viewportH - 80, Math.round(nextHeight)));
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      width: clampedW,
+      height: clampedH,
+      isMaximized: false
+    }
+  };
+}
+
+export function toggleStudioWindowMinimize(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId
+): Record<StudioWindowId, StudioWindowState> {
+  const target = windows[id];
+  if (!target) return windows;
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      isMinimized: !target.isMinimized,
+      isMaximized: false
+    }
+  };
+}
+
+export function toggleStudioWindowMaximize(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId
+): Record<StudioWindowId, StudioWindowState> {
+  const target = windows[id];
+  if (!target) return windows;
+  const maxZ = Object.values(windows).reduce((acc, w) => Math.max(acc, w.zIndex), 20);
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      isMaximized: !target.isMaximized,
+      isMinimized: false,
+      zIndex: maxZ + 1
+    }
+  };
+}
+
+export function toggleStudioWindowOpen(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId,
+  forceOpen?: boolean
+): Record<StudioWindowId, StudioWindowState> {
+  const target = windows[id];
+  if (!target) return windows;
+  const maxZ = Object.values(windows).reduce((acc, w) => Math.max(acc, w.zIndex), 20);
+  const nextOpen = forceOpen !== undefined ? forceOpen : !target.isOpen;
+  return {
+    ...windows,
+    [id]: {
+      ...target,
+      isOpen: nextOpen,
+      isMinimized: nextOpen ? false : target.isMinimized,
+      zIndex: nextOpen ? maxZ + 1 : target.zIndex
+    }
+  };
+}
+
+// ============================================================================
+// ENTIRE PROJECT SAVE & LOAD SYSTEM (Full Workspace State Serialization)
+// ============================================================================
+
+export interface ArchitectForgeProjectSettings {
+  surfaceSnapEnabled: boolean;
+  showTPoseMannequin: boolean;
+  showExteriorWalls: boolean;
+  customGeneratedTexUrl: string | null;
+}
+
+export interface ArchitectForgeProjectSnapshot {
+  schemaVersion: '2.0.0';
+  assetType: 'architectforge_full_project';
+  id: string;
+  name: string;
+  description: string;
+  savedAt: string;
+  gridDimensions: [number, number];
+  currentFloor: FloorId;
+  floorLayers: FloorLayer[];
+  assets: PlacedAsset[];
+  catalogBlueprints: unknown[];
+  roomBlueprints: RoomBlueprint[];
+  characterRigs: HotelAgentProfile[];
+  customAppearance: CharacterAppearance;
+  customStats: CharacterStats;
+  customTraits: string[];
+  globalInstructionSet: string;
+  gameTimeMinutes: number;
+  savedInteractions: SavedInteractionEntry[];
+  timeOfDayEvents: TimeOfDayEventLog[];
+  settings: ArchitectForgeProjectSettings;
+}
+
+export const DEFAULT_CHARACTER_APPEARANCE: CharacterAppearance = {
+  archetype: 'Detective Clerk',
+  headShape: 'chibi_block',
+  skinColor: '#f3d9c4',
+  eyeStyle: 'wide_amber',
+  hairStyle: 'swept_pompadour',
+  hairColor: '#451a03',
+  outfitColor: '#78350f',
+  accentColor: '#eab308',
+  mouthStyle: 'slight_smirk',
+  heightScale: 1.0,
+  widthScale: 1.0,
+  headScale: 1.08
+};
+
+export const DEFAULT_CHARACTER_STATS: CharacterStats = {
+  physic: 2,
+  agility: 3,
+  mind: 4,
+  endurance: 3,
+  pointsRemaining: 4
+};
+
+/**
+ * Pure helper that serializes the entire ArchitectForge project state into an immutable snapshot.
+ */
+export function createProjectSnapshot(params: {
+  id?: string;
+  name: string;
+  description: string;
+  currentFloor: FloorId;
+  floorLayers: FloorLayer[];
+  assets: PlacedAsset[];
+  catalogBlueprints?: unknown[];
+  roomBlueprints: RoomBlueprint[];
+  characterRigs: HotelAgentProfile[];
+  customAppearance?: CharacterAppearance;
+  customStats?: CharacterStats;
+  customTraits?: string[];
+  globalInstructionSet: string;
+  gameTimeMinutes: number;
+  savedInteractions: SavedInteractionEntry[];
+  timeOfDayEvents: TimeOfDayEventLog[];
+  settings?: Partial<ArchitectForgeProjectSettings>;
+}): ArchitectForgeProjectSnapshot {
+  const cleanName = params.name.trim() || 'Untitled ArchitectForge Project';
+  const cleanDesc =
+    params.description.trim() ||
+    'Complete multi-floor 3D environment, room blueprints, and AI character rigs.';
+
+  return {
+    schemaVersion: '2.0.0',
+    assetType: 'architectforge_full_project',
+    id: params.id || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name: cleanName,
+    description: cleanDesc,
+    savedAt: new Date().toISOString(),
+    gridDimensions: [GRID_TILE_COUNT, GRID_TILE_COUNT],
+    currentFloor: params.currentFloor,
+    floorLayers: params.floorLayers.map((l) => ({ ...l })),
+    assets: params.assets.map((a) => ({
+      ...a,
+      position: [...a.position] as [number, number, number],
+      dimensions: [...a.dimensions] as [number, number, number],
+      compositeParts: a.compositeParts ? a.compositeParts.map((p) => ({ ...p })) : undefined
+    })),
+    catalogBlueprints: params.catalogBlueprints ? [...params.catalogBlueprints] : [],
+    roomBlueprints: params.roomBlueprints.map((bp) => ({
+      ...bp,
+      boundingSize: [...bp.boundingSize] as [number, number],
+      tags: [...bp.tags],
+      items: bp.items.map((it) => ({
+        ...it,
+        relPosition: [...it.relPosition] as [number, number, number],
+        dimensions: [...it.dimensions] as [number, number, number]
+      }))
+    })),
+    characterRigs: params.characterRigs.map((rig) => ({
+      ...rig,
+      position: [...rig.position] as [number, number, number],
+      knownFacts: [...rig.knownFacts],
+      memories: [...rig.memories]
+    })),
+    customAppearance: { ...(params.customAppearance || DEFAULT_CHARACTER_APPEARANCE) },
+    customStats: { ...(params.customStats || DEFAULT_CHARACTER_STATS) },
+    customTraits: [...(params.customTraits || ['wax_memory', 'hollow_knock'])],
+    globalInstructionSet: params.globalInstructionSet || DEFAULT_GLOBAL_INSTRUCTION_SET,
+    gameTimeMinutes:
+      typeof params.gameTimeMinutes === 'number' ? params.gameTimeMinutes : 19 * 60 + 30,
+    savedInteractions: params.savedInteractions.map((entry) => ({ ...entry })),
+    timeOfDayEvents: params.timeOfDayEvents.map((evt) => ({ ...evt })),
+    settings: {
+      surfaceSnapEnabled: params.settings?.surfaceSnapEnabled ?? true,
+      showTPoseMannequin: params.settings?.showTPoseMannequin ?? false,
+      showExteriorWalls: params.settings?.showExteriorWalls ?? false,
+      customGeneratedTexUrl: params.settings?.customGeneratedTexUrl ?? null
+    }
+  };
+}
+
+/**
+ * Pure helper to validate and normalize an imported JSON object (supports v2.0 full project files and v1.x asset packs).
+ */
+export function validateAndParseProjectSnapshot(raw: unknown): {
+  valid: boolean;
+  project: ArchitectForgeProjectSnapshot | null;
+  error?: string;
+} {
+  if (!raw || typeof raw !== 'object') {
+    return { valid: false, project: null, error: 'Project data must be a JSON object.' };
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const unwrapped =
+    obj.project && typeof obj.project === 'object'
+      ? (obj.project as Record<string, unknown>)
+      : obj;
+
+  const rawAssets = Array.isArray(unwrapped.assets)
+    ? (unwrapped.assets as PlacedAsset[])
+    : Array.isArray(unwrapped.environmentPlacements)
+    ? (unwrapped.environmentPlacements as PlacedAsset[])
+    : null;
+
+  const rawLayers = Array.isArray(unwrapped.floorLayers)
+    ? (unwrapped.floorLayers as FloorLayer[])
+    : null;
+
+  if (!rawAssets && !rawLayers && !Array.isArray(unwrapped.roomBlueprints)) {
+    return {
+      valid: false,
+      project: null,
+      error: 'JSON file does not contain valid ArchitectForge project data.'
+    };
+  }
+
+  const floorLayers =
+    rawLayers && rawLayers.length > 0 ? rawLayers : INITIAL_FLOOR_LAYERS;
+  const currentFloor =
+    typeof unwrapped.currentFloor === 'string' && unwrapped.currentFloor
+      ? unwrapped.currentFloor
+      : floorLayers[0]?.id || 'lobby';
+
+  const clockObj =
+    unwrapped.gameplayClock && typeof unwrapped.gameplayClock === 'object'
+      ? (unwrapped.gameplayClock as Record<string, unknown>)
+      : null;
+
+  const gameTimeMinutes =
+    typeof unwrapped.gameTimeMinutes === 'number'
+      ? unwrapped.gameTimeMinutes
+      : clockObj && typeof clockObj.gameTimeMinutes === 'number'
+      ? clockObj.gameTimeMinutes
+      : 19 * 60 + 30;
+
+  const settingsObj =
+    unwrapped.settings && typeof unwrapped.settings === 'object'
+      ? (unwrapped.settings as Partial<ArchitectForgeProjectSettings>)
+      : {};
+
+  const snapshot = createProjectSnapshot({
+    id: typeof unwrapped.id === 'string' ? unwrapped.id : undefined,
+    name:
+      typeof unwrapped.name === 'string' && unwrapped.name.trim()
+        ? unwrapped.name
+        : 'Imported Studio Project',
+    description:
+      typeof unwrapped.description === 'string' && unwrapped.description.trim()
+        ? unwrapped.description
+        : 'Imported from ArchitectForge project file.',
+    currentFloor,
+    floorLayers,
+    assets: rawAssets || [],
+    catalogBlueprints: Array.isArray(unwrapped.catalogBlueprints)
+      ? unwrapped.catalogBlueprints
+      : [],
+    roomBlueprints: Array.isArray(unwrapped.roomBlueprints)
+      ? (unwrapped.roomBlueprints as RoomBlueprint[])
+      : INITIAL_ROOM_BLUEPRINTS,
+    characterRigs: Array.isArray(unwrapped.characterRigs)
+      ? (unwrapped.characterRigs as HotelAgentProfile[])
+      : [],
+    customAppearance:
+      unwrapped.customAppearance && typeof unwrapped.customAppearance === 'object'
+        ? (unwrapped.customAppearance as CharacterAppearance)
+        : DEFAULT_CHARACTER_APPEARANCE,
+    customStats:
+      unwrapped.customStats && typeof unwrapped.customStats === 'object'
+        ? (unwrapped.customStats as CharacterStats)
+        : DEFAULT_CHARACTER_STATS,
+    customTraits: Array.isArray(unwrapped.customTraits)
+      ? (unwrapped.customTraits as string[])
+      : ['wax_memory', 'hollow_knock'],
+    globalInstructionSet:
+      typeof unwrapped.globalInstructionSet === 'string'
+        ? unwrapped.globalInstructionSet
+        : DEFAULT_GLOBAL_INSTRUCTION_SET,
+    gameTimeMinutes,
+    savedInteractions: Array.isArray(unwrapped.savedInteractions)
+      ? (unwrapped.savedInteractions as SavedInteractionEntry[])
+      : [],
+    timeOfDayEvents: Array.isArray(unwrapped.timeOfDayEvents)
+      ? (unwrapped.timeOfDayEvents as TimeOfDayEventLog[])
+      : [],
+    settings: {
+      surfaceSnapEnabled: settingsObj.surfaceSnapEnabled ?? true,
+      showTPoseMannequin: settingsObj.showTPoseMannequin ?? false,
+      showExteriorWalls: settingsObj.showExteriorWalls ?? false,
+      customGeneratedTexUrl:
+        settingsObj.customGeneratedTexUrl ??
+        (typeof unwrapped.customSurfaceTextureUrl === 'string'
+          ? unwrapped.customSurfaceTextureUrl
+          : null)
+    }
+  });
+
+  if (typeof unwrapped.savedAt === 'string') {
+    snapshot.savedAt = unwrapped.savedAt;
+  }
+
+  return { valid: true, project: snapshot };
+}
+
+/**
+ * Pure helper to insert or overwrite a project snapshot inside the saved project slots list.
+ */
+export function upsertProjectInSlotList(
+  existingSlots: ArchitectForgeProjectSnapshot[],
+  snapshot: ArchitectForgeProjectSnapshot,
+  maxSlots = 25
+): ArchitectForgeProjectSnapshot[] {
+  const existingIdx = existingSlots.findIndex((s) => s.id === snapshot.id);
+  if (existingIdx >= 0) {
+    const next = [...existingSlots];
+    next[existingIdx] = snapshot;
+    return next;
+  }
+  const next = [snapshot, ...existingSlots];
+  return next.length > maxSlots ? next.slice(0, maxSlots) : next;
+}
+
+// ============================================================================
+// COST-OPTIMIZED AI MODEL REGISTRY (Google Gemini Flash-Lite + Meshy.ai 3D)
+// ============================================================================
+
+export type AiTaskKey =
+  | 'character_chat'
+  | 'persona_generator'
+  | 'ambient_bark'
+  | 'composite_3d_spec'
+  | 'meshy_image_to_3d'
+  | 'texture_synthesis'
+  | 'architectural_research'
+  | 'voice_tts'
+  | 'live_voice';
+
+export interface AiModelRouteSpec {
+  taskKey: AiTaskKey;
+  taskLabel: string;
+  modelId: string;
+  provider: 'Google' | 'Meshy.ai';
+  costTier:
+    | 'Lowest-Cost Flash-Lite'
+    | 'Lowest-Cost Flash (Low Thinking)'
+    | 'Lowest-Cost Image Lite'
+    | 'Meshy Image-to-3D';
+  capabilitiesPreserved: string[];
+}
+
+export const AI_MODEL_REGISTRY: Record<AiTaskKey, AiModelRouteSpec> = {
+  character_chat: {
+    taskKey: 'character_chat',
+    taskLabel: 'Sandboxed Character Dialogue & Memory',
+    modelId: 'gemini-3.1-flash-lite',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: [
+      'Multi-turn conversation memory',
+      'Offline lore sandbox enforcement',
+      'Time-of-day & daily schedule awareness'
+    ]
+  },
+  persona_generator: {
+    taskKey: 'persona_generator',
+    taskLabel: 'AI Personality, Known Facts & 24h Schedule Generator',
+    modelId: 'gemini-3.1-flash-lite',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: [
+      'Structured JSON schema output',
+      'Voice, demeanor, likes/dislikes synthesis',
+      '4-phase daily action schedule generation'
+    ]
+  },
+  ambient_bark: {
+    taskKey: 'ambient_bark',
+    taskLabel: 'Fast Ambient Room Observation Bark',
+    modelId: 'gemini-3.1-flash-lite',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: ['Sub-second low-latency atmospheric text']
+  },
+  composite_3d_spec: {
+    taskKey: 'composite_3d_spec',
+    taskLabel: '3D Multi-Part Composite Geometry Synthesizer',
+    modelId: 'gemini-3.1-flash-lite',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: [
+      'Multimodal image + text to 3D sub-part JSON',
+      'PBR roughness, metalness & color assignment'
+    ]
+  },
+  meshy_image_to_3d: {
+    taskKey: 'meshy_image_to_3d',
+    taskLabel: 'Meshy.ai Image-to-3D Model Generation',
+    modelId: 'meshy-4-image-to-3d',
+    provider: 'Meshy.ai',
+    costTier: 'Meshy Image-to-3D',
+    capabilitiesPreserved: [
+      'Image-to-3D mesh generation from reference image',
+      'Paired with Google gemini-3.1-flash-lite 3D composite fallback'
+    ]
+  },
+  texture_synthesis: {
+    taskKey: 'texture_synthesis',
+    taskLabel: 'Seamless Architectural Surface Texture Generator',
+    modelId: 'gemini-3.1-flash-lite-image',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Image Lite',
+    capabilitiesPreserved: [
+      '1:1 orthographic surface texture generation',
+      'Image-to-image surface editing'
+    ]
+  },
+  architectural_research: {
+    taskKey: 'architectural_research',
+    taskLabel: 'Grounded Architectural Scale & Proportion Fact-Check',
+    modelId: 'gemini-3.8-flash',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash (Low Thinking)',
+    capabilitiesPreserved: [
+      'Google Search grounding (googleSearch tool)',
+      'ThinkingLevel.LOW for minimal token overhead'
+    ]
+  },
+  voice_tts: {
+    taskKey: 'voice_tts',
+    taskLabel: 'Character Voice Text-to-Speech',
+    modelId: 'gemini-3.8-flash-lite-tts',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: ['Low-cost voice audio synthesis']
+  },
+  live_voice: {
+    taskKey: 'live_voice',
+    taskLabel: 'Real-Time Live Audio WebSocket Bridge',
+    modelId: 'gemini-3.8-live',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash (Low Thinking)',
+    capabilitiesPreserved: ['Bidirectional 16kHz/24kHz PCM voice streaming']
+  }
+};
+
+/**
+ * Pure compliance verifier ensuring:
+ * 1. Every AI model is Google software EXCEPT Meshy.ai for image-to-3d.
+ * 2. Zero expensive Pro/Argon models (gemini-4-argon, gemini-3-pro-image, gemini-nano-banana-2.1) are used.
+ */
+export function verifyAiModelCompliance(
+  registry: Record<AiTaskKey, AiModelRouteSpec> = AI_MODEL_REGISTRY
+): {
+  compliant: boolean;
+  violations: string[];
+  googleModelCount: number;
+  meshyModelCount: number;
+} {
+  const expensiveProModels = new Set([
+    'gemini-4-argon',
+    'gemini-3-pro-image',
+    'gemini-nano-banana-2.1',
+    'lyria-3-pro-preview'
+  ]);
+  const allowedGoogleModels = new Set([
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite-image',
+    'gemini-3.8-flash',
+    'gemini-3.8-flash-lite-tts',
+    'gemini-3.8-live'
+  ]);
+
+  const violations: string[] = [];
+  let googleModelCount = 0;
+  let meshyModelCount = 0;
+
+  for (const spec of Object.values(registry)) {
+    if (expensiveProModels.has(spec.modelId)) {
+      violations.push(
+        `Task "${spec.taskKey}" uses expensive model "${spec.modelId}" instead of cheapest Flash-Lite/Flash tier.`
+      );
+    }
+    if (spec.taskKey === 'meshy_image_to_3d') {
+      if (spec.provider !== 'Meshy.ai') {
+        violations.push(`Task "meshy_image_to_3d" must use provider "Meshy.ai".`);
+      } else {
+        meshyModelCount += 1;
+      }
+    } else {
+      if (spec.provider !== 'Google' || !allowedGoogleModels.has(spec.modelId)) {
+        violations.push(
+          `Task "${spec.taskKey}" must use an approved low-cost Google Gemini model (found ${spec.provider}: ${spec.modelId}).`
+        );
+      } else {
+        googleModelCount += 1;
+      }
+    }
+  }
+
+  return {
+    compliant: violations.length === 0,
+    violations,
+    googleModelCount,
+    meshyModelCount
+  };
+}
+
+/**
+ * Generates a deterministic, seamless SVG data-URL surface texture for any prompt,
+ * used when offline or when free-tier fallback is triggered alongside gemini-3.1-flash-lite-image.
+ */
+export function generateSeamlessSvgTextureDataUrl(prompt: string): string {
+  const lower = (prompt || '').toLowerCase();
+  let bg = '#7c2d12';
+  let fg = '#b45309';
+  let accent = '#fde68a';
+
+  if (lower.includes('marble') || lower.includes('tile') || lower.includes('check')) {
+    bg = '#f8fafc';
+    fg = '#334155';
+    accent = '#94a3b8';
+  } else if (lower.includes('carpet') || lower.includes('crimson') || lower.includes('velvet')) {
+    bg = '#7f1d1d';
+    fg = '#991b1b';
+    accent = '#d97706';
+  } else if (lower.includes('wood') || lower.includes('oak') || lower.includes('mahogany')) {
+    bg = '#451a03';
+    fg = '#78350f';
+    accent = '#b45309';
+  } else if (lower.includes('brass') || lower.includes('gold') || lower.includes('deco')) {
+    bg = '#713f12';
+    fg = '#a16207';
+    accent = '#facc15';
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+    <rect width="128" height="128" fill="${bg}"/>
+    <rect x="4" y="4" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="68" y="4" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="-24" y="36" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="40" y="36" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="104" y="36" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="4" y="68" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="68" y="68" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="-24" y="100" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="40" y="100" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+    <rect x="104" y="100" width="56" height="24" rx="2" fill="${fg}" stroke="${accent}" stroke-width="1" opacity="0.88"/>
+  </svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+
+
+
 
