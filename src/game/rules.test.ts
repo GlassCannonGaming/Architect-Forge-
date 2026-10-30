@@ -678,6 +678,35 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(svgUrl.startsWith('data:image/svg+xml;utf8,'), true);
 });
 
+test('Local Computer Workspace defines 9 dedicated folders for all data types and newly added assets', async () => {
+  const {
+    LOCAL_WORKSPACE_FOLDERS,
+    buildLocalFolderItemFilename,
+    buildLocalSetupScripts,
+    createDefaultStudioWindows
+  } = await import('./rules');
+
+  assert.equal(LOCAL_WORKSPACE_FOLDERS.length, 9);
+
+  const asset3dFile = buildLocalFolderItemFilename(
+    'environment_3d',
+    'Brass Gramophone Turntable',
+    '9021'
+  );
+  assert.equal(asset3dFile, 'asset3d_brass_gramophone_turntable_9021.asset3d.json');
+
+  const texFile = buildLocalFolderItemFilename('textures', 'Crimson Art Deco Carpet', 't1');
+  assert.equal(texFile, 'texture_crimson_art_deco_carpet_t1.texture.json');
+
+  const scripts = buildLocalSetupScripts();
+  assert.equal(scripts.windowsBat.includes('assets\\environment_3d'), true);
+  assert.equal(scripts.unixSh.includes('assets/environment_3d'), true);
+  assert.equal(scripts.readmeTxt.includes('gameplay_logs/interactions'), true);
+
+  const wins = createDefaultStudioWindows();
+  assert.equal(wins.local_fs.id, 'local_fs');
+});
+
 
 
 

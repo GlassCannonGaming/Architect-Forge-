@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
+import { createServer as createViteServer, build as buildViteBundle } from 'vite';
 import { WebSocketServer } from 'ws';
 import { GoogleGenAI, Type, Modality, LiveServerMessage, ThinkingLevel } from '@google/genai';
 import {
@@ -20,8 +21,16 @@ import {
   GameStateSnapshot,
   AI_MODEL_REGISTRY,
   verifyAiModelCompliance,
-  generateSeamlessSvgTextureDataUrl
+  generateSeamlessSvgTextureDataUrl,
+  LOCAL_WORKSPACE_FOLDERS,
+  LOCAL_WORKSPACE_ROOT_NAME,
+  LocalFolderCategory,
+  getLocalFolderSpec,
+  buildLocalFolderItemFilename,
+  buildLocalSetupScripts,
+  INITIAL_ROOM_BLUEPRINTS
 } from './src/game/rules';
+import { INITIAL_AGENTS } from './src/game/hotelData';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -575,6 +584,293 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
       }
     }
   });
+
+  // 7. Standalone Single-File HTML Application Packager (GET or POST /api/export/standalone-html)
+  const buildStandaloneSingleFileHtml = async (embeddedProject?: unknown): Promise<string> => {
+    const distDir = path.resolve(__dirname, 'dist');
+    const indexHtmlPath = path.join(distDir, 'index.html');
+    if (!fs.existsSync(indexHtmlPath)) {
+      await buildViteBundle({ logLevel: 'silent' });
+    }
+    let html = fs.readFileSync(indexHtmlPath, 'utf-8');
+
+    // Inline <link rel="stylesheet" crossorigin href="/assets/...">
+    html = html.replace(
+      /<link[^>]*rel=["']stylesheet["'][^>]*href=["']\/?([^"']+\.css)["'][^>]*>/gi,
+      (_match, relCssPath: string) => {
+        const cleanRel = relCssPath.replace(/^\//, '');
+        const fullCssPath = path.join(distDir, cleanRel);
+        if (fs.existsSync(fullCssPath)) {
+          const cssContent = fs.readFileSync(fullCssPath, 'utf-8');
+          return `<style>${cssContent}</style>`;
+        }
+        return _match;
+      }
+    );
+
+    const preloadScript = embeddedProject
+      ? `<script>window.__STANDALONE_INITIAL_PROJECT__ = ${JSON.stringify(embeddedProject).replace(/<\/script/gi, '<\\/script')};</script>\n`
+      : '';
+
+    // Inline <script type="module" crossorigin src="/assets/..."></script>
+    html = html.replace(
+      /<script[^>]*src=["']\/?([^"']+\.js)["'][^>]*><\/script>/gi,
+      (_match, relJsPath: string) => {
+        const cleanRel = relJsPath.replace(/^\//, '');
+        const fullJsPath = path.join(distDir, cleanRel);
+        if (fs.existsSync(fullJsPath)) {
+          const jsContent = fs
+            .readFileSync(fullJsPath, 'utf-8')
+            .replace(/<\/script/gi, '<\\/script');
+          return `${preloadScript}<script type="module">${jsContent}</script>`;
+        }
+        return _match;
+      }
+    );
+
+    return html;
+  };
+
+  app.get('/api/export/standalone-html', async (_req, res) => {
+    try {
+      const standaloneHtml = await buildStandaloneSingleFileHtml();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename="ArchitectForge_Standalone.html"'
+      );
+      res.send(standaloneHtml);
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to build standalone HTML bundle'
+      });
+    }
+  });
+
+  app.post('/api/export/standalone-html', async (req, res) => {
+    try {
+      const projectSnapshot = req.body?.projectSnapshot || null;
+      const standaloneHtml = await buildStandaloneSingleFileHtml(projectSnapshot);
+      res.json({
+        filename: 'ArchitectForge_Standalone.html',
+        html: standaloneHtml,
+        sizeBytes: Buffer.byteLength(standaloneHtml, 'utf-8')
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to build standalone HTML bundle'
+      });
+    }
+  });
+
+  // 8. 100% Local Computer Workspace & Dedicated Folder File System Manager
+  const localWorkspaceRoot = path.resolve(__dirname, LOCAL_WORKSPACE_ROOT_NAME);
+
+  const ensureLocalWorkspaceDirectories = () => {
+    if (!fs.existsSync(localWorkspaceRoot)) {
+      fs.mkdirSync(localWorkspaceRoot, { recursive: true });
+    }
+    for (const folder of LOCAL_WORKSPACE_FOLDERS) {
+      const fullFolder = path.join(localWorkspaceRoot, folder.relativePath);
+      if (!fs.existsSync(fullFolder)) {
+        fs.mkdirSync(fullFolder, { recursive: true });
+      }
+    }
+    const scripts = buildLocalSetupScripts();
+    const readmePath = path.join(localWorkspaceRoot, 'README_LOCAL_FOLDERS.txt');
+    if (!fs.existsSync(readmePath)) {
+      fs.writeFileSync(readmePath, scripts.readmeTxt, 'utf-8');
+    }
+    // Seed initial starter records in dedicated folders if completely empty
+    const seedHelper = (category: LocalFolderCategory, name: string, suffix: string, payload: unknown) => {
+      const spec = getLocalFolderSpec(category);
+      const dir = path.join(localWorkspaceRoot, spec.relativePath);
+      const existing = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+      if (existing.length === 0) {
+        const fname = buildLocalFolderItemFilename(category, name, suffix);
+        fs.writeFileSync(path.join(dir, fname), JSON.stringify(payload, null, 2), 'utf-8');
+      }
+    };
+
+    seedHelper('environment_3d', 'Antique Brass Gramophone', 'seed01', {
+      schemaVersion: '2.0.0',
+      savedAt: new Date().toISOString(),
+      category: 'environment_3d',
+      asset: buildProcedural3DSpecFromPrompt('Antique Brass Gramophone')
+    });
+    seedHelper('catalog_blueprints', 'Pre-War Mahogany Concierge Desk', 'seed01', {
+      schemaVersion: '2.0.0',
+      savedAt: new Date().toISOString(),
+      category: 'catalog_blueprints',
+      catalogItem: {
+        id: 'cat_concierge_desk_seed',
+        name: 'Pre-War Mahogany Concierge Desk',
+        category: 'furniture',
+        subType: 'concierge_desk',
+        dimensions: [2.6, 1.1, 0.9],
+        defaultColor: '#5c3824',
+        defaultTextureId: 'oak_parquet',
+        collidable: true
+      }
+    });
+    seedHelper('textures', '1920s Crimson Art Deco Carpet', 'seed01', {
+      schemaVersion: '2.0.0',
+      savedAt: new Date().toISOString(),
+      category: 'textures',
+      texture: {
+        id: 'tex_crimson_deco_seed',
+        name: '1920s Crimson Art Deco Carpet',
+        category: 'floor',
+        imageUrl: generateSeamlessSvgTextureDataUrl('1920s crimson carpet')
+      }
+    });
+    if (INITIAL_ROOM_BLUEPRINTS.length > 0) {
+      seedHelper('room_blueprints', INITIAL_ROOM_BLUEPRINTS[0].name, 'seed01', {
+        schemaVersion: '2.0.0',
+        savedAt: new Date().toISOString(),
+        category: 'room_blueprints',
+        blueprint: INITIAL_ROOM_BLUEPRINTS[0]
+      });
+    }
+    if (INITIAL_AGENTS.length > 0) {
+      seedHelper('character_rigs', INITIAL_AGENTS[0].name, 'seed01', {
+        schemaVersion: '2.0.0',
+        savedAt: new Date().toISOString(),
+        category: 'character_rigs',
+        character: INITIAL_AGENTS[0]
+      });
+      seedHelper('ai_instructions', `${INITIAL_AGENTS[0].name} Offline Lore`, 'seed01', {
+        schemaVersion: '2.0.0',
+        savedAt: new Date().toISOString(),
+        category: 'ai_instructions',
+        characterName: INITIAL_AGENTS[0].name,
+        globalInstructionSet: DEFAULT_GLOBAL_INSTRUCTION_SET,
+        personalInstructionSet: INITIAL_AGENTS[0].personalInstructionSet || '',
+        knownFacts: INITIAL_AGENTS[0].knownFacts
+      });
+    }
+  };
+
+  ensureLocalWorkspaceDirectories();
+
+  app.get('/api/local-fs/status', (_req, res) => {
+    try {
+      ensureLocalWorkspaceDirectories();
+      const folders = LOCAL_WORKSPACE_FOLDERS.map((spec) => {
+        const absDir = path.join(localWorkspaceRoot, spec.relativePath);
+        const entries = fs.existsSync(absDir) ? fs.readdirSync(absDir) : [];
+        const files = entries
+          .filter((name) => !name.startsWith('.'))
+          .map((filename) => {
+            const fullPath = path.join(absDir, filename);
+            const stat = fs.statSync(fullPath);
+            return {
+              filename,
+              relativePath: `${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`,
+              sizeBytes: stat.size,
+              updatedAt: stat.mtime.toISOString()
+            };
+          })
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        return {
+          ...spec,
+          fullDiskPath: absDir,
+          workspacePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/`,
+          fileCount: files.length,
+          files
+        };
+      });
+
+      res.json({
+        rootDirectoryName: LOCAL_WORKSPACE_ROOT_NAME,
+        rootDiskPath: localWorkspaceRoot,
+        totalFiles: folders.reduce((sum, f) => sum + f.fileCount, 0),
+        folders
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to read local workspace directory tree'
+      });
+    }
+  });
+
+  app.post('/api/local-fs/save-item', (req, res) => {
+    try {
+      ensureLocalWorkspaceDirectories();
+      const {
+        category,
+        itemName = 'Newly Added Asset',
+        uniqueId = String(Date.now()).slice(-6),
+        payload
+      }: {
+        category: LocalFolderCategory;
+        itemName?: string;
+        uniqueId?: string;
+        payload: unknown;
+      } = req.body || {};
+
+      const spec = getLocalFolderSpec(category || 'environment_3d');
+      const targetDir = path.join(localWorkspaceRoot, spec.relativePath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      const filename = buildLocalFolderItemFilename(spec.category, itemName, uniqueId);
+      const fullPath = path.join(targetDir, filename);
+      const envelope = {
+        schemaVersion: '2.0.0',
+        savedAt: new Date().toISOString(),
+        category: spec.category,
+        folderPath: `${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}`,
+        itemName,
+        data: payload
+      };
+      const serialized = JSON.stringify(envelope, null, 2);
+      fs.writeFileSync(fullPath, serialized, 'utf-8');
+
+      res.json({
+        saved: true,
+        category: spec.category,
+        filename,
+        relativePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`,
+        fullDiskPath: fullPath,
+        sizeBytes: Buffer.byteLength(serialized, 'utf-8'),
+        savedAt: envelope.savedAt
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to save item to dedicated local folder'
+      });
+    }
+  });
+
+  app.get('/api/local-fs/read-item', (req, res) => {
+    try {
+      const category = (req.query.category as LocalFolderCategory) || 'environment_3d';
+      const filename = path.basename(String(req.query.filename || ''));
+      const spec = getLocalFolderSpec(category);
+      const fullPath = path.join(localWorkspaceRoot, spec.relativePath, filename);
+      if (!fs.existsSync(fullPath)) {
+        res.status(404).json({ error: 'File not found in dedicated folder.' });
+        return;
+      }
+      const raw = fs.readFileSync(fullPath, 'utf-8');
+      res.json({
+        category: spec.category,
+        filename,
+        relativePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`,
+        parsed: JSON.parse(raw)
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to read item from dedicated folder'
+      });
+    }
+  });
+
+  app.get('/api/local-fs/setup-scripts', (_req, res) => {
+    res.json(buildLocalSetupScripts());
+  });
+
 
   // Mount Vite middlewares in dev or static dist in production
   if (process.env.NODE_ENV !== 'production') {

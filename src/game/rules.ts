@@ -1515,7 +1515,8 @@ export type StudioWindowId =
   | 'layers'
   | 'char_appearance'
   | 'char_ai'
-  | 'projects';
+  | 'projects'
+  | 'local_fs';
 
 export interface StudioWindowState {
   id: StudioWindowId;
@@ -1654,6 +1655,21 @@ export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindo
       isMinimized: false,
       isMaximized: false,
       zIndex: 28
+    },
+    local_fs: {
+      id: 'local_fs',
+      title: 'Local Computer Workspace & Dedicated Asset Folders',
+      shortTitle: '📁 Local Folders',
+      x: 340,
+      y: 72,
+      width: 560,
+      height: 465,
+      minWidth: 420,
+      minHeight: 300,
+      isOpen: false,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: 29
     }
   };
 }
@@ -2278,6 +2294,213 @@ export function generateSeamlessSvgTextureDataUrl(prompt: string): string {
   </svg>`;
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+// ============================================================================
+// LOCAL COMPUTER WORKSPACE & DEDICATED FOLDER ARCHITECTURE
+// ============================================================================
+
+export type LocalFolderCategory =
+  | 'projects'
+  | 'environment_3d'
+  | 'catalog_blueprints'
+  | 'textures'
+  | 'room_blueprints'
+  | 'character_rigs'
+  | 'ai_instructions'
+  | 'interactions'
+  | 'time_events';
+
+export interface LocalFolderSpec {
+  category: LocalFolderCategory;
+  relativePath: string;
+  label: string;
+  dataTypeLabel: string;
+  description: string;
+  filePrefix: string;
+  extension: string;
+  autoSavesOn: string;
+}
+
+export const LOCAL_WORKSPACE_ROOT_NAME = 'ArchitectForge_Workspace';
+
+export const LOCAL_WORKSPACE_FOLDERS: LocalFolderSpec[] = [
+  {
+    category: 'projects',
+    relativePath: 'projects',
+    label: 'Projects (Full Multi-Floor Saves)',
+    dataTypeLabel: 'Project Archives',
+    description: 'Complete multi-floor hotel builds, room blueprints, characters, and world logs.',
+    filePrefix: 'project',
+    extension: '.architectforge.json',
+    autoSavesOn: 'Saving or exporting a full project slot'
+  },
+  {
+    category: 'environment_3d',
+    relativePath: 'assets/environment_3d',
+    label: 'Newly Added 3D Environment Assets',
+    dataTypeLabel: '3D Composite & Meshy.ai Objects',
+    description: 'Newly forged AI 3D composite objects, Meshy.ai Image-to-3D meshes, and customized scene props.',
+    filePrefix: 'asset3d',
+    extension: '.asset3d.json',
+    autoSavesOn: 'Forging a new AI 3D asset, duplicating, or customizing an object'
+  },
+  {
+    category: 'catalog_blueprints',
+    relativePath: 'assets/catalog_blueprints',
+    label: 'Visual Catalog Asset Blueprints',
+    dataTypeLabel: 'Buy/Build Catalog Items',
+    description: 'Reusable catalog items saved from the 3D viewport or AI Forge for instant placement.',
+    filePrefix: 'catalog_item',
+    extension: '.catalog.json',
+    autoSavesOn: 'Clicking "+ Catalog" or forging a new catalog item'
+  },
+  {
+    category: 'textures',
+    relativePath: 'assets/textures',
+    label: 'Synthesized Surface Textures',
+    dataTypeLabel: 'Orthographic Materials & SVG/PNG Maps',
+    description: 'Newly generated wall, floor, carpet, and masonry textures with embedded data URLs.',
+    filePrefix: 'texture',
+    extension: '.texture.json',
+    autoSavesOn: 'Synthesizing a new surface texture in Build & Buy'
+  },
+  {
+    category: 'room_blueprints',
+    relativePath: 'room_blueprints',
+    label: 'Modular Room Layout Blueprints',
+    dataTypeLabel: 'Multi-Asset Room Collections',
+    description: 'Saved collections of room furniture and architectural partitions with relative offsets.',
+    filePrefix: 'room_blueprint',
+    extension: '.blueprint.json',
+    autoSavesOn: 'Capturing selected 3D objects into a Room Blueprint'
+  },
+  {
+    category: 'character_rigs',
+    relativePath: 'characters/rigs',
+    label: 'Character 3D Rigs & Appearance',
+    dataTypeLabel: '3D Humanoid Rigs & Traits',
+    description: 'Custom character proportions, attire colors, archetypes, and starting known facts.',
+    filePrefix: 'character_rig',
+    extension: '.rig.json',
+    autoSavesOn: 'Creating or updating a character in Create-A-Character'
+  },
+  {
+    category: 'ai_instructions',
+    relativePath: 'characters/ai_instructions',
+    label: 'Offline AI Lore & Instruction Sets',
+    dataTypeLabel: 'Sandboxed AI Persona Rules',
+    description: 'Offline game-specific global rules and personal character AI instruction sets (no internet).',
+    filePrefix: 'ai_instructions',
+    extension: '.instructions.json',
+    autoSavesOn: 'Generating an AI persona or editing global/personal sandbox instructions'
+  },
+  {
+    category: 'interactions',
+    relativePath: 'gameplay_logs/interactions',
+    label: 'Character Dialogue & Action Logs',
+    dataTypeLabel: 'Saved Conversations & Daily Actions',
+    description: 'Chronological transcripts of player-character conversations, inspections, and daily routines.',
+    filePrefix: 'interaction_log',
+    extension: '.interactions.json',
+    autoSavesOn: 'Speaking with residents or logging character interactions'
+  },
+  {
+    category: 'time_events',
+    relativePath: 'gameplay_logs/time_events',
+    label: 'Gameplay Clock & Time-of-Day Events',
+    dataTypeLabel: 'World Clock & Schedule Transitions',
+    description: 'Recorded time-of-day shifts (Morning, Afternoon, Evening, Night) and scheduled world triggers.',
+    filePrefix: 'time_events',
+    extension: '.timeevents.json',
+    autoSavesOn: 'Advancing the gameplay clock or triggering phase transitions'
+  }
+];
+
+export function getLocalFolderSpec(category: LocalFolderCategory): LocalFolderSpec {
+  const found = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === category);
+  return found || LOCAL_WORKSPACE_FOLDERS[0];
+}
+
+export function buildLocalFolderItemFilename(
+  category: LocalFolderCategory,
+  itemName: string,
+  uniqueSuffix?: string
+): string {
+  const spec = getLocalFolderSpec(category);
+  const safeSlug =
+    (itemName || spec.filePrefix)
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 48) || spec.filePrefix;
+  const cleanSuffix = uniqueSuffix
+    ? `_${uniqueSuffix.toLowerCase().replace(/[^a-z0-9-_]+/g, '').slice(0, 16)}`
+    : '';
+  return `${spec.filePrefix}_${safeSlug}${cleanSuffix}${spec.extension}`;
+}
+
+export function buildLocalSetupScripts(): {
+  windowsBat: string;
+  unixSh: string;
+  readmeTxt: string;
+} {
+  const winDirs = LOCAL_WORKSPACE_FOLDERS.map(
+    (f) => `mkdir "${LOCAL_WORKSPACE_ROOT_NAME}\\${f.relativePath.replace(/\//g, '\\')}" 2>nul`
+  ).join('\r\n');
+
+  const unixDirs = LOCAL_WORKSPACE_FOLDERS.map(
+    (f) => `mkdir -p "${LOCAL_WORKSPACE_ROOT_NAME}/${f.relativePath}"`
+  ).join('\n');
+
+  const windowsBat = `@echo off
+echo ============================================================================
+echo ArchitectForge: The House Suite — Local Computer Dedicated Folder Setup
+echo ============================================================================
+mkdir "${LOCAL_WORKSPACE_ROOT_NAME}" 2>nul
+${winDirs}
+echo.
+echo Created all 9 dedicated data and newly-added asset folders inside .\\${LOCAL_WORKSPACE_ROOT_NAME}\\
+echo You can now mount "${LOCAL_WORKSPACE_ROOT_NAME}" inside ArchitectForge (Local Folders window)
+echo so every newly forged 3D asset, texture, blueprint, character rig, and project saves directly to disk!
+pause
+`;
+
+  const unixSh = `#!/usr/bin/env bash
+set -e
+echo "============================================================================"
+echo "ArchitectForge: The House Suite — Local Computer Dedicated Folder Setup"
+echo "============================================================================"
+mkdir -p "${LOCAL_WORKSPACE_ROOT_NAME}"
+${unixDirs}
+echo ""
+echo "Created all 9 dedicated data and newly-added asset folders inside ./${LOCAL_WORKSPACE_ROOT_NAME}/"
+echo "Mount '${LOCAL_WORKSPACE_ROOT_NAME}' inside ArchitectForge (Local Folders window) to auto-save all newly added assets!"
+`;
+
+  const folderTable = LOCAL_WORKSPACE_FOLDERS.map(
+    (f) => `- ${LOCAL_WORKSPACE_ROOT_NAME}/${f.relativePath}/  -> ${f.label} (*${f.extension})\n    Auto-saves when: ${f.autoSavesOn}`
+  ).join('\n');
+
+  const readmeTxt = `ARCHITECTFORGE: THE HOUSE SUITE — 100% LOCAL COMPUTER WORKSPACE ARCHITECTURE
+============================================================================
+
+Dedicated Folder Structure (${LOCAL_WORKSPACE_ROOT_NAME}/):
+${folderTable}
+
+How It Works:
+1. Server-Backed Local Disk Mode (when running locally on port 3000):
+   All 9 dedicated folders are automatically created on your computer inside ./local_workspace/
+   and every newly forged 3D object, texture, catalog item, room blueprint, character rig,
+   AI instruction set, gameplay log, and project is written directly to its dedicated folder.
+
+2. Native Local Computer Folder Mount (Standalone HTML or Browser File System Access API):
+   Click "Mount Computer Folder" in the "Local Folders" studio window and select any folder
+   on your computer. ArchitectForge automatically creates all 9 dedicated subfolders on your
+   hard drive and writes every newly added asset directly into its proper folder in real time.
+`;
+
+  return { windowsBat, unixSh, readmeTxt };
 }
 
 

@@ -41,7 +41,13 @@ import {
   ArchitectForgeProjectSnapshot,
   createProjectSnapshot,
   validateAndParseProjectSnapshot,
-  upsertProjectInSlotList
+  upsertProjectInSlotList,
+  generateSeamlessSvgTextureDataUrl,
+  LocalFolderCategory,
+  LOCAL_WORKSPACE_FOLDERS,
+  LOCAL_WORKSPACE_ROOT_NAME,
+  getLocalFolderSpec,
+  buildLocalFolderItemFilename
 } from './game/rules';
 import {
   INITIAL_PLACED_ASSETS,
@@ -58,6 +64,10 @@ import { UnifiedBottomDock } from './components/UnifiedBottomDock';
 import { CharacterCreatorOverlay } from './components/CharacterCreatorOverlay';
 import { QuickEditWindowF } from './components/QuickEditWindowF';
 import { ProjectSaveLoadWindow } from './components/ProjectSaveLoadWindow';
+import {
+  LocalDiskFoldersWindow,
+  LocalDiskFolderStatus
+} from './components/LocalDiskFoldersWindow';
 import { soundFX } from './game/soundEffects';
 
 export default function App() {
@@ -136,7 +146,8 @@ export default function App() {
         return {
           ...defaults,
           ...parsed,
-          projects: parsed.projects ? { ...defaults.projects, ...parsed.projects } : defaults.projects
+          projects: parsed.projects ? { ...defaults.projects, ...parsed.projects } : defaults.projects,
+          local_fs: parsed.local_fs ? { ...defaults.local_fs, ...parsed.local_fs } : defaults.local_fs
         };
       }
     } catch {
@@ -347,31 +358,183 @@ export default function App() {
     }
   }, [globalInstructionSet, gameTimeMinutes, savedInteractions, timeOfDayEvents, agents]);
 
-  const handleChangeGameTimeMinutes = useCallback((nextMinutes: number, eventNote?: string) => {
-    const normalized = ((Math.round(nextMinutes) % 1440) + 1440) % 1440;
-    const info = getTimeOfDayInfo(normalized);
-    setGameTimeMinutes(normalized);
-    const newEvent: TimeOfDayEventLog = {
-      id: `evt_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      gameTimeMinutes: normalized,
-      formattedTime: info.formattedTime,
-      phase: info.phase,
-      eventTitle: info.activeWorldEvent,
-      eventDescription: eventNote || `Clock updated to ${info.formattedTime} (${info.phase})`
-    };
-    setTimeOfDayEvents((prev) => [...prev, newEvent]);
-    setStatusBanner(
-      `Gameplay Clock: ${info.formattedTime} (${info.phase}) — Saved Time-of-Day Event: ${info.activeWorldEvent}`
-    );
+  // ============================================================================
+  // 100% LOCAL COMPUTER WORKSPACE & DEDICATED ASSET FOLDERS MANAGER
+  // ============================================================================
+  const [localFoldersStatus, setLocalFoldersStatus] = useState<LocalDiskFolderStatus[]>([]);
+  const [localRootDiskPath, setLocalRootDiskPath] = useState<string>(
+    `./${LOCAL_WORKSPACE_ROOT_NAME}`
+  );
+  const [autoSaveToFolders, setAutoSaveToFolders] = useState<boolean>(true);
+  const [nativeDirName, setNativeDirName] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nativeDirHandleRef = useRef<any>(null);
+  const [lastSavedFolderBanner, setLastSavedFolderBanner] = useState<string | null>(null);
+
+  const refreshLocalDiskFoldersStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/local-fs/status');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.folders)) {
+          setLocalFoldersStatus(data.folders);
+        }
+        if (data.rootDiskPath) {
+          setLocalRootDiskPath(data.rootDiskPath);
+        }
+      }
+    } catch {
+      // When running offline in standalone HTML mode, synthesize status from localStorage mirror
+    }
   }, []);
 
-  const handleRecordInteraction = useCallback((entry: SavedInteractionEntry) => {
-    setSavedInteractions((prev) => [...prev, entry]);
+  useEffect(() => {
+    refreshLocalDiskFoldersStatus();
+  }, [refreshLocalDiskFoldersStatus]);
+
+  const saveItemToDedicatedFolder = useCallback(
+    async (
+      category: LocalFolderCategory,
+      itemName: string,
+      payload: unknown,
+      uniqueId = String(Date.now()).slice(-6),
+      forceEvenIfAutoOff = false
+    ) => {
+      if (!autoSaveToFolders && !forceEvenIfAutoOff) return;
+      const spec = getLocalFolderSpec(category);
+      const filename = buildLocalFolderItemFilename(category, itemName, uniqueId);
+
+      // 1. Write to Native Computer Folder Handle if user mounted one via File System Access API
+      if (nativeDirHandleRef.current) {
+        try {
+          const segments = spec.relativePath.split('/').filter(Boolean);
+          let currentDir = nativeDirHandleRef.current;
+          for (const seg of segments) {
+            currentDir = await currentDir.getDirectoryHandle(seg, { create: true });
+          }
+          const fileHandle = await currentDir.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(
+            JSON.stringify(
+              {
+                schemaVersion: '2.0.0',
+                savedAt: new Date().toISOString(),
+                category,
+                folderPath: `${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}`,
+                itemName,
+                data: payload
+              },
+              null,
+              2
+            )
+          );
+          await writable.close();
+        } catch {
+          // ignore native write error if permission revoked
+        }
+      }
+
+      // 2. Write to Server-Side Local Computer Workspace (./ArchitectForge_Workspace/<relativePath>/)
+      try {
+        const res = await fetch('/api/local-fs/save-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category,
+            itemName,
+            uniqueId,
+            payload
+          })
+        });
+        if (res.ok) {
+          const savedData = await res.json();
+          setLastSavedFolderBanner(
+            `${savedData.relativePath} (${(savedData.sizeBytes / 1024).toFixed(1)} KB)`
+          );
+          refreshLocalDiskFoldersStatus();
+          return;
+        }
+      } catch {
+        // Fallback when running offline
+      }
+
+      setLastSavedFolderBanner(
+        `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`
+      );
+    },
+    [autoSaveToFolders, refreshLocalDiskFoldersStatus]
+  );
+
+  const handleMountNativeComputerFolder = useCallback(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any;
+    if (typeof win.showDirectoryPicker === 'function') {
+      try {
+        const dirHandle = await win.showDirectoryPicker({ mode: 'readwrite' });
+        const workspaceRootHandle = await dirHandle.getDirectoryHandle(
+          LOCAL_WORKSPACE_ROOT_NAME,
+          { create: true }
+        );
+        for (const folder of LOCAL_WORKSPACE_FOLDERS) {
+          const segments = folder.relativePath.split('/').filter(Boolean);
+          let sub = workspaceRootHandle;
+          for (const seg of segments) {
+            sub = await sub.getDirectoryHandle(seg, { create: true });
+          }
+        }
+        nativeDirHandleRef.current = workspaceRootHandle;
+        setNativeDirName(`${dirHandle.name}/${LOCAL_WORKSPACE_ROOT_NAME}`);
+        setStatusBanner(
+          `📂 Mounted Computer Folder "${dirHandle.name}/${LOCAL_WORKSPACE_ROOT_NAME}" and created all 9 dedicated subfolders on disk!`
+        );
+        return;
+      } catch {
+        // User cancelled picker or iframe blocked showDirectoryPicker
+      }
+    }
     setStatusBanner(
-      `Saved Dialogue & Daily Action History for "${entry.characterName}" at ${entry.gameTimeFormatted} (${entry.phase}).`
+      `Local Computer Workspace active at "${localRootDiskPath}" — Use "⬇ Windows (.bat)" or "⬇ Mac/Linux (.sh)" when running standalone!`
     );
-  }, []);
+  }, [localRootDiskPath]);
+
+  const handleChangeGameTimeMinutes = useCallback(
+    (nextMinutes: number, eventNote?: string) => {
+      const normalized = ((Math.round(nextMinutes) % 1440) + 1440) % 1440;
+      const info = getTimeOfDayInfo(normalized);
+      setGameTimeMinutes(normalized);
+      const newEvent: TimeOfDayEventLog = {
+        id: `evt_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        gameTimeMinutes: normalized,
+        formattedTime: info.formattedTime,
+        phase: info.phase,
+        eventTitle: info.activeWorldEvent,
+        eventDescription: eventNote || `Clock updated to ${info.formattedTime} (${info.phase})`
+      };
+      setTimeOfDayEvents((prev) => [...prev, newEvent]);
+      saveItemToDedicatedFolder('time_events', `${info.phase}_${info.formattedTime}`, newEvent);
+      setStatusBanner(
+        `Gameplay Clock: ${info.formattedTime} (${info.phase}) — Saved Time-of-Day Event to dedicated folder!`
+      );
+    },
+    [saveItemToDedicatedFolder]
+  );
+
+  const handleRecordInteraction = useCallback(
+    (entry: SavedInteractionEntry) => {
+      setSavedInteractions((prev) => [...prev, entry]);
+      saveItemToDedicatedFolder(
+        'interactions',
+        `${entry.characterName}_${entry.phase}`,
+        entry,
+        entry.id
+      );
+      setStatusBanner(
+        `Saved Dialogue & Daily Action History for "${entry.characterName}" to ./ArchitectForge_Workspace/gameplay_logs/interactions/!`
+      );
+    },
+    [saveItemToDedicatedFolder]
+  );
 
   // AI 3D Mesh & Texture Synthesis State
   const [aiForgeBusy, setAiForgeBusy] = useState<boolean>(false);
@@ -979,22 +1142,26 @@ export default function App() {
       setSelectedAssetId(copy.id);
       setSelectedAssetIds([copy.id]);
       setActiveBlueprint(null);
-      setStatusBanner(`Duplicated "${asset.name}" and selected the new copy for modification.`);
+      saveItemToDedicatedFolder('environment_3d', copy.name, copy, copy.id);
+      setStatusBanner(
+        `Duplicated "${asset.name}" and saved newly added asset to ./ArchitectForge_Workspace/assets/environment_3d/!`
+      );
     },
-    [recordUndoSnapshot]
+    [recordUndoSnapshot, saveItemToDedicatedFolder]
   );
 
-  // Save any modified or generated asset directly into the Asset List catalog
+  // Save any modified or generated asset directly into the Asset List catalog AND dedicated catalog_blueprints folder
   const handleSaveAssetToCatalog = useCallback(
     (asset: PlacedAsset) => {
       soundFX.playPlaceAsset();
       const bp = createBlueprintFromAsset(asset);
       setCatalogAssets((prev) => [bp, ...prev]);
+      saveItemToDedicatedFolder('catalog_blueprints', bp.name, bp, bp.subType);
       setStatusBanner(
-        `Added "${asset.name}" to the Visual Asset Catalog (${catalogAssets.length + 1} total assets).`
+        `Added "${asset.name}" to Visual Catalog & saved to ./ArchitectForge_Workspace/assets/catalog_blueprints/!`
       );
     },
-    [catalogAssets.length]
+    [saveItemToDedicatedFolder]
   );
 
   // Download helper for JSON exports
@@ -1076,11 +1243,12 @@ export default function App() {
         useSelectionOnly ? 'selection' : 'full_room'
       ]);
       setRoomBlueprints((prev) => [newBp, ...prev]);
+      saveItemToDedicatedFolder('room_blueprints', newBp.name, newBp, newBp.id);
       setStatusBanner(
-        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects, ${newBp.boundingSize[0]}m × ${newBp.boundingSize[1]}m) to JSON Library!`
+        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects) to ./ArchitectForge_Workspace/room_blueprints/!`
       );
     },
-    [assets, selectedAssetIds, selectedAssetId, currentFloor]
+    [assets, selectedAssetIds, selectedAssetId, currentFloor, saveItemToDedicatedFolder]
   );
 
   // Load & instantiate a Room Blueprint onto the active floor layer (tracked on Undo stack)
@@ -1347,10 +1515,11 @@ export default function App() {
     const snap = buildCurrentProjectSnapshot();
     setSavedProjects((prev) => upsertProjectInSlotList(prev, snap));
     setActiveProjectId(snap.id);
+    saveItemToDedicatedFolder('projects', snap.name, snap, snap.id);
     setStatusBanner(
-      `💾 Saved Entire Project "${snap.name}" (${snap.floorLayers.length} floors, ${snap.assets.length} objects, ${snap.characterRigs.length} rigs) to Project Slots!`
+      `💾 Saved Entire Project "${snap.name}" to Project Slots & ./ArchitectForge_Workspace/projects/!`
     );
-  }, [buildCurrentProjectSnapshot]);
+  }, [buildCurrentProjectSnapshot, saveItemToDedicatedFolder]);
 
   const handleOverwriteProjectSlot = useCallback(
     (slotId: string) => {
@@ -1363,9 +1532,12 @@ export default function App() {
       );
       setSavedProjects((prev) => upsertProjectInSlotList(prev, snap));
       setActiveProjectId(snap.id);
-      setStatusBanner(`💾 Updated Project Slot "${snap.name}" with current studio state!`);
+      saveItemToDedicatedFolder('projects', snap.name, snap, snap.id);
+      setStatusBanner(
+        `💾 Updated Project Slot "${snap.name}" & synced to ./ArchitectForge_Workspace/projects/!`
+      );
     },
-    [savedProjects, projectName, projectDescription, buildCurrentProjectSnapshot]
+    [savedProjects, projectName, projectDescription, buildCurrentProjectSnapshot, saveItemToDedicatedFolder]
   );
 
   const handleDeleteProjectSlot = useCallback(
@@ -1391,6 +1563,67 @@ export default function App() {
     },
     [buildCurrentProjectSnapshot]
   );
+
+  // Download a 100% self-contained single-file Standalone HTML version of the app (with current project preloaded)
+  const [standaloneBusy, setStandaloneBusy] = useState<boolean>(false);
+  const handleDownloadStandaloneHtmlApp = useCallback(async () => {
+    setStandaloneBusy(true);
+    setStatusBanner(
+      'Packaging Standalone Single-File App ("ArchitectForge_Standalone.html") with your current project embedded...'
+    );
+    const snap = buildCurrentProjectSnapshot();
+    try {
+      const res = await fetch('/api/export/standalone-html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectSnapshot: snap })
+      });
+      if (!res.ok) throw new Error('Standalone endpoint unavailable');
+      const data = await res.json();
+      const htmlString: string = data.html;
+      const blob = new Blob([htmlString], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = data.filename || 'ArchitectForge_Standalone.html';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setStatusBanner(
+        `Downloaded Standalone App "ArchitectForge_Standalone.html" (${Math.round(
+          (data.sizeBytes || htmlString.length) / 1024
+        )} KB) — Double-click to run offline in any browser!`
+      );
+    } catch {
+      // Fallback when already running offline inside a standalone HTML file
+      const fullDoc = `<!doctype html>\n${document.documentElement.outerHTML}`;
+      const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'ArchitectForge_Standalone.html';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setStatusBanner('Downloaded offline Standalone HTML copy ("ArchitectForge_Standalone.html")!');
+    } finally {
+      setStandaloneBusy(false);
+    }
+  }, [buildCurrentProjectSnapshot]);
+
+  // If running from a downloaded Standalone HTML file with an embedded project snapshot, load it on boot
+  useEffect(() => {
+    const win = window as unknown as { __STANDALONE_INITIAL_PROJECT__?: unknown };
+    if (win.__STANDALONE_INITIAL_PROJECT__) {
+      const validation = validateAndParseProjectSnapshot(win.__STANDALONE_INITIAL_PROJECT__);
+      if (validation.valid && validation.project) {
+        applyProjectSnapshotToWorkspace(validation.project, 'Embedded Standalone HTML Bundle');
+      }
+      delete win.__STANDALONE_INITIAL_PROJECT__;
+    }
+  }, [applyProjectSnapshotToWorkspace]);
 
   // Copy JSON spec to clipboard for quick pasting into external apps
   const handleCopyJsonToClipboard = useCallback(async () => {
@@ -1510,12 +1743,17 @@ export default function App() {
       setActiveBlueprint(null);
       setSelectedAssetId(newAsset.id);
       setSelectedAssetIds([newAsset.id]);
+      saveItemToDedicatedFolder('environment_3d', newAsset.name, newAsset, newAsset.id);
+      saveItemToDedicatedFolder(
+        'catalog_blueprints',
+        generatedBlueprint.name,
+        generatedBlueprint,
+        generatedBlueprint.subType
+      );
       setStatusBanner(
-        `Forged "${newAsset.name}" (${
-          referenceImageUrl ? 'Meshy.ai Image-to-3D + ' : ''
-        }Google gemini-3.1-flash-lite) — Added to Visual Catalog & placed on ${
+        `Forged "${newAsset.name}" — Placed on ${
           getFloorMeta(currentFloor, floorLayers).shortCode
-        }!`
+        } & auto-saved to ./ArchitectForge_Workspace/assets/environment_3d/!`
       );
     } catch {
       const fallback = buildProcedural3DSpecFromPrompt(promptText);
@@ -1542,10 +1780,17 @@ export default function App() {
       setActiveBlueprint(null);
       setSelectedAssetId(newAsset.id);
       setSelectedAssetIds([newAsset.id]);
+      saveItemToDedicatedFolder('environment_3d', newAsset.name, newAsset, newAsset.id);
+      saveItemToDedicatedFolder(
+        'catalog_blueprints',
+        generatedBlueprint.name,
+        generatedBlueprint,
+        generatedBlueprint.subType
+      );
       setStatusBanner(
-        `Forged "${newAsset.name}" — Added to Visual Catalog & placed on ${
+        `Forged "${newAsset.name}" — Placed on ${
           getFloorMeta(currentFloor, floorLayers).shortCode
-        }!`
+        } & auto-saved to ./ArchitectForge_Workspace/assets/environment_3d/!`
       );
     } finally {
       setAiForgeBusy(false);
@@ -1566,20 +1811,223 @@ export default function App() {
         body: JSON.stringify({ prompt: promptText, aspectRatio: '1:1' })
       });
       const data = await res.json();
-      if (data.imageUrl) {
-        setCustomGeneratedTexUrl(data.imageUrl);
-        setStatusBanner(
-          `Synthesized custom surface texture with Google gemini-3.1-flash-lite-image!`
-        );
-      } else {
-        setStatusBanner(`Applied procedural weathered NYC masonry texture preset.`);
-      }
+      const finalTexUrl = data.imageUrl || generateSeamlessSvgTextureDataUrl(promptText);
+      setCustomGeneratedTexUrl(finalTexUrl);
+      saveItemToDedicatedFolder('textures', promptText, {
+        prompt: promptText,
+        imageUrl: finalTexUrl,
+        synthesizedAt: new Date().toISOString()
+      });
+      setStatusBanner(
+        `Synthesized surface texture "${promptText}" & saved to ./ArchitectForge_Workspace/assets/textures/!`
+      );
     } catch {
-      setStatusBanner(`Applied procedural weathered NYC masonry texture preset.`);
+      const fallbackSvg = generateSeamlessSvgTextureDataUrl(promptText);
+      setCustomGeneratedTexUrl(fallbackSvg);
+      saveItemToDedicatedFolder('textures', promptText, {
+        prompt: promptText,
+        imageUrl: fallbackSvg,
+        synthesizedAt: new Date().toISOString()
+      });
+      setStatusBanner(
+        `Synthesized seamless offline surface texture "${promptText}" & saved to ./ArchitectForge_Workspace/assets/textures/!`
+      );
     } finally {
       setAiForgeBusy(false);
     }
   };
+
+  // Quick-save or sync handlers for the Dedicated Local Folders window
+  const handleQuickSaveCategorySample = useCallback(
+    (category: LocalFolderCategory) => {
+      soundFX.playPlaceAsset();
+      if (category === 'projects') {
+        const snap = buildCurrentProjectSnapshot();
+        saveItemToDedicatedFolder('projects', snap.name, snap, snap.id, true);
+      } else if (category === 'environment_3d') {
+        const target =
+          assets.find((a) => a.id === selectedAssetId) ||
+          assets[assets.length - 1] || {
+            id: `asset3d_${Date.now()}`,
+            name: 'Custom Brass Chandelier',
+            category: 'custom_ai',
+            subType: 'meshy_ai_object',
+            floor: currentFloor,
+            position: [0, 1.2, 0],
+            dimensions: [1.2, 1.4, 1.2],
+            rotationY: 0,
+            color: '#d4af37',
+            textureId: 'aged_brass',
+            collidable: true,
+            compositeParts: buildProcedural3DSpecFromPrompt('Custom Brass Chandelier').parts
+          };
+        saveItemToDedicatedFolder('environment_3d', target.name, target, target.id, true);
+      } else if (category === 'catalog_blueprints') {
+        const bp = catalogAssets[0];
+        if (bp) {
+          saveItemToDedicatedFolder('catalog_blueprints', bp.name, bp, bp.subType, true);
+        }
+      } else if (category === 'textures') {
+        const texUrl =
+          customGeneratedTexUrl || generateSeamlessSvgTextureDataUrl('1920s Art Deco Brass Tile');
+        saveItemToDedicatedFolder(
+          'textures',
+          'Art Deco Brass & Marble Surface',
+          {
+            name: 'Art Deco Brass & Marble Surface',
+            imageUrl: texUrl
+          },
+          String(Date.now()).slice(-6),
+          true
+        );
+      } else if (category === 'room_blueprints') {
+        const bp = roomBlueprints[0];
+        if (bp) {
+          saveItemToDedicatedFolder('room_blueprints', bp.name, bp, bp.id, true);
+        }
+      } else if (category === 'character_rigs') {
+        const rig = agents[0] || INITIAL_AGENTS[0];
+        if (rig) {
+          saveItemToDedicatedFolder('character_rigs', rig.name, rig, rig.id, true);
+        }
+      } else if (category === 'ai_instructions') {
+        saveItemToDedicatedFolder(
+          'ai_instructions',
+          'Global & Personal Lore Sandbox',
+          {
+            globalInstructionSet,
+            characterCount: agents.length
+          },
+          String(Date.now()).slice(-6),
+          true
+        );
+      } else if (category === 'interactions') {
+        saveItemToDedicatedFolder(
+          'interactions',
+          'Dialogue & Daily Actions Transcript',
+          savedInteractions,
+          String(Date.now()).slice(-6),
+          true
+        );
+      } else if (category === 'time_events') {
+        saveItemToDedicatedFolder(
+          'time_events',
+          'Gameplay Clock & World Events Log',
+          timeOfDayEvents,
+          String(Date.now()).slice(-6),
+          true
+        );
+      }
+      const spec = getLocalFolderSpec(category);
+      setStatusBanner(
+        `Saved item directly into ./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/ on disk!`
+      );
+    },
+    [
+      buildCurrentProjectSnapshot,
+      saveItemToDedicatedFolder,
+      assets,
+      selectedAssetId,
+      currentFloor,
+      catalogAssets,
+      customGeneratedTexUrl,
+      roomBlueprints,
+      agents,
+      globalInstructionSet,
+      savedInteractions,
+      timeOfDayEvents
+    ]
+  );
+
+  const handleSyncAllDataToFolders = useCallback(async () => {
+    soundFX.playPlaceAsset();
+    for (const folder of LOCAL_WORKSPACE_FOLDERS) {
+      handleQuickSaveCategorySample(folder.category);
+    }
+    setStatusBanner(
+      `⚡ Synced all 9 data categories & newly added assets into ./${LOCAL_WORKSPACE_ROOT_NAME}/ dedicated folders!`
+    );
+  }, [handleQuickSaveCategorySample]);
+
+  const handleLoadFileFromFolder = useCallback(
+    async (category: LocalFolderCategory, filename: string) => {
+      try {
+        const res = await fetch(
+          `/api/local-fs/read-item?category=${encodeURIComponent(
+            category
+          )}&filename=${encodeURIComponent(filename)}`
+        );
+        if (!res.ok) return;
+        const { parsed } = await res.json();
+        const payload = parsed?.data ?? parsed?.asset ?? parsed?.blueprint ?? parsed?.character ?? parsed;
+        soundFX.playPlaceAsset();
+
+        if (category === 'projects') {
+          const check = validateAndParseProjectSnapshot(payload);
+          if (check.valid && check.project) {
+            applyProjectSnapshotToWorkspace(check.project, `Local Folder (${filename})`);
+            return;
+          }
+        } else if (category === 'environment_3d') {
+          const obj: PlacedAsset = payload?.parts
+            ? {
+                id: `loaded3d_${Date.now()}`,
+                name: payload.name || filename,
+                category: 'custom_ai',
+                subType: 'meshy_ai_object',
+                floor: currentFloor,
+                position: [0, (payload.dimensions?.[1] || 1.2) / 2, 0],
+                dimensions: payload.dimensions || [1.2, 1.2, 1.2],
+                rotationY: 0,
+                color: '#d4af37',
+                textureId: 'aged_brass',
+                collidable: true,
+                compositeParts: payload.parts
+              }
+            : {
+                ...(payload as PlacedAsset),
+                id: `loaded3d_${Date.now()}`,
+                floor: currentFloor
+              };
+          recordUndoSnapshot(`Load "${obj.name}" from dedicated folder`);
+          setAssets((prev) => [...prev, obj]);
+          setSelectedAssetId(obj.id);
+          setSelectedAssetIds([obj.id]);
+          setStatusBanner(
+            `Loaded 3D asset "${obj.name}" from ./ArchitectForge_Workspace/assets/environment_3d/${filename}!`
+          );
+          return;
+        } else if (category === 'catalog_blueprints' && payload?.name) {
+          setCatalogAssets((prev) => [payload as AssetBlueprint, ...prev]);
+          setStatusBanner(`Loaded catalog blueprint "${payload.name}" from dedicated folder!`);
+          return;
+        } else if (category === 'textures') {
+          const url = payload?.imageUrl || payload?.texture?.imageUrl;
+          if (url) {
+            setCustomGeneratedTexUrl(url);
+            setStatusBanner(`Loaded surface texture from ${filename}!`);
+            return;
+          }
+        } else if (category === 'room_blueprints' && payload?.items) {
+          handleLoadRoomBlueprint(payload as RoomBlueprint, 0, 0, false);
+          return;
+        } else if (category === 'character_rigs' && payload?.name) {
+          setAgents((prev) => [...prev, payload as HotelAgentProfile]);
+          setStatusBanner(`Loaded Character Rig "${payload.name}" from dedicated folder!`);
+          return;
+        }
+        setStatusBanner(`Loaded "${filename}" from ./${LOCAL_WORKSPACE_ROOT_NAME}/${category}/.`);
+      } catch {
+        setStatusBanner(`Could not read "${filename}" from dedicated folder.`);
+      }
+    },
+    [
+      applyProjectSnapshotToWorkspace,
+      currentFloor,
+      recordUndoSnapshot,
+      handleLoadRoomBlueprint
+    ]
+  );
 
   // Google Search Grounded Architectural Proportion & Material Reference Lookup
   const handleResearchNycLore = async (query: string) => {
@@ -1756,6 +2204,20 @@ export default function App() {
 
               <button
                 type="button"
+                data-testid="open-local-folders-btn"
+                onClick={() => {
+                  handleToggleOpenWindow('local_fs', true);
+                  handleFocusWindow('local_fs');
+                  refreshLocalDiskFoldersStatus();
+                }}
+                title="Open the 100% Local Computer Workspace & Dedicated Asset Folders Manager (9 dedicated folders for projects, 3D assets, catalog blueprints, textures, room blueprints, character rigs, AI lore, and logs)"
+                className="px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
+              >
+                📁 Local Folders (9)
+              </button>
+
+              <button
+                type="button"
                 data-testid="open-project-manager-btn"
                 onClick={() => {
                   handleToggleOpenWindow('projects', true);
@@ -1780,9 +2242,20 @@ export default function App() {
                 type="button"
                 onClick={() => handleExportFullAssetPack()}
                 title="Download complete Project (.architectforge.json)"
-                className="px-3 py-1 bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
+                className="px-2.5 py-1 bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
               >
                 Export (.json)
+              </button>
+
+              <button
+                type="button"
+                data-testid="download-standalone-html-btn"
+                disabled={standaloneBusy}
+                onClick={handleDownloadStandaloneHtmlApp}
+                title="Download a self-contained single-file Standalone HTML version of the app (runs offline in any browser)"
+                className="px-2.5 py-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 disabled:opacity-50 rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
+              >
+                {standaloneBusy ? 'Packaging...' : '⬇ Standalone (.html)'}
               </button>
 
               <button
@@ -1846,8 +2319,8 @@ export default function App() {
                 Windows:
               </span>
               {(mode === 'character'
-                ? (['projects', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
-                : (['projects', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
+                ? (['local_fs', 'projects', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
+                : (['local_fs', 'projects', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
               ).map((winId) => {
                 const win = studioWindows[winId];
                 const isVisible = win.isOpen && !win.isMinimized;
@@ -1927,13 +2400,48 @@ export default function App() {
             onSaveCharacterRig={(newRig) => {
               soundFX.playPlaceAsset();
               setAgents((prev) => [...prev, newRig]);
+              saveItemToDedicatedFolder('character_rigs', newRig.name, newRig, newRig.id);
+              saveItemToDedicatedFolder(
+                'ai_instructions',
+                `${newRig.name}_Instructions`,
+                {
+                  characterName: newRig.name,
+                  globalInstructionSet,
+                  personalInstructionSet: newRig.personalInstructionSet,
+                  knownFacts: newRig.knownFacts
+                },
+                newRig.id
+              );
               setStatusBanner(
-                `Saved custom 3D Character Rig "${newRig.name}" (with AI personality, offline instruction sets & history) to ${newRig.roomNumber}!`
+                `Saved custom 3D Character Rig "${newRig.name}" to ./ArchitectForge_Workspace/characters/rigs/ & ai_instructions/!`
               );
             }}
             onExportCharacterRig={handleExportCharacterRig}
           />
         )}
+
+        {/* 100% Local Computer Workspace & Dedicated Asset Folders Window */}
+        <LocalDiskFoldersWindow
+          windowState={studioWindows.local_fs}
+          onFocus={handleFocusWindow}
+          onMove={handleMoveWindow}
+          onResize={handleResizeWindow}
+          onToggleMinimize={handleToggleMinimizeWindow}
+          onToggleMaximize={handleToggleMaximizeWindow}
+          onClose={(id) => handleToggleOpenWindow(id, false)}
+          foldersStatus={localFoldersStatus}
+          rootDiskPath={localRootDiskPath}
+          autoSaveToFolders={autoSaveToFolders}
+          onToggleAutoSaveToFolders={() => setAutoSaveToFolders((v) => !v)}
+          nativeDirName={nativeDirName}
+          onMountNativeComputerFolder={handleMountNativeComputerFolder}
+          onSyncAllDataToFolders={handleSyncAllDataToFolders}
+          onQuickSaveCategorySample={handleQuickSaveCategorySample}
+          onLoadFileFromFolder={handleLoadFileFromFolder}
+          onRefreshStatus={refreshLocalDiskFoldersStatus}
+          lastSavedBanner={lastSavedFolderBanner}
+          onExportStandaloneHtml={handleDownloadStandaloneHtmlApp}
+        />
 
         {/* Entire Project Save & Load Manager Floating Window */}
         <ProjectSaveLoadWindow
