@@ -10,7 +10,9 @@ import {
   CharacterAppearance,
   checkPlayerCollision,
   getRoomLabelAtPosition,
-  snapToGrid
+  snapToGrid,
+  computeWallRowPlacements,
+  WallRowPlacement
 } from '../game/rules';
 import {
   buildAssetMeshGroup,
@@ -18,7 +20,7 @@ import {
   buildTPoseScaleMannequin,
   getProceduralMaterialTextures
 } from '../game/procedural3D';
-import { AssetBlueprint } from '../game/hotelData';
+import { AssetBlueprint, createBlueprintFromAsset } from '../game/hotelData';
 import { soundFX } from '../game/soundEffects';
 
 export type WorkspaceMode = 'architect' | 'character' | 'walkthrough';
@@ -40,6 +42,10 @@ interface HotelViewport3DProps {
   onSelectAsset: (assetId: string | null, shiftKey?: boolean) => void;
   onMarqueeSelectAssets: (assetIds: string[], additiveShift?: boolean) => void;
   onPlaceBlueprintAt: (x: number, z: number) => void;
+  onPlaceBlueprintRow?: (
+    segments: WallRowPlacement[],
+    blueprintOverride?: AssetBlueprint
+  ) => void;
   onBeginAssetDrag: (assetId: string) => void;
   onMoveSelectedAssetTo: (assetId: string, x: number, z: number) => void;
   onToggleAssetOpen: (asset: PlacedAsset) => void;
@@ -75,6 +81,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
   onSelectAsset,
   onMarqueeSelectAssets,
   onPlaceBlueprintAt,
+  onPlaceBlueprintRow,
   onBeginAssetDrag,
   onMoveSelectedAssetTo,
   onToggleAssetOpen,
@@ -108,6 +115,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     onSelectAsset,
     onMarqueeSelectAssets,
     onPlaceBlueprintAt,
+    onPlaceBlueprintRow,
     onBeginAssetDrag,
     onMoveSelectedAssetTo,
     onToggleAssetOpen,
@@ -134,6 +142,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       onSelectAsset,
       onMarqueeSelectAssets,
       onPlaceBlueprintAt,
+      onPlaceBlueprintRow,
       onBeginAssetDrag,
       onMoveSelectedAssetTo,
       onToggleAssetOpen,
@@ -303,6 +312,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     );
     ghostPreviewMesh.visible = false;
     worldGroup.add(ghostPreviewMesh);
+
+    // Dynamic Wall Row Drag-Placement Ghost Preview Group
+    const ghostRowPreviewGroup = new THREE.Group();
+    ghostRowPreviewGroup.visible = false;
+    worldGroup.add(ghostRowPreviewGroup);
 
     // Safely dispose transient child geometries & materials before clearing a group (prevents GPU memory leaks)
     const disposeGroupChildren = (group: THREE.Group) => {
@@ -551,6 +565,43 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     let downStartX = 0;
     let downStartY = 0;
 
+    // Wall Row Click-and-Drag Placement State
+    let isWallRowDragging = false;
+    let wallRowStartPos: { x: number; z: number } | null = null;
+    let activeWallRowBlueprint: AssetBlueprint | null = null;
+    let wallRowCurrentSegments: WallRowPlacement[] = [];
+
+    const updateGhostRowPreview = (
+      segments: WallRowPlacement[],
+      dimensions: [number, number, number]
+    ) => {
+      disposeGroupChildren(ghostRowPreviewGroup);
+      ghostRowPreviewGroup.visible = true;
+      const [w, h, d] = dimensions;
+      segments.forEach((seg) => {
+        const boxGeom = new THREE.BoxGeometry(w, h, d);
+        const ghostMat = new THREE.MeshStandardMaterial({
+          color: 0x10b981,
+          transparent: true,
+          opacity: 0.68,
+          roughness: 0.25,
+          metalness: 0.1
+        });
+        const ghostMesh = new THREE.Mesh(boxGeom, ghostMat);
+        ghostMesh.position.set(seg.x, h / 2, seg.z);
+        ghostMesh.rotation.y = seg.rotationY;
+
+        const edges = new THREE.EdgesGeometry(boxGeom);
+        const line = new THREE.LineSegments(
+          edges,
+          new THREE.LineBasicMaterial({ color: 0x34d399, linewidth: 2 })
+        );
+        ghostMesh.add(line);
+
+        ghostRowPreviewGroup.add(ghostMesh);
+      });
+    };
+
     const architectOrbit = {
       theta: 0.55,
       phi: 0.88,
@@ -566,6 +617,12 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       keysHeld.clear();
       isPointerDown = false;
       isMarqueeDragging = false;
+      isWallRowDragging = false;
+      wallRowStartPos = null;
+      activeWallRowBlueprint = null;
+      wallRowCurrentSegments = [];
+      ghostRowPreviewGroup.visible = false;
+      disposeGroupChildren(ghostRowPreviewGroup);
       draggingAssetId = null;
       hasRecordedDragStart = false;
       ghostPreviewMesh.visible = false;
@@ -686,16 +743,34 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       _raycaster.setFromCamera(_mouse, camera);
 
       if (st.mode === 'architect' && !st.isolateSelectedAsset) {
-        // 1. Place blueprint if loaded on cursor anywhere on the 128x128 tile grid
+        // 1. Place blueprint or initiate wall row drag if active blueprint is loaded
         if (st.activeBlueprint) {
           const hitPoint = new THREE.Vector3();
           if (_raycaster.ray.intersectPlane(_groundPlane, hitPoint)) {
             const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5);
             const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5);
-            soundFX.playPlaceAsset();
-            st.onPlaceBlueprintAt(gx, gz);
-            ghostPreviewMesh.visible = false;
-            return;
+            if (st.activeBlueprint.category === 'wall') {
+              // Initiate Wall Row Drag!
+              isWallRowDragging = true;
+              wallRowStartPos = { x: gx, z: gz };
+              activeWallRowBlueprint = st.activeBlueprint;
+              const initialSegs = computeWallRowPlacements(
+                gx,
+                gz,
+                gx,
+                gz,
+                st.activeBlueprint.defaultDimensions
+              );
+              wallRowCurrentSegments = initialSegs;
+              updateGhostRowPreview(initialSegs, st.activeBlueprint.defaultDimensions);
+              ghostPreviewMesh.visible = false;
+              return;
+            } else {
+              soundFX.playPlaceAsset();
+              st.onPlaceBlueprintAt(gx, gz);
+              ghostPreviewMesh.visible = false;
+              return;
+            }
           }
         }
 
@@ -708,6 +783,27 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           }
           if (obj?.userData?.assetId) {
             const hitId = obj.userData.assetId;
+            const hitAsset = obj.userData?.asset as PlacedAsset | undefined;
+
+            // Alt + Click on an existing wall initiates an Extend Wall Row drag
+            if (e.altKey && hitAsset && hitAsset.category === 'wall') {
+              isWallRowDragging = true;
+              const bp = createBlueprintFromAsset(hitAsset);
+              activeWallRowBlueprint = bp;
+              wallRowStartPos = { x: hitAsset.position[0], z: hitAsset.position[2] };
+              const initialSegs = computeWallRowPlacements(
+                wallRowStartPos.x,
+                wallRowStartPos.z,
+                wallRowStartPos.x,
+                wallRowStartPos.z,
+                bp.defaultDimensions
+              );
+              wallRowCurrentSegments = initialSegs;
+              updateGhostRowPreview(initialSegs, bp.defaultDimensions);
+              ghostPreviewMesh.visible = false;
+              return;
+            }
+
             // If clicking an already multi-selected object without Shift, keep the multi-selection so dragging moves them all simultaneously
             if (!e.shiftKey && st.selectedAssetIds.length > 1 && st.selectedAssetIds.includes(hitId)) {
               draggingAssetId = hitId;
@@ -780,6 +876,23 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         const hitPoint = new THREE.Vector3();
         const hitPlane = _raycaster.ray.intersectPlane(_groundPlane, hitPoint);
 
+        // Dynamic Wall Row Drag Placement: Update live preview segments along dominant axis
+        if (isWallRowDragging && wallRowStartPos && activeWallRowBlueprint && hitPlane) {
+          const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5);
+          const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5);
+          const segs = computeWallRowPlacements(
+            wallRowStartPos.x,
+            wallRowStartPos.z,
+            gx,
+            gz,
+            activeWallRowBlueprint.defaultDimensions
+          );
+          wallRowCurrentSegments = segs;
+          updateGhostRowPreview(segs, activeWallRowBlueprint.defaultDimensions);
+          ghostPreviewMesh.visible = false;
+          return;
+        }
+
         if (st.activeBlueprint && hitPlane) {
           const [bw, bh, bd] = st.activeBlueprint.defaultDimensions;
           ghostPreviewMesh.visible = true;
@@ -832,6 +945,29 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
     const onPointerUp = (e: PointerEvent) => {
       const st = stateRef.current;
+
+      // Finalize Wall Row Drag-Placement
+      if (isWallRowDragging && wallRowStartPos && activeWallRowBlueprint) {
+        if (wallRowCurrentSegments.length > 0) {
+          soundFX.playPlaceAsset();
+          if (st.onPlaceBlueprintRow) {
+            st.onPlaceBlueprintRow(wallRowCurrentSegments, activeWallRowBlueprint);
+          } else {
+            wallRowCurrentSegments.forEach((seg) => {
+              st.onPlaceBlueprintAt(seg.x, seg.z);
+            });
+          }
+        }
+        isWallRowDragging = false;
+        wallRowStartPos = null;
+        activeWallRowBlueprint = null;
+        wallRowCurrentSegments = [];
+        ghostRowPreviewGroup.visible = false;
+        disposeGroupChildren(ghostRowPreviewGroup);
+        isPointerDown = false;
+        return;
+      }
+
       if (isMarqueeDragging) {
         const minX = Math.min(downStartX, e.clientX);
         const maxX = Math.max(downStartX, e.clientX);

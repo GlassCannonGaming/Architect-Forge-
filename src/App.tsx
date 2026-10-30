@@ -47,7 +47,8 @@ import {
   LOCAL_WORKSPACE_FOLDERS,
   LOCAL_WORKSPACE_ROOT_NAME,
   getLocalFolderSpec,
-  buildLocalFolderItemFilename
+  buildLocalFolderItemFilename,
+  WallRowPlacement
 } from './game/rules';
 import {
   INITIAL_PLACED_ASSETS,
@@ -871,6 +872,18 @@ export default function App() {
       if (e.code === 'Escape') {
         e.preventDefault();
         handleClearMouse();
+      } else if (e.code === 'KeyW' && !e.ctrlKey && !e.metaKey && mode === 'architect') {
+        e.preventDefault();
+        soundFX.playPlaceAsset();
+        const wallBp = catalogAssets.find((b) => b.category === 'wall') || catalogAssets[0];
+        setActiveBlueprint(wallBp);
+        setSelectedAssetId(null);
+        setSelectedAssetIds([]);
+        setQuickEditWindowOpen(false);
+        setStatusBanner(
+          `🧱 Wall Tool active [W] ("${wallBp.name}") — Click & Drag across the grid to place a seamless row of walls!`
+        );
+        return;
       } else if (e.code === 'KeyH') {
         handleResetWindowLayout();
       } else if (e.code === 'KeyM') {
@@ -897,7 +910,9 @@ export default function App() {
     recordUndoSnapshot,
     selectedAssetId,
     selectedAssetIds,
-    assets
+    assets,
+    mode,
+    catalogAssets
   ]);
 
   // Place new asset blueprint on 128x128 grid (Addition -> tracked on undo stack)
@@ -927,11 +942,66 @@ export default function App() {
       setSelectedAssetId(newAsset.id);
       setSelectedAssetIds([newAsset.id]);
       setActiveBlueprint(null);
+      saveItemToDedicatedFolder('environment_3d', newAsset.name, newAsset, newAsset.id);
       setStatusBanner(
         `Placed "${newAsset.name}" at (${x}m, ${z}m) — Press [F] to Quick-Edit (resize/color) or [E] to interact.`
       );
     },
-    [activeBlueprint, currentFloor, currentRoomLabel, recordUndoSnapshot]
+    [activeBlueprint, currentFloor, currentRoomLabel, recordUndoSnapshot, saveItemToDedicatedFolder]
+  );
+
+  // Place a row of wall segments along grid (drag-placement in one unified operation)
+  const handlePlaceBlueprintRow = useCallback(
+    (segments: WallRowPlacement[], blueprintOverride?: AssetBlueprint) => {
+      const bp = blueprintOverride || activeBlueprint;
+      if (!bp || segments.length === 0) return;
+
+      const actionLabel =
+        segments.length === 1
+          ? `Add "${bp.name}"`
+          : `Add row of ${segments.length} walls`;
+      recordUndoSnapshot(actionLabel);
+
+      const [w, h, d] = bp.defaultDimensions;
+      const baseTimestamp = Date.now();
+      const newAssets: PlacedAsset[] = segments.map((seg, idx) => ({
+        id: `custom_${bp.subType}_${baseTimestamp}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+        name: segments.length === 1 ? bp.name : `${bp.name} ${idx + 1}`,
+        category: bp.category,
+        subType: bp.subType,
+        floor: currentFloor,
+        roomNumber: currentRoomLabel,
+        position: [seg.x, h / 2, seg.z],
+        dimensions: [w, h, d],
+        rotationY: seg.rotationY,
+        color: bp.defaultColor,
+        textureId: bp.defaultTexture,
+        isSecretPassage: bp.isSecretPassage,
+        isOpen: false,
+        collidable: bp.collidable,
+        compositeParts: bp.compositeParts
+      }));
+
+      setAssets((prev) => [...prev, ...newAssets]);
+      const newIds = newAssets.map((a) => a.id);
+      setSelectedAssetIds(newIds);
+      setSelectedAssetId(newIds[newIds.length - 1] || null);
+      setActiveBlueprint(null);
+
+      // Auto-save placed walls to dedicated workspace folder
+      newAssets.forEach((placedWall) => {
+        saveItemToDedicatedFolder('environment_3d', placedWall.name, placedWall, placedWall.id);
+      });
+
+      const totalSpan = (segments.length * w).toFixed(1);
+      const axisName = segments[0].rotationY === 0 ? 'X' : 'Z';
+      setStatusBanner(
+        segments.length === 1
+          ? `Placed "${bp.name}" at (${segments[0].x.toFixed(1)}m, ${segments[0].z.toFixed(1)}m).`
+          : `🧱 Placed row of ${segments.length} connected walls (${totalSpan}m span) along ${axisName} axis!`
+      );
+    },
+    [activeBlueprint, currentFloor, currentRoomLabel, recordUndoSnapshot, saveItemToDedicatedFolder]
   );
 
   // Record snapshot once at the start of a 3D viewport drag gesture (supports single or multi-asset drag)
@@ -1243,9 +1313,10 @@ export default function App() {
         useSelectionOnly ? 'selection' : 'full_room'
       ]);
       setRoomBlueprints((prev) => [newBp, ...prev]);
+      saveItemToDedicatedFolder('blueprints', newBp.name, newBp, newBp.id);
       saveItemToDedicatedFolder('room_blueprints', newBp.name, newBp, newBp.id);
       setStatusBanner(
-        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects) to ./ArchitectForge_Workspace/room_blueprints/!`
+        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects) to ./ArchitectForge_Workspace/blueprints/!`
       );
     },
     [assets, selectedAssetIds, selectedAssetId, currentFloor, saveItemToDedicatedFolder]
@@ -1880,9 +1951,10 @@ export default function App() {
           String(Date.now()).slice(-6),
           true
         );
-      } else if (category === 'room_blueprints') {
+      } else if (category === 'blueprints' || category === 'room_blueprints') {
         const bp = roomBlueprints[0];
         if (bp) {
+          saveItemToDedicatedFolder('blueprints', bp.name, bp, bp.id, true);
           saveItemToDedicatedFolder('room_blueprints', bp.name, bp, bp.id, true);
         }
       } else if (category === 'character_rigs') {
@@ -1945,7 +2017,7 @@ export default function App() {
       handleQuickSaveCategorySample(folder.category);
     }
     setStatusBanner(
-      `⚡ Synced all 9 data categories & newly added assets into ./${LOCAL_WORKSPACE_ROOT_NAME}/ dedicated folders!`
+      `⚡ Synced all data categories & newly added assets into ./${LOCAL_WORKSPACE_ROOT_NAME}/ dedicated folders!`
     );
   }, [handleQuickSaveCategorySample]);
 
@@ -2008,7 +2080,7 @@ export default function App() {
             setStatusBanner(`Loaded surface texture from ${filename}!`);
             return;
           }
-        } else if (category === 'room_blueprints' && payload?.items) {
+        } else if ((category === 'blueprints' || category === 'room_blueprints') && payload?.items) {
           handleLoadRoomBlueprint(payload as RoomBlueprint, 0, 0, false);
           return;
         } else if (category === 'character_rigs' && payload?.name) {
@@ -2086,6 +2158,7 @@ export default function App() {
         onSelectAsset={handleSelectAsset}
         onMarqueeSelectAssets={handleMarqueeSelectAssets}
         onPlaceBlueprintAt={handlePlaceBlueprintAt}
+        onPlaceBlueprintRow={handlePlaceBlueprintRow}
         onBeginAssetDrag={handleBeginAssetDrag}
         onMoveSelectedAssetTo={handleMoveSelectedAssetTo}
         onToggleAssetOpen={handleToggleAssetOpen}
@@ -2110,6 +2183,17 @@ export default function App() {
           onInteractKeyE={handleInteractWithAssetKeyE}
           onDuplicate={handleDuplicateAsset}
           onDeleteSelected={() => handleDeleteAsset(selectedAsset.id)}
+          onExtendWallRow={(wallAsset) => {
+            const bp = createBlueprintFromAsset(wallAsset);
+            setActiveBlueprint(bp);
+            setSelectedAssetId(null);
+            setSelectedAssetIds([]);
+            setQuickEditWindowOpen(false);
+            soundFX.playPlaceAsset();
+            setStatusBanner(
+              `🧱 Wall Tool active from "${wallAsset.name}" — Click & Drag across the grid to place a connected row of walls!`
+            );
+          }}
         />
       )}
 
@@ -2210,10 +2294,10 @@ export default function App() {
                   handleFocusWindow('local_fs');
                   refreshLocalDiskFoldersStatus();
                 }}
-                title="Open the 100% Local Computer Workspace & Dedicated Asset Folders Manager (9 dedicated folders for projects, 3D assets, catalog blueprints, textures, room blueprints, character rigs, AI lore, and logs)"
+                title="Open the 100% Local Computer Workspace & Dedicated Asset Folders Manager (dedicated folders for projects, room blueprints, 3D assets, catalog blueprints, textures, character rigs, AI lore, and logs)"
                 className="px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
               >
-                📁 Local Folders (9)
+                📁 Local Folders ({localFoldersStatus.length || LOCAL_WORKSPACE_FOLDERS.length})
               </button>
 
               <button

@@ -16,6 +16,7 @@ interface QuickEditWindowFProps {
   onInteractKeyE: (asset: PlacedAsset) => void;
   onDuplicate: (asset: PlacedAsset) => void;
   onDeleteSelected: () => void;
+  onExtendWallRow?: (asset: PlacedAsset) => void;
 }
 
 const SWATCH_COLORS = [
@@ -48,7 +49,8 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
   onBatchModify,
   onInteractKeyE,
   onDuplicate,
-  onDeleteSelected
+  onDeleteSelected,
+  onExtendWallRow
 }) => {
   const [customPos, setCustomPos] = useState<{ x: number; y: number } | null>(null);
   const [minimized, setMinimized] = useState<boolean>(false);
@@ -313,6 +315,18 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             >
               Delete ({selectedCount})
             </button>
+            {primaryAsset.category === 'wall' && onExtendWallRow && (
+              <button
+                type="button"
+                data-testid="extend-wall-row-btn"
+                onClick={() => onExtendWallRow(primaryAsset)}
+                title="Activate Wall Drag Tool using this wall's style and dimensions"
+                className="col-span-2 px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-full text-[11px] font-bold shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <span>🧱</span>
+                <span>Extend Wall Row (Click &amp; Drag)</span>
+              </button>
+            )}
           </div>
         </div>
       )}

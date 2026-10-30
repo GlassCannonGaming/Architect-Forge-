@@ -725,6 +725,12 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
       }
     });
     if (INITIAL_ROOM_BLUEPRINTS.length > 0) {
+      seedHelper('blueprints', INITIAL_ROOM_BLUEPRINTS[0].name, 'seed01', {
+        schemaVersion: '2.0.0',
+        savedAt: new Date().toISOString(),
+        category: 'blueprints',
+        blueprint: INITIAL_ROOM_BLUEPRINTS[0]
+      });
       seedHelper('room_blueprints', INITIAL_ROOM_BLUEPRINTS[0].name, 'seed01', {
         schemaVersion: '2.0.0',
         savedAt: new Date().toISOString(),

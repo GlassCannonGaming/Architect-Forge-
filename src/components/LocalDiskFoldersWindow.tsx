@@ -67,7 +67,7 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
   lastSavedBanner,
   onExportStandaloneHtml
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<LocalFolderCategory>('environment_3d');
+  const [selectedCategory, setSelectedCategory] = useState<LocalFolderCategory>('blueprints');
 
   const displayFolders: LocalDiskFolderStatus[] =
     foldersStatus.length > 0
@@ -108,7 +108,7 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
   return (
     <StudioWindowFrame
       windowState={windowState}
-      badgeText={`9 Folders · ${totalFilesCount} Files`}
+      badgeText={`${displayFolders.length} Folders · ${totalFilesCount} Files`}
       onFocus={onFocus}
       onMove={onMove}
       onResize={onResize}
@@ -125,7 +125,7 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
                 100% LOCAL COMPUTER WORKSPACE
               </span>
               <span className="text-[11px] font-mono text-amber-300 font-semibold">
-                {LOCAL_WORKSPACE_ROOT_NAME}/ (9 Dedicated Subfolders • {totalFilesCount} Saved Files)
+                {LOCAL_WORKSPACE_ROOT_NAME}/ ({displayFolders.length} Dedicated Subfolders • {totalFilesCount} Saved Files)
               </span>
             </div>
             <div className="text-[10px] text-stone-400 font-mono mt-0.5 truncate max-w-[490px]">
@@ -165,11 +165,11 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
               type="button"
               onClick={onMountNativeComputerFolder}
               className="px-2.5 py-1 rounded bg-amber-500/25 hover:bg-amber-500/35 border border-amber-400/70 text-amber-200 text-[10px] font-bold transition"
-              title="Select a folder directly on your computer hard drive and auto-create all 9 dedicated subfolders"
+              title={`Select a folder directly on your computer hard drive and auto-create all ${displayFolders.length} dedicated subfolders`}
             >
               {nativeDirName
                 ? `📂 Mounted: ${nativeDirName} (Change)`
-                : '📂 Mount Computer Folder (Auto-Create 9 Subfolders)'}
+                : `📂 Mount Computer Folder (Auto-Create ${displayFolders.length} Subfolders)`}
             </button>
 
             <button
@@ -187,7 +187,7 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
               type="button"
               onClick={() => handleDownloadSetupScript('bat')}
               className="px-2 py-0.5 rounded bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 text-[10px]"
-              title="Download Windows batch script that creates the 9 dedicated folders on your PC"
+              title="Download Windows batch script that creates the dedicated folders on your PC"
             >
               ⬇ Windows (.bat)
             </button>
@@ -195,7 +195,7 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
               type="button"
               onClick={() => handleDownloadSetupScript('sh')}
               className="px-2 py-0.5 rounded bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 text-[10px]"
-              title="Download Mac/Linux shell script that creates the 9 dedicated folders"
+              title="Download Mac/Linux shell script that creates the dedicated folders"
             >
               ⬇ Mac/Linux (.sh)
             </button>
@@ -217,12 +217,12 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
           </div>
         )}
 
-        {/* Main Split View: Left = 9 Dedicated Folders Tree, Right = Folder Inspector & Saved Files */}
+        {/* Main Split View: Left = Dedicated Folders Tree, Right = Folder Inspector & Saved Files */}
         <div className="flex-1 grid grid-cols-12 min-h-0 overflow-hidden">
-          {/* Left Column: 9 Dedicated Folders */}
+          {/* Left Column: Dedicated Folders */}
           <div className="col-span-5 border-r border-stone-800 overflow-y-auto p-1.5 space-y-1 bg-stone-950/60">
             <div className="px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-400">
-              Dedicated Data & Asset Folders (9)
+              Dedicated Data & Asset Folders ({displayFolders.length})
             </div>
             {displayFolders.map((folder) => {
               const isSelected = folder.category === activeFolder.category;

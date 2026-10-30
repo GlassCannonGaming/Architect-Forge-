@@ -598,6 +598,28 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
                 <button
                   type="button"
+                  data-testid="wall-row-tool-btn"
+                  onClick={() => {
+                    const wallBp = catalogAssets.find((b) => b.category === 'wall') || catalogAssets[0];
+                    onSelectBlueprint(wallBp);
+                  }}
+                  className={`w-full px-3 py-1 rounded-full text-xs font-bold text-left flex items-center justify-between transition-all ${
+                    activeBlueprint?.category === 'wall'
+                      ? 'bg-amber-600 text-white shadow-xs ring-2 ring-amber-300'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>🧱</span>
+                    <span>Wall Tool (Click &amp; Drag Row)</span>
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-white/40 text-amber-950 font-bold rounded-md">
+                    [W]
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={onUndo}
                   disabled={undoCount === 0}
                   title={

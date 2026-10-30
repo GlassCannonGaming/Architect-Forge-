@@ -2302,6 +2302,7 @@ export function generateSeamlessSvgTextureDataUrl(prompt: string): string {
 
 export type LocalFolderCategory =
   | 'projects'
+  | 'blueprints'
   | 'environment_3d'
   | 'catalog_blueprints'
   | 'textures'
@@ -2334,6 +2335,16 @@ export const LOCAL_WORKSPACE_FOLDERS: LocalFolderSpec[] = [
     filePrefix: 'project',
     extension: '.architectforge.json',
     autoSavesOn: 'Saving or exporting a full project slot'
+  },
+  {
+    category: 'blueprints',
+    relativePath: 'blueprints',
+    label: 'Blueprints (Individual Room Layouts)',
+    dataTypeLabel: 'Room Layout Blueprints',
+    description: 'Distinct saved files for individual room layouts, modular furniture arrangements, and architectural structures.',
+    filePrefix: 'blueprint',
+    extension: '.blueprint.json',
+    autoSavesOn: 'Saving an individual room layout or blueprint to disk'
   },
   {
     category: 'environment_3d',
@@ -2419,7 +2430,12 @@ export const LOCAL_WORKSPACE_FOLDERS: LocalFolderSpec[] = [
 
 export function getLocalFolderSpec(category: LocalFolderCategory): LocalFolderSpec {
   const found = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === category);
-  return found || LOCAL_WORKSPACE_FOLDERS[0];
+  if (found) return found;
+  if (category === 'room_blueprints') {
+    const bp = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'blueprints');
+    if (bp) return bp;
+  }
+  return LOCAL_WORKSPACE_FOLDERS[0];
 }
 
 export function buildLocalFolderItemFilename(
@@ -2503,7 +2519,86 @@ How It Works:
   return { windowsBat, unixSh, readmeTxt };
 }
 
+// ============================================================================
+// WALL ROW DRAG PLACEMENT CALCULATION
+// ============================================================================
 
+export interface WallRowPlacement {
+  x: number;
+  z: number;
+  rotationY: number;
+  dimensions: [number, number, number];
+}
 
+/**
+ * Computes connected wall segment placements in a straight row
+ * when clicking and dragging across the 128x128 lot canvas.
+ * Automatically aligns to the dominant axis (X or Z) and snaps to grid.
+ */
+export function computeWallRowPlacements(
+  startX: number,
+  startZ: number,
+  endX: number,
+  endZ: number,
+  wallDimensions: [number, number, number] = [3.0, 3.0, 0.35],
+  gridStep = 0.5
+): WallRowPlacement[] {
+  const sx = snapToGrid(startX, gridStep);
+  const sz = snapToGrid(startZ, gridStep);
+  const ex = snapToGrid(endX, gridStep);
+  const ez = snapToGrid(endZ, gridStep);
 
+  const dx = ex - sx;
+  const dz = ez - sz;
+  const dist = Math.hypot(dx, dz);
+  const segLength = Math.max(0.5, wallDimensions[0]);
+
+  // If drag distance is very small (< 1.2m), return single segment at start position
+  if (dist < 1.2) {
+    return [
+      {
+        x: sx,
+        z: sz,
+        rotationY: 0,
+        dimensions: [...wallDimensions] as [number, number, number]
+      }
+    ];
+  }
+
+  const isXDominant = Math.abs(dx) >= Math.abs(dz);
+
+  if (isXDominant) {
+    const totalDist = Math.abs(dx);
+    const count = Math.max(1, Math.min(64, Math.round(totalDist / segLength)));
+    const dir = dx >= 0 ? 1 : -1;
+    const placements: WallRowPlacement[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const centerX = sx + dir * (i * segLength + segLength / 2);
+      placements.push({
+        x: snapToGrid(centerX, gridStep),
+        z: sz,
+        rotationY: 0,
+        dimensions: [...wallDimensions] as [number, number, number]
+      });
+    }
+    return placements;
+  } else {
+    const totalDist = Math.abs(dz);
+    const count = Math.max(1, Math.min(64, Math.round(totalDist / segLength)));
+    const dir = dz >= 0 ? 1 : -1;
+    const placements: WallRowPlacement[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const centerZ = sz + dir * (i * segLength + segLength / 2);
+      placements.push({
+        x: sx,
+        z: snapToGrid(centerZ, gridStep),
+        rotationY: Math.PI / 2, // Rotate 90 deg along Z axis
+        dimensions: [...wallDimensions] as [number, number, number]
+      });
+    }
+    return placements;
+  }
+}
 

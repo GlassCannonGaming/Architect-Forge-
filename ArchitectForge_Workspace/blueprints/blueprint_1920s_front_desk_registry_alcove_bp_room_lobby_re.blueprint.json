@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-10-30T19:48:33.474Z",
+  "category": "blueprints",
+  "folderPath": "ArchitectForge_Workspace/blueprints",
+  "itemName": "1920s Front Desk & Registry Alcove",
+  "data": {
+    "id": "bp_room_lobby_registry",
+    "name": "1920s Front Desk & Registry Alcove",
+    "description": "Complete hotel reception layout with brick backdrop wall, mahogany front desk, brass lamp, and crimson runner.",
+    "createdAt": "2026-10-30T08:00:00.000Z",
+    "tags": [
+      "lobby",
+      "reception",
+      "starter"
+    ],
+    "boundingSize": [
+      6,
+      5
+    ],
+    "items": [
+      {
+        "name": "NYC Pre-War Brick Wall",
+        "category": "wall",
+        "subType": "wall_brick_standard",
+        "relPosition": [
+          0,
+          1.5,
+          -2
+        ],
+        "dimensions": [
+          4.5,
+          3,
+          0.3
+        ],
+        "rotationY": 0,
+        "color": "#8c3b2b",
+        "textureId": "nyc_old_brick",
+        "collidable": true
+      },
+      {
+        "name": "Mahogany Concierge Desk",
+        "category": "furniture",
+        "subType": "concierge_desk",
+        "relPosition": [
+          0,
+          0.55,
+          -0.5
+        ],
+        "dimensions": [
+          2.6,
+          1.1,
+          0.9
+        ],
+        "rotationY": 0,
+        "color": "#5c3824",
+        "textureId": "oak_parquet",
+        "collidable": true
+      },
+      {
+        "name": "Crimson Parlor Area Rug",
+        "category": "floor_tile",
+        "subType": "crimson_carpet_runner",
+        "relPosition": [
+          0,
+          0.03,
+          1.2
+        ],
+        "dimensions": [
+          3.2,
+          0.06,
+          2.4
+        ],
+        "rotationY": 0,
+        "color": "#7f1d1d",
+        "textureId": "velvet_crimson",
+        "collidable": false
+      },
+      {
+        "name": "Brass Banker Desk Lamp",
+        "category": "lighting",
+        "subType": "brass_table_lamp",
+        "relPosition": [
+          -0.9,
+          1.2,
+          -0.5
+        ],
+        "dimensions": [
+          0.4,
+          0.55,
+          0.4
+        ],
+        "rotationY": 0,
+        "color": "#d4af37",
+        "textureId": "aged_brass",
+        "collidable": false
+      }
+    ]
+  }
+}

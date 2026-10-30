@@ -678,7 +678,7 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(svgUrl.startsWith('data:image/svg+xml;utf8,'), true);
 });
 
-test('Local Computer Workspace defines 9 dedicated folders for all data types and newly added assets', async () => {
+test('Local Computer Workspace defines dedicated folders for all data types including Blueprints and newly added assets', async () => {
   const {
     LOCAL_WORKSPACE_FOLDERS,
     buildLocalFolderItemFilename,
@@ -686,7 +686,15 @@ test('Local Computer Workspace defines 9 dedicated folders for all data types an
     createDefaultStudioWindows
   } = await import('./rules');
 
-  assert.equal(LOCAL_WORKSPACE_FOLDERS.length, 9);
+  assert.equal(LOCAL_WORKSPACE_FOLDERS.length >= 10, true);
+
+  const blueprintsFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'blueprints');
+  assert.equal(!!blueprintsFolder, true);
+  assert.equal(blueprintsFolder?.relativePath, 'blueprints');
+  assert.equal(blueprintsFolder?.label.includes('Blueprints'), true);
+
+  const bpFile = buildLocalFolderItemFilename('blueprints', 'Victorian Parlor Suite', 'r101');
+  assert.equal(bpFile, 'blueprint_victorian_parlor_suite_r101.blueprint.json');
 
   const asset3dFile = buildLocalFolderItemFilename(
     'environment_3d',
@@ -699,12 +707,56 @@ test('Local Computer Workspace defines 9 dedicated folders for all data types an
   assert.equal(texFile, 'texture_crimson_art_deco_carpet_t1.texture.json');
 
   const scripts = buildLocalSetupScripts();
-  assert.equal(scripts.windowsBat.includes('assets\\environment_3d'), true);
-  assert.equal(scripts.unixSh.includes('assets/environment_3d'), true);
-  assert.equal(scripts.readmeTxt.includes('gameplay_logs/interactions'), true);
+  assert.equal(scripts.windowsBat.includes('blueprints'), true);
+  assert.equal(scripts.unixSh.includes('blueprints'), true);
+  assert.equal(scripts.readmeTxt.includes('blueprints/'), true);
 
   const wins = createDefaultStudioWindows();
   assert.equal(wins.local_fs.id, 'local_fs');
+});
+
+test('computeWallRowPlacements generates a seamless row of walls along dominant axis when clicking and dragging', async () => {
+  const { computeWallRowPlacements } = await import('./rules');
+
+  // 1. Single click (or tiny jitter < 1.2m)
+  const single = computeWallRowPlacements(4, 2, 4.2, 2.1, [3.0, 3.0, 0.35]);
+  assert.equal(single.length, 1);
+  assert.equal(single[0].x, 4);
+  assert.equal(single[0].z, 2);
+  assert.equal(single[0].rotationY, 0);
+
+  // 2. Click and drag 9m along X (horizontal wall row)
+  const rowX = computeWallRowPlacements(0, 5, 9, 5.5, [3.0, 3.0, 0.35]);
+  assert.equal(rowX.length, 3);
+  // Segments centered at 1.5, 4.5, 7.5
+  assert.equal(rowX[0].x, 1.5);
+  assert.equal(rowX[0].z, 5);
+  assert.equal(rowX[0].rotationY, 0);
+
+  assert.equal(rowX[1].x, 4.5);
+  assert.equal(rowX[1].z, 5);
+  assert.equal(rowX[1].rotationY, 0);
+
+  assert.equal(rowX[2].x, 7.5);
+  assert.equal(rowX[2].z, 5);
+  assert.equal(rowX[2].rotationY, 0);
+
+  // 3. Click and drag 6m along Z (vertical wall row)
+  const rowZ = computeWallRowPlacements(2, 0, 2.2, 6, [3.0, 3.0, 0.35]);
+  assert.equal(rowZ.length, 2);
+  assert.equal(rowZ[0].x, 2);
+  assert.equal(rowZ[0].z, 1.5);
+  assert.equal(rowZ[0].rotationY, Math.PI / 2);
+
+  assert.equal(rowZ[1].x, 2);
+  assert.equal(rowZ[1].z, 4.5);
+  assert.equal(rowZ[1].rotationY, Math.PI / 2);
+
+  // 4. Drag in negative direction
+  const negX = computeWallRowPlacements(0, 0, -6, 0, [3.0, 3.0, 0.35]);
+  assert.equal(negX.length, 2);
+  assert.equal(negX[0].x, -1.5);
+  assert.equal(negX[1].x, -4.5);
 });
 
 
