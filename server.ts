@@ -173,7 +173,7 @@ async function startServer() {
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Generate an initial character personality profile, starting known information, personal instruction set, and 4-phase daily action schedule for a character in our New York mystery hotel game ("The Alderney Arms").
+        contents: `Generate an initial character personality profile, starting known information, personal instruction set, and 4-phase daily action schedule for a character in our vintage mystery hotel game ("The Alderney Arms").
 Character Name: "${name}"
 Archetype: "${archetype}"
 Assigned Room/Zone: "${roomNumber}"
@@ -247,7 +247,7 @@ ${globalInstructionSet}`,
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: AI_MODEL_REGISTRY.ambient_bark.modelId, // 'gemini-3.1-flash-lite'
-        contents: `Generate a single eerie 12-word atmospheric observation for a newly hired NYC hotel clerk standing in ${roomLabel} (${floor}) with sanity at ${sanity}%. No quotes.`
+        contents: `Generate a single eerie 12-word atmospheric observation for a newly hired night hotel clerk standing in ${roomLabel} (${floor}) with sanity at ${sanity}%. No quotes.`
       });
       res.json({
         bark: (response.text || '').trim(),
@@ -255,13 +255,13 @@ ${globalInstructionSet}`,
       });
     } catch {
       res.json({
-        bark: 'Behind the old New York brickwork, steam pipes clatter in a slow rhythmic cadence.',
+        bark: 'Behind the old red brickwork, steam pipes clatter in a slow rhythmic cadence.',
         modelUsed: AI_MODEL_REGISTRY.ambient_bark.modelId
       });
     }
   });
 
-  // 3. Google Search Grounded NYC Hotel History & Architecture Fact-Checker (Cheapest search-capable Google model: gemini-3.8-flash + ThinkingLevel.LOW)
+  // 3. In-Game Hotel Architecture & Scale Reference Generator (gemini-3.8-flash + ThinkingLevel.LOW)
   app.post('/api/research/nyc-lore', async (req, res) => {
     const modelName = AI_MODEL_REGISTRY.architectural_research.modelId; // 'gemini-3.8-flash'
     try {
@@ -269,31 +269,23 @@ ${globalInstructionSet}`,
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Fact-check and research historical New York boutique hotel architecture, secret passageways, or mystery details for: "${query}". Summarize key verified facts in 3 concise sentences for our 3D hotel architect tool.`,
+        contents: `Provide in-game architectural scale, room proportion, and secret passageway design guidelines for our vintage residential mystery hotel game ("The Alderney Arms") regarding: "${query}". Summarize in 3 concise sentences for our 3D hotel Build Mode tool.`,
         config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          tools: [{ googleSearch: {} }]
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
         }
       });
-
-      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      const sources = chunks
-        .map((c: { web?: { uri?: string; title?: string } }) =>
-          c.web ? { uri: c.web.uri, title: c.web.title } : null
-        )
-        .filter(Boolean);
 
       res.json({
         summary:
           response.text ||
-          'Verified NYC masonry hotels used hollow dumbwaiter shafts and double-brick air courts.',
-        sources,
+          'Vintage masonry residential hotels use hollow dumbwaiter shafts, 3.0m ceiling heights, and double-brick air courts.',
+        sources: [],
         modelUsed: modelName
       });
     } catch (err: unknown) {
       res.json({
         summary:
-          'Classic New York hotels frequently featured load-bearing Flemish-bond brick exteriors, cast-iron steam radiators, transom ventilation doors, and service dumbwaiter shafts between suites.',
+          'Vintage residential hotels feature load-bearing brick exteriors, cast-iron steam radiators, transom ventilation doors, and service dumbwaiter shafts between suites.',
         sources: [],
         modelUsed: modelName,
         errorDetail: err instanceof Error ? err.message : String(err)
@@ -366,7 +358,7 @@ ${globalInstructionSet}`,
       }
 
       parts.push({
-        text: `Design a low-poly 3D composite object for a New York mystery hotel based on this request${
+        text: `Design a low-poly 3D composite object for a vintage residential mystery hotel game based on this request${
           referenceImageUrl ? ' and the provided Image-to-3D reference image' : ''
         }: "${prompt}".
 Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or torus) that form a recognizable silhouette pivoted above y=0.`
@@ -466,7 +458,7 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
         });
       }
       parts.push({
-        text: `Flat seamless orthographic game texture or architectural surface reference for a stylized New York mystery hotel: ${prompt}. High contrast, low-poly cartoon aesthetic.`
+        text: `Flat seamless orthographic game texture or architectural surface reference for a stylized vintage mystery hotel: ${prompt}. High contrast, low-poly cartoon aesthetic.`
       });
 
       const response = await ai.models.generateContent({
@@ -715,7 +707,7 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
           },
           systemInstruction:
-            'You are Tape #9, the sentient Handheld Microcassette Dictaphone carried by the newly hired Night Clerk at The Alderney Arms Hotel in New York. Speak in concise, atmospheric detective tones. Never break character.'
+            'You are Tape #9, the sentient Handheld Microcassette Dictaphone carried by the newly hired Night Clerk at The Alderney Arms Hotel. Speak in concise, atmospheric detective tones. Never break character.'
         },
         callbacks: {
           onmessage: (message: LiveServerMessage) => {

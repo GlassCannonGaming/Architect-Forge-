@@ -1444,7 +1444,7 @@ export default function App() {
       id: 'proj_starter_hotel',
       name: 'Grand Boutique Hotel & Parlor Suite',
       description:
-        'Pre-built multi-floor NYC boutique hotel with lobby counter, secret bookcase wall, and resident AI character rigs.',
+        'Pre-built multi-floor vintage residential hotel with lobby counter, secret bookcase wall, and resident AI character rigs.',
       currentFloor: 'lobby',
       floorLayers: INITIAL_FLOOR_LAYERS,
       assets: INITIAL_PLACED_ASSETS,
@@ -2158,7 +2158,7 @@ export default function App() {
       setLoreSummary(data.summary);
     } catch {
       setLoreSummary(
-        'Standard NYC boutique hotel interior partitions use 3.0m ceiling height, 0.25m brick/plaster thickness, and 0.9m × 2.1m doors.'
+        'Standard vintage residential hotel interior partitions use 3.0m ceiling height, 0.25m brick/plaster thickness, and 0.9m × 2.1m doors.'
       );
     } finally {
       setAiForgeBusy(false);
@@ -2266,7 +2266,7 @@ export default function App() {
             <div className="pointer-events-auto flex items-center gap-1 bg-white/92 backdrop-blur-md border border-[#cbd5e1] p-1 rounded-full shadow-md shrink-0">
               {(
                 [
-                  { id: 'architect', label: '1 · Build & Buy Mode' },
+                  { id: 'architect', label: '1 · Build Mode' },
                   { id: 'character', label: '2 · Create-A-Character' },
                   { id: 'walkthrough', label: '3 · First-Person Walk' }
                 ] as const
@@ -2449,15 +2449,16 @@ export default function App() {
                 ? (['local_fs', 'projects', 'audio', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
                 : (['local_fs', 'projects', 'audio', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
               ).map((winId) => {
-                const win = studioWindows[winId];
-                const isVisible = win.isOpen && !win.isMinimized;
+                const win = studioWindows[winId] || createDefaultStudioWindows()[winId];
+                const isVisible = Boolean(win && win.isOpen && !win.isMinimized);
                 return (
                   <button
                     key={winId}
                     type="button"
                     onClick={() => {
-                      if (!win.isOpen) {
+                      if (!win || !win.isOpen) {
                         handleToggleOpenWindow(winId, true);
+                        handleFocusWindow(winId);
                       } else if (win.isMinimized) {
                         handleToggleMinimizeWindow(winId);
                         handleFocusWindow(winId);
@@ -2471,7 +2472,7 @@ export default function App() {
                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                     }`}
                   >
-                    {win.shortTitle}
+                    {win ? win.shortTitle : winId}
                   </button>
                 );
               })}
@@ -2628,6 +2629,7 @@ export default function App() {
           onToggleMinimizeWindow={handleToggleMinimizeWindow}
           onToggleMaximizeWindow={handleToggleMaximizeWindow}
           onCloseWindow={(id) => handleToggleOpenWindow(id, false)}
+          onOpenWindow={(id) => handleToggleOpenWindow(id, true)}
           currentFloor={currentFloor}
           floorLayers={floorLayers}
           onSelectFloor={(fl) => {

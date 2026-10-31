@@ -40,7 +40,7 @@ export function createBlueprintFromAsset(asset: PlacedAsset): AssetBlueprint {
 export const ASSET_CATALOG: AssetBlueprint[] = [
   {
     subType: 'brick_wall_segment',
-    name: 'NYC Standard Brick Wall',
+    name: 'Vintage Red Brick Wall',
     category: 'wall',
     defaultDimensions: [3.0, 3.0, 0.35],
     defaultColor: '#8c3b2b',
@@ -66,7 +66,7 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
     defaultColor: '#7c2d12',
     defaultTexture: 'nyc_old_brick',
     collidable: true,
-    description: 'Exterior brick wall with tall New York sash window frame.'
+    description: 'Exterior brick wall with tall vintage sash window frame.'
   },
   {
     subType: 'secret_bookshelf_door',
@@ -151,13 +151,153 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
   },
   {
     subType: 'banker_desk_lamp',
-    name: 'Emerald Banker’s Desk & Lamp',
+    name: 'Emerald Study Desk & Lamp',
     category: 'lighting',
     defaultDimensions: [1.5, 1.25, 0.9],
     defaultColor: '#15803d',
     defaultTexture: 'oak_parquet',
     collidable: true,
     description: 'Writing desk topped with a warm glowing green-glass shade lamp.'
+  },
+  {
+    subType: 'crt_tv_vhs_combo',
+    name: '90s CRT Hotel TV & VHS Combo',
+    category: 'appliance',
+    defaultDimensions: [0.9, 0.85, 0.75],
+    defaultColor: '#334155',
+    defaultTexture: 'plaster_cream',
+    collidable: true,
+    description: 'Chunky 90s dark slate CRT tv with built-in VHS tape cassette player.'
+  },
+  {
+    subType: 'soda_vending_machine',
+    name: '90s Retro Soda Dispenser Machine',
+    category: 'appliance',
+    defaultDimensions: [1.1, 2.1, 0.9],
+    defaultColor: '#0f172a',
+    defaultTexture: 'nyc_old_brick',
+    collidable: true,
+    description: 'Illuminated 90s corridor soda dispenser with neon drink selector buttons.'
+  },
+  {
+    subType: 'concierge_crt_computer',
+    name: '90s Concierge Desk CRT Computer',
+    category: 'appliance',
+    defaultDimensions: [0.95, 0.85, 0.8],
+    defaultColor: '#cbd5e1',
+    defaultTexture: 'plaster_cream',
+    collidable: true,
+    description: 'Beige desktop tower with glowing CRT monitor and mechanical keyboard.'
+  },
+  {
+    subType: 'retro_teal_armchair',
+    name: '90s Retro Hotel Lobby Armchair',
+    category: 'furniture',
+    defaultDimensions: [1.1, 0.95, 0.95],
+    defaultColor: '#0d9488',
+    defaultTexture: 'velvet_crimson',
+    collidable: true,
+    description: 'Geometric teal and purple upholstered lobby chair on tubular steel frame.'
+  },
+  {
+    subType: 'lobby_payphone_booth',
+    name: '90s Hotel Lobby Telephone Booth',
+    category: 'appliance',
+    defaultDimensions: [0.85, 1.85, 0.65],
+    defaultColor: '#334155',
+    defaultTexture: 'aged_brass',
+    collidable: true,
+    description: 'Stainless steel wall telephone mounted inside transparent acrylic partitions.'
+  },
+  {
+    subType: 'porcelain_bathtub',
+    name: 'Porcelain Clawfoot Hotel Bathtub',
+    category: 'furniture',
+    defaultDimensions: [1.6, 0.75, 0.8],
+    defaultColor: '#f8fafc',
+    defaultTexture: 'checker_marble',
+    collidable: true,
+    description: 'Deep porcelain soaker tub resting on four ornate brass claw feet.'
+  },
+  {
+    subType: 'marble_vanity_sink',
+    name: 'Marble Vanity Bathroom Sink',
+    category: 'furniture',
+    defaultDimensions: [1.1, 1.25, 0.65],
+    defaultColor: '#f1f5f9',
+    defaultTexture: 'checker_marble',
+    collidable: true,
+    description: 'Carrara marble countertop vanity with recessed porcelain basin and brass faucet.'
+  },
+  {
+    subType: 'suite_porcelain_toilet',
+    name: 'Porcelain Suite Toilet & Flush Tank',
+    category: 'furniture',
+    defaultDimensions: [0.55, 0.85, 0.75],
+    defaultColor: '#ffffff',
+    defaultTexture: 'checker_marble',
+    collidable: true,
+    description: 'Sanitary porcelain bathroom toilet with ceramic water tank and brass flush lever.'
+  },
+  {
+    subType: 'gilded_wall_painting',
+    name: 'Gilded Art Deco Hotel Wall Painting',
+    category: 'custom_ai',
+    defaultDimensions: [1.2, 1.0, 0.12],
+    defaultColor: '#d4af37',
+    defaultTexture: 'aged_brass',
+    collidable: false,
+    description: 'Ornate gold-leaf carved picture frame housing an oil landscape painting.'
+  },
+  {
+    subType: 'potted_lobby_palm',
+    name: 'Potted Lobby Fan Palm Plant',
+    category: 'custom_ai',
+    defaultDimensions: [0.85, 1.45, 0.85],
+    defaultColor: '#166534',
+    defaultTexture: 'oak_parquet',
+    collidable: true,
+    description: 'Lush tropical fan palm potted inside a terracotta planter with polished brass rim.'
+  },
+  {
+    subType: 'brass_towel_rack',
+    name: 'Brass Wall Towel Rack & Linens',
+    category: 'furniture',
+    defaultDimensions: [0.75, 0.65, 0.35],
+    defaultColor: '#ca8a04',
+    defaultTexture: 'aged_brass',
+    collidable: false,
+    description: 'Wall-mounted double brass towel rail holding freshly laundered plush hotel towels.'
+  },
+  {
+    subType: 'retrofit_window_ac',
+    name: 'Retrofitted Window AC & Conduit Box',
+    category: 'appliance',
+    defaultDimensions: [0.85, 0.95, 0.65],
+    defaultColor: '#cbd5e1',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    description: 'Piecemeal 1980s/90s window air-conditioner wired via surface-mounted metal electrical conduit over old plaster.'
+  },
+  {
+    subType: 'resident_kitchenette',
+    name: 'Piecemeal Resident Hotplate & Kitchenette',
+    category: 'appliance',
+    defaultDimensions: [1.15, 1.1, 0.65],
+    defaultColor: '#5c3824',
+    defaultTexture: 'oak_parquet',
+    collidable: true,
+    description: 'Makeshift long-term tenant kitchenette counter with formica top, glowing coil hotplate, and retro microwave.'
+  },
+  {
+    subType: 'resident_steamer_trunk',
+    name: 'Decade-Lived-In Steamer Trunk & Keepsakes',
+    category: 'furniture',
+    defaultDimensions: [1.1, 0.95, 0.7],
+    defaultColor: '#451a03',
+    defaultTexture: 'oak_parquet',
+    collidable: true,
+    description: 'Brass-bound leather steamer trunk stacked with hatboxes and decades of personal tenant journals.'
   }
 ];
 
@@ -378,6 +518,52 @@ function createFourRoomFloorAssets(floor: FloorId, prefix: string): PlacedAsset[
       textureId: 'plaster_cream',
       collidable: true
     },
+    // Small piecemeal upgrades & permanent multi-decade resident belongings
+    {
+      id: `${floor}_crt_tv_1`,
+      name: `Suite ${prefix}1 Retrofitted 90s CRT TV`,
+      category: 'appliance',
+      subType: 'crt_tv_vhs_combo',
+      floor,
+      roomNumber: `Room ${prefix}1`,
+      position: [-7.2, 0.42, -3.2],
+      dimensions: [0.9, 0.85, 0.75],
+      rotationY: Math.PI / 2,
+      color: '#334155',
+      textureId: 'plaster_cream',
+      collidable: true,
+      inspectText: `A 1990s CRT TV & VHS combo wired via surface conduit into Suite ${prefix}1's original wainscoting.`
+    },
+    {
+      id: `${floor}_kitchenette_3`,
+      name: `Suite ${prefix}3 Piecemeal Kitchenette`,
+      category: 'appliance',
+      subType: 'resident_kitchenette',
+      floor,
+      roomNumber: `Room ${prefix}3`,
+      position: [-7.2, 0.55, 3.2],
+      dimensions: [1.15, 1.1, 0.65],
+      rotationY: Math.PI / 2,
+      color: '#5c3824',
+      textureId: 'oak_parquet',
+      collidable: true,
+      inspectText: `A makeshift hotplate and microwave kitchenette used by a permanent multi-decade tenant.`
+    },
+    {
+      id: `${floor}_trunk_4`,
+      name: `Suite ${prefix}4 Resident Steamer Trunk`,
+      category: 'furniture',
+      subType: 'resident_steamer_trunk',
+      floor,
+      roomNumber: `Room ${prefix}4`,
+      position: [7.2, 0.48, 3.2],
+      dimensions: [1.1, 0.95, 0.7],
+      rotationY: -Math.PI / 2,
+      color: '#451a03',
+      textureId: 'oak_parquet',
+      collidable: true,
+      inspectText: `Leather steamer trunk and hatboxes belonging to a permanent resident who moved in decades ago.`
+    },
     {
       id: `${floor}_rug_center`,
       name: `Floor ${prefix[0]} Corridor Runner`,
@@ -398,7 +584,7 @@ function createFourRoomFloorAssets(floor: FloorId, prefix: string): PlacedAsset[
 }
 
 export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
-  // MAIN LOBBY ASSETS
+  // MAIN LOBBY ASSETS (Old Architecture + Small Piecemeal Upgrades Over the Decades)
   {
     id: 'lobby_front_desk',
     name: 'Grand Registration Counter',
@@ -413,7 +599,52 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'oak_parquet',
     collidable: true,
     clueId: 'clue_guest_register',
-    inspectText: 'The leather-bound Guest Register lies open. Several vanished tenants were signed in by Arthur himself.'
+    inspectText: 'The leather-bound Permanent Resident Ledger lies open next to a retrofitted 90s CRT terminal. Several multi-decade tenants were signed out in Arthur’s own handwriting.'
+  },
+  {
+    id: 'lobby_retrofit_computer',
+    name: 'Retrofitted Concierge CRT Computer',
+    category: 'appliance',
+    subType: 'concierge_crt_computer',
+    floor: 'lobby',
+    roomNumber: 'Front Desk',
+    position: [2.8, 0.42, -5.2],
+    dimensions: [0.95, 0.85, 0.8],
+    rotationY: 0,
+    color: '#cbd5e1',
+    textureId: 'plaster_cream',
+    collidable: true,
+    inspectText: 'A beige 1990s CRT desktop computer bolted onto a side table beside the antique mahogany front desk to log long-term resident room assignments and hallway maintenance.'
+  },
+  {
+    id: 'lobby_vending_machine',
+    name: 'Alcove 90s Soda Dispenser Machine',
+    category: 'appliance',
+    subType: 'soda_vending_machine',
+    floor: 'lobby',
+    roomNumber: 'Luggage & Lift Alcove',
+    position: [6.5, 1.05, 1.5],
+    dimensions: [1.1, 2.1, 0.9],
+    rotationY: -Math.PI / 2,
+    color: '#0f172a',
+    textureId: 'nyc_old_brick',
+    collidable: true,
+    inspectText: 'Installed during a minor 1994 lobby upgrade; its neon marquee hums against the century-old wainscoting.'
+  },
+  {
+    id: 'lobby_payphone_unit',
+    name: 'Lobby Wall Telephone Booth',
+    category: 'appliance',
+    subType: 'lobby_payphone_booth',
+    floor: 'lobby',
+    roomNumber: 'Luggage & Lift Alcove',
+    position: [6.5, 0.92, -1.5],
+    dimensions: [0.85, 1.85, 0.65],
+    rotationY: -Math.PI / 2,
+    color: '#334155',
+    textureId: 'aged_brass',
+    collidable: true,
+    inspectText: 'A stainless-steel house telephone retrofitted onto the brick wall for permanent residents who disconnected their suite intercom lines.'
   },
   {
     id: 'lobby_carpet_runner',
@@ -473,7 +704,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     color: '#ca8a04',
     textureId: 'aged_brass',
     collidable: true,
-    inspectText: 'Cord #202 is still plugged in and humming with low static.'
+    inspectText: 'Original brass plug-board still used for intercom calls to permanent residents; Cord #202 is humming with low static.'
   },
   {
     id: 'lobby_parlor_lamp',
@@ -541,7 +772,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     inspectText: 'Resting beside the brass lamp is Master Skeleton Key #00!'
   },
 
-  // FLOORS 1, 2, 3 (4 Rooms each + Secret Passages)
+  // FLOORS 1, 2, 3 (4 Rooms each + Secret Passages + Piecemeal Upgrades)
   ...createFourRoomFloorAssets('floor1', '10'),
   ...createFourRoomFloorAssets('floor2', '20'),
   ...createFourRoomFloorAssets('floor3', '30'),
@@ -549,7 +780,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
   // Floor-specific Clues on Residential Floors
   {
     id: 'floor1_clue_wardrobe',
-    name: 'Eleanor’s radiator & Loose Brick',
+    name: 'Eleanor’s Radiator & Loose Brick',
     category: 'appliance',
     subType: 'vintage_radiator',
     floor: 'floor1',
@@ -561,7 +792,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'aged_brass',
     collidable: true,
     clueId: 'clue_hollow_brick_101',
-    inspectText: 'A brass latch hidden behind the radiator unlocks the secret passage between Room 101 and Room 102!'
+    inspectText: 'A brass latch hidden behind Eleanor’s 34-year-old radiator unlocks the secret passage between Room 101 and Room 102!'
   },
   {
     id: 'floor2_clue_cassette_player',
@@ -577,7 +808,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'aged_brass',
     collidable: true,
     clueId: 'clue_spinning_wax_202',
-    inspectText: 'The microcassette whispers: "Press the mortar seam on the south corridor wall to enter Room 204 unseen."'
+    inspectText: '25-year resident Julian Vance vanished from his suite; the microcassette whispers: "Press the mortar seam on the south corridor wall to enter Room 204 unseen."'
   },
   {
     id: 'floor3_clue_drafting_table',
@@ -593,7 +824,7 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'oak_parquet',
     collidable: true,
     clueId: 'clue_blueprints_304',
-    inspectText: 'Original construction blueprints showing every hidden crawlspace and the Basement Sub-Vault.'
+    inspectText: 'Original construction blueprints annotated with decades of piecemeal conduit and plumbing upgrades over the hidden crawlspaces.'
   }
 ];
 
@@ -608,14 +839,14 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'present',
     occupation: 'Your Sentient Helper Entity',
     personality: 'Keen-eared, methodical, slightly eerie handheld microcassette dictaphone entity that only knows what you have uncovered and remembers every transcript.',
-    secretTruth: 'Resonates with the hotel’s acoustic pipes to replay forgotten conversations.',
+    secretTruth: 'Resonates with the hotel’s original acoustic pipes and retrofitted electrical conduits to replay forgotten conversations.',
     knownFacts: [
-      'You were just hired tonight as the Night Clerk at The Alderney Arms.',
-      'Your predecessor left without collecting his final paycheck.'
+      'You were just hired tonight as the Night Clerk at The Alderney Arms—an old residential hotel home to permanent multi-decade tenants.',
+      'Over the decades, the hotel received small piecemeal upgrades (surface conduit wiring, 90s CRT TVs, a lobby soda machine, and hotplate kitchenettes) without ever disturbing the hollow inner brick walls.'
     ],
     memories: [
-      'Logged Shift Start: New York rain outside; old red bricks radiating damp chill.',
-      'Instruction: Inspect rooms, talk to Arthur and the tenants, and ask me to cross-reference clues.'
+      'Logged Shift Start: Midnight rain outside; old red bricks and retrofitted neon dispenser lights humming in the lobby.',
+      'Instruction: Inspect permanent residents’ suites, talk to Arthur and the long-term tenants, and ask me to cross-reference clues.'
     ],
     suspicionLevel: 0,
     trustLevel: 100,
@@ -644,15 +875,15 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     floor: 'lobby',
     position: [0, 0, -6.6],
     status: 'present',
-    occupation: 'Senior Night Registrar & Concierge',
-    personality: 'Polite, unblinking, dryly formal, fiercely protective of "house rules", deflects questions about vanished tenants.',
-    secretTruth: 'Arthur has been forging check-out signatures for tenants who sleepwalk into the secret brick crawlspaces when the Basement boiler hums at 33 Hz.',
+    occupation: 'Senior Night Registrar & Building Super (38 Yrs)',
+    personality: 'Polite, unblinking, dryly formal, fiercely protective of "house rules" and the building’s piecemeal repairs; deflects questions about vanished long-term residents.',
+    secretTruth: 'Arthur has been forging departure log entries for multi-decade permanent tenants who sleepwalk into the secret brick crawlspaces when the Basement boiler hums at 33 Hz.',
     knownFacts: [
-      'Has worked the front desk for decades since the hotel first opened.',
-      'Insists Room 202 and Room 303 are merely "under renovation".'
+      'Has worked the front desk for 38 years and personally supervised every piecemeal upgrade—from surface-mounted electrical conduits to the 90s CRT desk terminal.',
+      'Insists long-term residents in Room 202 (Julian, 25 years) and Room 303 (31 years) merely "transferred suites" while their rooms undergo wiring upgrades.'
     ],
     memories: [
-      'Hired the new Night Clerk tonight with strict instructions never to knock on the wainscoting.',
+      'Hired the new Night Clerk tonight with strict instructions never to open the old wainscoting behind the retrofitted coaxial cables.',
       'Hid Master Skeleton Key #00 in the Basement Sub-Vault.'
     ],
     suspicionLevel: 35,
@@ -682,15 +913,15 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     floor: 'floor1',
     position: [-4.5, 0, -4.2],
     status: 'erratic',
-    occupation: 'Retired Opera Contralto (Tenant 101)',
-    personality: 'Theatrical, sleep-deprived, presses a stethoscope to the brick walls at night.',
-    secretTruth: 'She discovered the pivoting bookshelf between Room 101 and Room 102 and heard someone whispering from inside the masonry.',
+    occupation: 'Retired Opera Contralto (34-Yr Resident, Rm 101)',
+    personality: 'Theatrical, fiercely attached to her permanent corner suite of 34 years, presses a stethoscope to the old plaster walls at night.',
+    secretTruth: 'She discovered the pivoting bookshelf between Room 101 and Room 102 behind her steamer trunks and heard vanished long-term neighbors whispering from inside the masonry.',
     knownFacts: [
-      'Hears footsteps inside the North wall between Room 101 and Room 102.',
-      'Saw Arthur carrying an empty suitcase out of Room 102 at 3:00 AM.'
+      'Has lived permanently in Suite 101 for 34 years and refuses to plug in the retrofitted 90s CRT TV management installed because its hum masks the sounds inside the North wall.',
+      'Saw Arthur carrying an empty suitcase out of long-term neighbor Room 102 at 3:00 AM, even though forty years of belongings were still inside.'
     ],
     memories: [
-      'Tapped three times on the radiator pipe and heard four taps back from Room 102.',
+      'Tapped three times on the original clawfoot radiator pipe and heard four taps back from Room 102.',
       'Hid the brass latch release behind the clawfoot radiator in Room 101.'
     ],
     suspicionLevel: 20,
@@ -720,16 +951,16 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     floor: 'floor1',
     position: [4.5, 0, 4.2],
     status: 'present',
-    occupation: 'Insomniac Watchmaker (Tenant 104)',
-    personality: 'Fidgety, obsessed with acoustics and clockwork, speaks in hushed urgent bursts.',
-    secretTruth: 'He measured the dimensions of Floor 1 and realized the interior rooms are 4 feet narrower than the exterior brick facade—proving hidden corridors exist.',
+    occupation: 'Insomniac Watchmaker (27-Yr Resident, Rm 104)',
+    personality: 'Fidgety, meticulous permanent resident who has repaired watches in Suite 104 for nearly three decades; complains about the buzz of piecemeal conduit wiring.',
+    secretTruth: 'When installers drilled surface conduits for the 90s hallway upgrades, he measured Floor 1 and proved the interior suites are 4 feet narrower than the exterior brick facade—hiding secret corridors.',
     knownFacts: [
-      'Measured a 4-foot discrepancy between Room 103 and Room 104.',
-      'Knows the Basement boiler vibrates at a hypnotic frequency.'
+      'Has lived in Suite 104 for 27 years, brewing tea on a makeshift hotplate kitchenette while mapping every renovation patch in the building.',
+      'Measured a 4-foot structural cavity between Room 103 and Room 104 that management deliberately routed the new electrical conduits around.'
     ],
     memories: [
-      'Left his calipers near the south wall of Floor 1.',
-      'Warned Julian in Room 202 not to listen to the cassette player after midnight.'
+      'Left his brass calipers near the south wall of Floor 1.',
+      'Warned 25-year resident Julian in Room 202 not to listen to the microcassette player after midnight.'
     ],
     suspicionLevel: 15,
     trustLevel: 70,
@@ -758,16 +989,16 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     floor: 'floor2',
     position: [-4.5, 0, -4.0],
     status: 'erratic',
-    occupation: 'Broadway Costume Designer (Tenant 201)',
-    personality: 'Sharp-tongued, observant, terrified since her neighbor in Room 202 vanished mid-sentence through the wall.',
-    secretTruth: 'She peered through a keyhole in the wainscot and saw tenants walking in a trance down a hidden brick stair toward the Basement.',
+    occupation: 'Stage Costume Designer (19-Yr Resident, Rm 201)',
+    personality: 'Sharp-tongued, observant permanent tenant of 19 years; terrified since her longtime neighbor Julian in Room 202 (a 25-year resident) vanished mid-sentence through the wall.',
+    secretTruth: 'She peered through a gap beside a retrofitted radiator valve in the wainscot and saw decade-long residents walking in a trance down a hidden brick stair toward the Basement.',
     knownFacts: [
-      'Neighbor in Room 202 vanished while his cassette player was still playing.',
-      'The south wall between Room 203 and 204 swings open when unlatched.'
+      'Has lived in Suite 201 for 19 years; her sewing mannequins and steamer trunks fill the corners next to a patched 90s kitchenette.',
+      'Her neighbor Julian in Room 202—who never left the building in 25 years—vanished while his cassette player and CRT TV were still on.'
     ],
     memories: [
       'Heard the cassette player in Room 202 playing backward at 2:15 AM.',
-      'Locked her suite door thrice, yet found red brick dust on her carpet.'
+      'Locked her suite’s original transom door and retrofitted deadbolt thrice, yet found red brick dust on her carpet.'
     ],
     suspicionLevel: 30,
     trustLevel: 55,
@@ -796,16 +1027,16 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     floor: 'floor3',
     position: [4.2, 0, 3.2],
     status: 'present',
-    occupation: 'Architectural Historian (Tenant 304)',
-    personality: 'Scholarly, intense, fascinated by New York’s Gilded Age mysteries, slightly hypnotic gaze.',
-    secretTruth: 'He rented Room 304 specifically because he recovered the original construction blueprint of "The House Suite" showing the Basement Sub-Vault.',
+    occupation: 'Architectural Historian (12-Yr Resident, Rm 304)',
+    personality: 'Scholarly, intense permanent resident (considered "the newcomer" by the 30-year tenants) who studies how the old hotel was patched over the decades.',
+    secretTruth: 'He moved into Room 304 twelve years ago as a permanent resident after recovering the original blueprint of "The House Suite" and overlaying every decade of piecemeal plumbing and electrical upgrades.',
     knownFacts: [
-      'Keeps the original construction blueprint on his drafting table in Room 304.',
-      'Knows that unlocking two secret passages and four clues exposes the Basement Vault.'
+      'Keeps the annotated construction blueprint on his drafting table in Room 304 showing how every decade’s small upgrades carefully avoided piercing the hollow inner shaft.',
+      'Knows that unlocking two secret passages and four clues exposes the Basement Sub-Vault where the vanished multi-decade residents are drawn.'
     ],
     memories: [
       'Traced the hidden shaft from Room 304 all the way down to Basement Sub-Vault 00.',
-      'Suspects Arthur Pendelton is preserving the hotel’s original sleepwalking experiment.'
+      'Suspects Arthur Pendelton has kept the hotel running as a permanent residential building specifically to preserve its sleepwalking experiment.'
     ],
     suspicionLevel: 10,
     trustLevel: 75,

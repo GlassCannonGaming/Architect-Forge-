@@ -1,6 +1,6 @@
 {
   "name": "ArchitectForge: The House Suite",
-  "description": "A 3D low-poly architectural & character asset forge and first-person NYC mystery hotel simulator powered by multi-agent AI tenants, secret passageways, sanity mechanics, and AI 3D object generation.",
+  "description": "A 3D low-poly architectural & character asset forge and first-person vintage mystery hotel simulator powered by multi-agent AI permanent residents, secret passageways, sanity mechanics, and AI 3D object generation.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -17,7 +17,7 @@ export const AssetThumbnailSvg: React.FC<AssetThumbnailSvgProps> = ({ blueprint,
           : 'bg-gradient-to-b from-[#f0f9ff] via-[#e0f2fe] to-[#bae6fd]/60 group-hover:from-[#e0f2fe] group-hover:to-[#bae6fd]'
       }`}
     >
-      {/* Subtle Sims Build-Buy Floor Tile Grid in Thumbnail Background */}
+      {/* Subtle Build Mode Floor Tile Grid in Thumbnail Background */}
       <svg
         viewBox="0 0 120 80"
         className="w-full h-full object-contain drop-shadow-sm"
@@ -165,7 +165,7 @@ export const AssetThumbnailSvg: React.FC<AssetThumbnailSvgProps> = ({ blueprint,
 
         {category === 'lighting' && (
           <g>
-            {/* Banker's Desk & Glowing Emerald Lamp */}
+            {/* Study Desk & Glowing Emerald Lamp */}
             <polygon points="32,42 62,32 88,42 58,52" fill="#5c3824" stroke="#29170c" strokeWidth="1" />
             <polygon points="34,52 34,65 38,65 38,52" fill="#3f2516" />
             <polygon points="82,44 82,58 86,58 86,44" fill="#3f2516" />

@@ -8,7 +8,8 @@ import {
   StudioWindowId,
   StudioWindowState,
   clampDimension,
-  AI_MODEL_REGISTRY
+  AI_MODEL_REGISTRY,
+  createDefaultStudioWindows
 } from '../game/rules';
 import { AssetBlueprint } from '../game/hotelData';
 import { WorkspaceMode } from './HotelViewport3D';
@@ -24,6 +25,7 @@ interface UnifiedBottomDockProps {
   onToggleMinimizeWindow: (id: StudioWindowId) => void;
   onToggleMaximizeWindow: (id: StudioWindowId) => void;
   onCloseWindow: (id: StudioWindowId) => void;
+  onOpenWindow?: (id: StudioWindowId) => void;
   currentFloor: FloorId;
   floorLayers: FloorLayer[];
   onSelectFloor: (floor: FloorId) => void;
@@ -81,7 +83,7 @@ interface UnifiedBottomDockProps {
 }
 
 const TEXTURE_OPTIONS: { id: TexturePresetId; label: string }[] = [
-  { id: 'nyc_old_brick', label: 'NYC Old Brick' },
+  { id: 'nyc_old_brick', label: 'Vintage Red Brick' },
   { id: 'plaster_cream', label: 'Wainscot Plaster' },
   { id: 'oak_parquet', label: 'Mahogany / Oak' },
   { id: 'checker_marble', label: 'Checker Marble' },
@@ -102,6 +104,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   onToggleMinimizeWindow,
   onToggleMaximizeWindow,
   onCloseWindow,
+  onOpenWindow,
   currentFloor,
   floorLayers,
   onSelectFloor,
@@ -521,7 +524,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
             </div>
           </StudioWindowFrame>
 
-          {/* 3. BUILD & BUY TOOLS WINDOW */}
+          {/* 3. BUILD MODE TOOLS WINDOW */}
           <StudioWindowFrame
             windowState={windows.tools}
             badgeText="128×128 Grid"
@@ -538,18 +541,34 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 value={architectTab}
                 onChange={(e) => {
                   e.currentTarget.blur();
-                  setArchitectTab(
-                    e.target.value as 'catalog' | 'ai3d' | 'texture' | 'lore' | 'models'
-                  );
+                  const nextTab = e.target.value as 'catalog' | 'ai3d' | 'texture' | 'lore' | 'models';
+                  setArchitectTab(nextTab);
+                  if (nextTab === 'catalog') {
+                    onOpenWindow?.('catalog');
+                    onFocusWindow('catalog');
+                  }
                 }}
                 className="w-full bg-[#f0f9ff] border border-[#bae6fd] rounded-2xl px-2.5 py-1.5 text-xs font-bold text-[#0369a1]"
               >
-                <option value="catalog">📦 Build &amp; Buy Visual Catalog ({catalogAssets.length})</option>
+                <option value="catalog">📦 Build Mode Visual Catalog ({catalogAssets.length})</option>
                 <option value="ai3d">✨ Meshy.ai Image-to-3D &amp; Google 3D Forge</option>
                 <option value="texture">🎨 Google Flash-Lite Surface Textures</option>
-                <option value="lore">📐 Grounded Scale Reference (Flash Low)</option>
-                <option value="models">⚡ Cheapest Google + Meshy AI Models</option>
+                <option value="lore">📐 In-Game Scale Reference (Flash Low)</option>
+                <option value="models">⚡ Fast Google + Meshy AI Models</option>
               </select>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setArchitectTab('catalog');
+                  onOpenWindow?.('catalog');
+                  onFocusWindow('catalog');
+                }}
+                className="w-full px-2.5 py-1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-[11px] font-bold transition-all shadow-2xs flex items-center justify-between"
+              >
+                <span>📦 Toggle Asset Catalog Window</span>
+                <span className="text-[9px] bg-sky-900/60 text-sky-100 px-1.5 py-0.5 rounded-full font-mono">{catalogAssets.length} Items</span>
+              </button>
 
               <select
                 aria-label="Catalog Category Filter"
@@ -558,6 +577,8 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                   e.currentTarget.blur();
                   setCategoryFilter(e.target.value as CategoryFilter);
                   setArchitectTab('catalog');
+                  onOpenWindow?.('catalog');
+                  onFocusWindow('catalog');
                 }}
                 className="w-full bg-slate-50 border border-slate-300 rounded-2xl px-2.5 py-1 text-xs font-semibold text-slate-700"
               >
@@ -679,7 +700,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
           {/* 4. VISUAL ASSET CATALOG & AI FORGE WINDOW */}
           <StudioWindowFrame
-            windowState={windows.catalog}
+            windowState={windows.catalog || createDefaultStudioWindows().catalog}
             badgeText={`${filteredCatalog.length} Items`}
             onFocus={onFocusWindow}
             onMove={onMoveWindow}
@@ -857,6 +878,31 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     </div>
                   </div>
 
+                  <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+                    <span className="text-[10px] font-bold text-slate-500">Quick Presets:</span>
+                    {[
+                      'Retrofitted Window AC & Conduit Box',
+                      'Piecemeal Resident Hotplate & Kitchenette',
+                      'Decade-Lived-In Steamer Trunk & Keepsakes',
+                      '90s CRT Hotel TV with Built-in VHS',
+                      'Porcelain Clawfoot Hotel Bathtub',
+                      'Marble Vanity Bathroom Sink',
+                      'Porcelain Suite Toilet & Tank',
+                      'Gilded Art Deco Hotel Wall Painting',
+                      'Potted Lobby Fan Palm Plant',
+                      'Brass Wall Towel Rack & Linens'
+                    ].map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setAi3DPrompt(p)}
+                        className="px-2 py-0.5 rounded-full bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 border border-slate-200 text-[10px] font-semibold text-slate-700 transition-colors"
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -938,10 +984,10 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 <div className="flex flex-col gap-2 pr-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-extrabold text-[#0369a1]">
-                      Grounded Architectural Scale &amp; Proportion Reference
+                      In-Game Architectural Scale &amp; Proportion Reference
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[#0369a1] text-[9px] font-extrabold">
-                      gemini-3.8-flash (ThinkingLevel.LOW + Search)
+                      gemini-3.8-flash (ThinkingLevel.LOW)
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -958,7 +1004,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       onClick={() => onResearchNycLore(loreQuery)}
                       className="px-3 py-1 bg-[#0284c7] text-white font-bold rounded-full text-xs"
                     >
-                      Search
+                      Check Scale
                     </button>
                   </div>
                   {loreSummary && (
@@ -973,7 +1019,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 <div data-testid="ai-model-compliance-panel" className="flex flex-col gap-1.5 pr-1">
                   <div className="flex items-center justify-between bg-[#ecfdf5] border border-[#a7f3d0] rounded-2xl px-2.5 py-1.5">
                     <span className="text-[11px] font-extrabold text-[#065f46]">
-                      ⚡ Cost-Optimized Google Gemini + Meshy.ai Stack
+                      ⚡ High-Speed Google Gemini + Meshy.ai Stack
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-[#10b981] text-white text-[9px] font-extrabold">
                       100% Verified
@@ -1000,7 +1046,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                           </span>
                         </div>
                         <div className="font-mono text-[9px] font-bold text-[#059669]">
-                          {spec.modelId} · {spec.costTier}
+                          {spec.modelId}
                         </div>
                       </div>
                     ))}

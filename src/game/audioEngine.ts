@@ -253,7 +253,7 @@ export const BUILTIN_SOUND_EFFECTS: Record<SoundEffectType, SoundEffectSpec> = {
   },
   thunder: {
     id: 'sfx_thunder',
-    name: 'Distant NYC Thunder Rumble',
+    name: 'Distant Midnight Thunder Rumble',
     type: 'thunder',
     durationSeconds: 2.2,
     oscillatorType: 'sine',
