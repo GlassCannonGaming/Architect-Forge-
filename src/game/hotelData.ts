@@ -40,7 +40,7 @@ export function createBlueprintFromAsset(asset: PlacedAsset): AssetBlueprint {
 export const ASSET_CATALOG: AssetBlueprint[] = [
   {
     subType: 'brick_wall_segment',
-    name: 'NYC Pre-War Brick Wall',
+    name: 'NYC Standard Brick Wall',
     category: 'wall',
     defaultDimensions: [3.0, 3.0, 0.35],
     defaultColor: '#8c3b2b',
@@ -131,13 +131,13 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
   },
   {
     subType: 'icebox_fridge',
-    name: '1920s Enamel Icebox',
+    name: 'Compact Hotel Mini-Fridge',
     category: 'appliance',
     defaultDimensions: [0.95, 1.65, 0.85],
     defaultColor: '#e2e8f0',
     defaultTexture: 'plaster_cream',
     collidable: true,
-    description: 'Heavy porcelain-lined suite icebox with brass latches.'
+    description: 'Enamel-lined compact suite refrigerator with magnetic latches.'
   },
   {
     subType: 'rotary_wall_phone',
@@ -412,8 +412,8 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     color: '#4a2810',
     textureId: 'oak_parquet',
     collidable: true,
-    clueId: 'clue_ledger_1926',
-    inspectText: 'The leather-bound 1926 Guest Register lies open. Several vanished tenants were signed in by Arthur himself.'
+    clueId: 'clue_guest_register',
+    inspectText: 'The leather-bound Guest Register lies open. Several vanished tenants were signed in by Arthur himself.'
   },
   {
     id: 'lobby_carpet_runner',
@@ -564,8 +564,8 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     inspectText: 'A brass latch hidden behind the radiator unlocks the secret passage between Room 101 and Room 102!'
   },
   {
-    id: 'floor2_clue_gramophone',
-    name: 'Julian’s Spinning Gramophone',
+    id: 'floor2_clue_cassette_player',
+    name: 'Julian’s Desktop Cassette Player',
     category: 'lighting',
     subType: 'banker_desk_lamp',
     floor: 'floor2',
@@ -577,11 +577,11 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'aged_brass',
     collidable: true,
     clueId: 'clue_spinning_wax_202',
-    inspectText: 'The wax cylinder whispers: "Press the mortar seam on the south corridor wall to enter Room 204 unseen."'
+    inspectText: 'The microcassette whispers: "Press the mortar seam on the south corridor wall to enter Room 204 unseen."'
   },
   {
     id: 'floor3_clue_drafting_table',
-    name: '1898 Architect’s Drafting Table',
+    name: 'Architect’s Drafting Table',
     category: 'lighting',
     subType: 'banker_desk_lamp',
     floor: 'floor3',
@@ -593,21 +593,21 @@ export const INITIAL_PLACED_ASSETS: PlacedAsset[] = [
     textureId: 'oak_parquet',
     collidable: true,
     clueId: 'clue_blueprints_304',
-    inspectText: 'Original 1898 blueprints showing every hidden crawlspace and the Basement Sub-Vault.'
+    inspectText: 'Original construction blueprints showing every hidden crawlspace and the Basement Sub-Vault.'
   }
 ];
 
 export const INITIAL_AGENTS: HotelAgentProfile[] = [
   {
     id: 'agent_helper',
-    name: 'Cylinder #9 (Pocket Dictaphone)',
+    name: 'Tape #9 (Pocket Dictaphone)',
     role: 'helper_entity',
     roomNumber: 'Clerk Coat Pocket',
     floor: 'lobby',
     position: [0, 1.2, 0],
     status: 'present',
-    occupation: 'Your Sentient Brass Helper Entity',
-    personality: 'Keen-eared, methodical, slightly eerie 1920s brass voice-recorder that only knows what you have uncovered and remembers every transcript.',
+    occupation: 'Your Sentient Helper Entity',
+    personality: 'Keen-eared, methodical, slightly eerie handheld microcassette dictaphone entity that only knows what you have uncovered and remembers every transcript.',
     secretTruth: 'Resonates with the hotel’s acoustic pipes to replay forgotten conversations.',
     knownFacts: [
       'You were just hired tonight as the Night Clerk at The Alderney Arms.',
@@ -634,7 +634,7 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       headScale: 1.15
     },
     stats: { physic: 2, agility: 3, mind: 6, endurance: 4, pointsRemaining: 0 },
-    assignedTraits: ['wax_memory', 'phonograph_sync']
+    assignedTraits: ['tape_memory', 'acoustic_sync']
   },
   {
     id: 'agent_arthur',
@@ -648,7 +648,7 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     personality: 'Polite, unblinking, dryly formal, fiercely protective of "house rules", deflects questions about vanished tenants.',
     secretTruth: 'Arthur has been forging check-out signatures for tenants who sleepwalk into the secret brick crawlspaces when the Basement boiler hums at 33 Hz.',
     knownFacts: [
-      'Has worked the front desk since the hotel opened in 1898.',
+      'Has worked the front desk for decades since the hotel first opened.',
       'Insists Room 202 and Room 303 are merely "under renovation".'
     ],
     memories: [
@@ -729,7 +729,7 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     ],
     memories: [
       'Left his calipers near the south wall of Floor 1.',
-      'Warned Julian in Room 202 not to listen to the gramophone after midnight.'
+      'Warned Julian in Room 202 not to listen to the cassette player after midnight.'
     ],
     suspicionLevel: 15,
     trustLevel: 70,
@@ -762,11 +762,11 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     personality: 'Sharp-tongued, observant, terrified since her neighbor in Room 202 vanished mid-sentence through the wall.',
     secretTruth: 'She peered through a keyhole in the wainscot and saw tenants walking in a trance down a hidden brick stair toward the Basement.',
     knownFacts: [
-      'Neighbor in Room 202 vanished while his gramophone was still playing.',
+      'Neighbor in Room 202 vanished while his cassette player was still playing.',
       'The south wall between Room 203 and 204 swings open when unlatched.'
     ],
     memories: [
-      'Heard the gramophone in Room 202 playing backward at 2:15 AM.',
+      'Heard the cassette player in Room 202 playing backward at 2:15 AM.',
       'Locked her suite door thrice, yet found red brick dust on her carpet.'
     ],
     suspicionLevel: 30,
@@ -798,9 +798,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'present',
     occupation: 'Architectural Historian (Tenant 304)',
     personality: 'Scholarly, intense, fascinated by New York’s Gilded Age mysteries, slightly hypnotic gaze.',
-    secretTruth: 'He rented Room 304 specifically because he recovered the 1898 original blueprint of "The House Suite" showing the Basement Sub-Vault.',
+    secretTruth: 'He rented Room 304 specifically because he recovered the original construction blueprint of "The House Suite" showing the Basement Sub-Vault.',
     knownFacts: [
-      'Keeps the 1898 original blueprint on his drafting table in Room 304.',
+      'Keeps the original construction blueprint on his drafting table in Room 304.',
       'Knows that unlocking two secret passages and four clues exposes the Basement Vault.'
     ],
     memories: [

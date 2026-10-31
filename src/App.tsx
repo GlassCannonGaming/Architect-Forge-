@@ -69,7 +69,9 @@ import {
   LocalDiskFoldersWindow,
   LocalDiskFolderStatus
 } from './components/LocalDiskFoldersWindow';
+import { AudioStudioWindow } from './components/AudioStudioWindow';
 import { soundFX } from './game/soundEffects';
+import { audioEngine, BUILTIN_SOUND_EFFECTS, BUILTIN_BGM_TRACKS } from './game/audioEngine';
 
 export default function App() {
   const [mode, setMode] = useState<WorkspaceMode>('architect');
@@ -101,6 +103,19 @@ export default function App() {
   });
   const [currentRoomLabel, setCurrentRoomLabel] = useState<string>('Ground Floor · Layer L1');
   const [nearbyPrompt, setNearbyPrompt] = useState<string | null>(null);
+
+  // Audio Engine State & In-Game Walkthrough Ambience
+  const [walkthroughBgmEnabled, setWalkthroughBgmEnabled] = useState<boolean>(true);
+  const [footstepsEnabled, setFootstepsEnabled] = useState<boolean>(true);
+
+  // Synchronize Walkthrough Ambient Music
+  useEffect(() => {
+    if (mode === 'walkthrough' && walkthroughBgmEnabled) {
+      audioEngine.playBgm(BUILTIN_BGM_TRACKS[0]);
+    } else if (mode !== 'walkthrough') {
+      audioEngine.stopBgm();
+    }
+  }, [mode, walkthroughBgmEnabled]);
 
   // Start with a Blank 128x128 Square Tiles Canvas by default (or restore auto-saved canvas)
   const [assets, setAssets] = useState<PlacedAsset[]>(() => {
@@ -308,8 +323,8 @@ export default function App() {
         timestamp: new Date().toISOString(),
         gameTimeFormatted: '07:30 PM',
         phase: 'Evening',
-        timeOfDayEvent: 'Gaslight Dimming & Parlor Social Hour (Wall sconces flickering)',
-        dailyActionAtTime: 'Listening to the phonograph and watching who enters the service stairwell.',
+        timeOfDayEvent: 'Lobby Lights Dimming & Parlor Social Hour (Wall sconces flickering)',
+        dailyActionAtTime: 'Listening to the cassette tape player and watching who enters the service stairwell.',
         characterName: 'Vincent Graves',
         userMessage: 'Have you checked the brass passkeys for Suite 202?',
         agentReply:
@@ -335,7 +350,7 @@ export default function App() {
         gameTimeMinutes: 19 * 60 + 30,
         formattedTime: '07:30 PM',
         phase: 'Evening',
-        eventTitle: 'Gaslight Dimming & Parlor Social Hour',
+        eventTitle: 'Lobby Lights Dimming & Parlor Social Hour',
         eventDescription: 'Initial Evening shift clock state saved.'
       }
     ];
@@ -872,7 +887,7 @@ export default function App() {
       if (e.code === 'Escape') {
         e.preventDefault();
         handleClearMouse();
-      } else if (e.code === 'KeyW' && !e.ctrlKey && !e.metaKey && mode === 'architect') {
+      } else if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && mode === 'architect') {
         e.preventDefault();
         soundFX.playPlaceAsset();
         const wallBp = catalogAssets.find((b) => b.category === 'wall') || catalogAssets[0];
@@ -881,7 +896,7 @@ export default function App() {
         setSelectedAssetIds([]);
         setQuickEditWindowOpen(false);
         setStatusBanner(
-          `🧱 Wall Tool active [W] ("${wallBp.name}") — Click & Drag across the grid to place a seamless row of walls!`
+          `🧱 Wall Tool active [B] ("${wallBp.name}") — Click & Drag across the grid to place a seamless row of walls!`
         );
         return;
       } else if (e.code === 'KeyH') {
@@ -1407,7 +1422,7 @@ export default function App() {
   // ============================================================================
   // ENTIRE PROJECT SAVE & LOAD SYSTEM (Browser Slots + Portable .json Files)
   // ============================================================================
-  const [projectName, setProjectName] = useState<string>('Grand 1920s Hotel & Parlor Project');
+  const [projectName, setProjectName] = useState<string>('Grand Boutique Hotel & Parlor Project');
   const [projectDescription, setProjectDescription] = useState<string>(
     'Multi-floor 128×128 architectural build with room blueprints, AI character rigs & lore clock.'
   );
@@ -1426,10 +1441,10 @@ export default function App() {
       // ignore storage error
     }
     const starterHotelProject = createProjectSnapshot({
-      id: 'proj_starter_hotel_1920s',
-      name: 'Grand 1920s Hotel & Parlor Suite',
+      id: 'proj_starter_hotel',
+      name: 'Grand Boutique Hotel & Parlor Suite',
       description:
-        'Pre-built multi-floor 1920s NYC hotel with lobby counter, secret bookcase wall, and resident AI character rigs.',
+        'Pre-built multi-floor NYC boutique hotel with lobby counter, secret bookcase wall, and resident AI character rigs.',
       currentFloor: 'lobby',
       floorLayers: INITIAL_FLOOR_LAYERS,
       assets: INITIAL_PLACED_ASSETS,
@@ -1940,12 +1955,12 @@ export default function App() {
         }
       } else if (category === 'textures') {
         const texUrl =
-          customGeneratedTexUrl || generateSeamlessSvgTextureDataUrl('1920s Art Deco Brass Tile');
+          customGeneratedTexUrl || generateSeamlessSvgTextureDataUrl('Boutique Brass & Marble Tile');
         saveItemToDedicatedFolder(
           'textures',
-          'Art Deco Brass & Marble Surface',
+          'Boutique Brass & Marble Surface',
           {
-            name: 'Art Deco Brass & Marble Surface',
+            name: 'Boutique Brass & Marble Surface',
             imageUrl: texUrl
           },
           String(Date.now()).slice(-6),
@@ -1987,6 +2002,34 @@ export default function App() {
           'Gameplay Clock & World Events Log',
           timeOfDayEvents,
           String(Date.now()).slice(-6),
+          true
+        );
+      } else if (category === 'audio_sfx') {
+        const sampleSfx = BUILTIN_SOUND_EFFECTS.brass_bell;
+        saveItemToDedicatedFolder(
+          'audio_sfx',
+          sampleSfx.name,
+          {
+            schemaVersion: '2.0.0',
+            savedAt: new Date().toISOString(),
+            category: 'audio_sfx',
+            spec: sampleSfx
+          },
+          sampleSfx.type,
+          true
+        );
+      } else if (category === 'audio_music') {
+        const sampleBgm = BUILTIN_BGM_TRACKS[0];
+        saveItemToDedicatedFolder(
+          'audio_music',
+          sampleBgm.title,
+          {
+            schemaVersion: '2.0.0',
+            savedAt: new Date().toISOString(),
+            category: 'audio_music',
+            track: sampleBgm
+          },
+          sampleBgm.id,
           true
         );
       }
@@ -2115,7 +2158,7 @@ export default function App() {
       setLoreSummary(data.summary);
     } catch {
       setLoreSummary(
-        'Standard pre-war NYC interior partitions use 3.0m ceiling height, 0.25m brick/plaster thickness, and 0.9m × 2.1m transom doors.'
+        'Standard NYC boutique hotel interior partitions use 3.0m ceiling height, 0.25m brick/plaster thickness, and 0.9m × 2.1m doors.'
       );
     } finally {
       setAiForgeBusy(false);
@@ -2403,8 +2446,8 @@ export default function App() {
                 Windows:
               </span>
               {(mode === 'character'
-                ? (['local_fs', 'projects', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
-                : (['local_fs', 'projects', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
+                ? (['local_fs', 'projects', 'audio', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
+                : (['local_fs', 'projects', 'audio', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
               ).map((winId) => {
                 const win = studioWindows[winId];
                 const isVisible = win.isOpen && !win.isMinimized;
@@ -2556,6 +2599,24 @@ export default function App() {
           onExportProjectFile={handleExportFullAssetPack}
           onImportProjectJsonText={handleImportProjectJsonText}
         />
+
+        {/* Audio Synthesizer & Sound Studio Floating Window */}
+        {studioWindows.audio && (
+          <AudioStudioWindow
+            windowState={studioWindows.audio}
+            onFocus={handleFocusWindow}
+            onMove={handleMoveWindow}
+            onResize={handleResizeWindow}
+            onToggleMinimize={handleToggleMinimizeWindow}
+            onToggleMaximize={handleToggleMaximizeWindow}
+            onClose={(id) => handleToggleOpenWindow(id, false)}
+            onSaveToLocalFolder={saveItemToDedicatedFolder}
+            walkthroughBgmEnabled={walkthroughBgmEnabled}
+            onToggleWalkthroughBgm={setWalkthroughBgmEnabled}
+            footstepsEnabled={footstepsEnabled}
+            onToggleFootsteps={setFootstepsEnabled}
+          />
+        )}
 
         {/* Modular Floating Studio Windows (Floor Layers, Room Blueprints, Tools, Asset Catalog, Inspector) */}
         <UnifiedBottomDock

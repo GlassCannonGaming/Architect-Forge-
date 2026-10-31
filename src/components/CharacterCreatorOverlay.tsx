@@ -114,17 +114,17 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
   });
 
   const [aiSeedPrompt, setAiSeedPrompt] = useState(
-    'Observant 1920s night clerk who guards the brass passkeys and hears footsteps behind Suite 202'
+    'Observant boutique hotel night clerk who guards the brass passkeys and hears footsteps behind Suite 202'
   );
   const [aiGenerating, setAiGenerating] = useState(false);
   const [voiceStyle, setVoiceStyle] = useState(
-    'Crisp 1920s Mid-Atlantic concierge cadence, hushed and deliberate'
+    'Crisp Mid-Atlantic concierge cadence, hushed and deliberate'
   );
   const [demeanor, setDemeanor] = useState(
     'Polite, meticulous, quietly unnerved by noises behind the brickwork'
   );
   const [likesText, setLikesText] = useState(
-    'Polished brass keys, Warm radiator steam, Accurate guest ledgers, Pre-war jazz records'
+    'Polished brass keys, Warm radiator steam, Accurate guest ledgers, Classic jazz cassettes'
   );
   const [dislikesText, setDislikesText] = useState(
     'Drafty airshafts, Missing ledger pages, Unexplained knocking after midnight'
@@ -137,7 +137,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     ].join('\n')
   );
   const [personalInstructionSet, setPersonalInstructionSet] = useState(
-    'Speak exclusively as Vincent Graves inside The Alderney Arms 1920s hotel universe. Never use internet knowledge or out-of-game references. Only share facts from Starting Known Information and respond according to your current Time-of-Day Daily Action.'
+    'Speak exclusively as Vincent Graves inside The Alderney Arms Hotel universe. Never use internet knowledge or out-of-game references. Only share facts from Starting Known Information and respond according to your current Time-of-Day Daily Action.'
   );
   const [dailySchedule, setDailySchedule] = useState<DailyActionEntry[]>(DEFAULT_DAILY_SCHEDULE);
 

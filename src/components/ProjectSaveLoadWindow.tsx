@@ -107,7 +107,7 @@ export const ProjectSaveLoadWindow: React.FC<ProjectSaveLoadWindowProps> = ({
           <input
             type="text"
             aria-label="Project Name"
-            placeholder="Project Name (e.g. Grand 1920s Hotel Suite)"
+            placeholder="Project Name (e.g. Grand Boutique Hotel Suite)"
             value={projectName}
             onChange={(e) => onChangeProjectName(e.target.value)}
             className="w-full bg-white border border-slate-300 rounded-full px-3 py-1 text-xs font-bold text-slate-800"

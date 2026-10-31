@@ -157,8 +157,8 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   const [ai3DPrompt, setAi3DPrompt] = useState('Vintage brass hotel luggage cart with velvet cushion');
   const [meshyRefImageUrl, setMeshyRefImageUrl] = useState<string | null>(null);
   const meshyImageInputRef = useRef<HTMLInputElement | null>(null);
-  const [texPrompt, setTexPrompt] = useState('1920s New York crimson art-deco geometric carpet');
-  const [loreQuery, setLoreQuery] = useState('1920s New York hotel room dimensions & transom door proportions');
+  const [texPrompt, setTexPrompt] = useState('Crimson geometric corridor carpet');
+  const [loreQuery, setLoreQuery] = useState('Boutique hotel room dimensions & standard door proportions');
 
   // Room Blueprint Creator State
   const [bpName, setBpName] = useState<string>('Custom Parlor Suite');
@@ -614,7 +614,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     <span>Wall Tool (Click &amp; Drag Row)</span>
                   </span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 bg-white/40 text-amber-950 font-bold rounded-md">
-                    [W]
+                    [B]
                   </span>
                 </button>
 

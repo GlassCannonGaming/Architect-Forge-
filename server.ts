@@ -28,7 +28,9 @@ import {
   getLocalFolderSpec,
   buildLocalFolderItemFilename,
   buildLocalSetupScripts,
-  INITIAL_ROOM_BLUEPRINTS
+  INITIAL_ROOM_BLUEPRINTS,
+  buildProceduralSfxSpecFromPrompt,
+  buildProceduralMusicSpecFromPrompt
 } from './src/game/rules';
 import { INITIAL_AGENTS } from './src/game/hotelData';
 
@@ -171,7 +173,7 @@ async function startServer() {
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Generate an initial character personality profile, starting known information, personal instruction set, and 4-phase daily action schedule for a character in our 1920s New York mystery hotel game ("The Alderney Arms").
+        contents: `Generate an initial character personality profile, starting known information, personal instruction set, and 4-phase daily action schedule for a character in our New York mystery hotel game ("The Alderney Arms").
 Character Name: "${name}"
 Archetype: "${archetype}"
 Assigned Room/Zone: "${roomNumber}"
@@ -245,7 +247,7 @@ ${globalInstructionSet}`,
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: AI_MODEL_REGISTRY.ambient_bark.modelId, // 'gemini-3.1-flash-lite'
-        contents: `Generate a single eerie 12-word atmospheric observation for a newly hired 1920s NYC hotel clerk standing in ${roomLabel} (${floor}) with sanity at ${sanity}%. No quotes.`
+        contents: `Generate a single eerie 12-word atmospheric observation for a newly hired NYC hotel clerk standing in ${roomLabel} (${floor}) with sanity at ${sanity}%. No quotes.`
       });
       res.json({
         bark: (response.text || '').trim(),
@@ -267,7 +269,7 @@ ${globalInstructionSet}`,
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Fact-check and research historical New York pre-war hotel architecture, secret passageways, or mystery details for: "${query}". Summarize key verified facts in 3 concise sentences for our 3D hotel architect tool.`,
+        contents: `Fact-check and research historical New York boutique hotel architecture, secret passageways, or mystery details for: "${query}". Summarize key verified facts in 3 concise sentences for our 3D hotel architect tool.`,
         config: {
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           tools: [{ googleSearch: {} }]
@@ -284,14 +286,14 @@ ${globalInstructionSet}`,
       res.json({
         summary:
           response.text ||
-          'Verified pre-war NYC masonry hotels used hollow dumbwaiter shafts and double-brick air courts.',
+          'Verified NYC masonry hotels used hollow dumbwaiter shafts and double-brick air courts.',
         sources,
         modelUsed: modelName
       });
     } catch (err: unknown) {
       res.json({
         summary:
-          'Pre-war New York hotels (1890s–1920s) frequently featured load-bearing Flemish-bond brick exteriors, cast-iron steam radiators, transom ventilation doors, and service dumbwaiter shafts between suites.',
+          'Classic New York hotels frequently featured load-bearing Flemish-bond brick exteriors, cast-iron steam radiators, transom ventilation doors, and service dumbwaiter shafts between suites.',
         sources: [],
         modelUsed: modelName,
         errorDetail: err instanceof Error ? err.message : String(err)
@@ -302,7 +304,7 @@ ${globalInstructionSet}`,
   // 4. Meshy.ai Image-to-3D + Google gemini-3.1-flash-lite 3D Composite Object Generator
   app.post('/api/forge/generate-3d', async (req, res) => {
     const {
-      prompt = 'Antique hotel gramophone',
+      prompt = 'Vintage brass luggage cart',
       floor = 'lobby',
       referenceImageUrl = null
     }: {
@@ -364,7 +366,7 @@ ${globalInstructionSet}`,
       }
 
       parts.push({
-        text: `Design a low-poly 3D composite object for a 1920s New York mystery hotel based on this request${
+        text: `Design a low-poly 3D composite object for a New York mystery hotel based on this request${
           referenceImageUrl ? ' and the provided Image-to-3D reference image' : ''
         }: "${prompt}".
 Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or torus) that form a recognizable silhouette pivoted above y=0.`
@@ -446,7 +448,7 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
 
   // 5. Custom Texture & Image-to-3D Reference Generation using Google's cheapest image model: gemini-3.1-flash-lite-image
   app.post('/api/forge/generate-texture', async (req, res) => {
-    const { prompt = '1920s New York crimson art-deco carpet', base64Image, mimeType = 'image/png', aspectRatio = '1:1' } =
+    const { prompt = 'Crimson geometric corridor carpet', base64Image, mimeType = 'image/png', aspectRatio = '1:1' } =
       req.body || {};
     const imageModel = AI_MODEL_REGISTRY.texture_synthesis.modelId; // 'gemini-3.1-flash-lite-image'
 
@@ -464,7 +466,7 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
         });
       }
       parts.push({
-        text: `Flat seamless orthographic game texture or architectural surface reference for a stylized 1920s New York mystery hotel: ${prompt}. High contrast, low-poly cartoon aesthetic.`
+        text: `Flat seamless orthographic game texture or architectural surface reference for a stylized New York mystery hotel: ${prompt}. High contrast, low-poly cartoon aesthetic.`
       });
 
       const response = await ai.models.generateContent({
@@ -510,7 +512,185 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
     }
   });
 
-  // 6. Gemini Live API WebSocket Bridge (/live) using gemini-3.8-live
+  // 6. Parametric Game Sound Effect (SFX) Foley Generator (Cheapest Google model: gemini-3.1-flash-lite)
+  app.post('/api/audio/generate-sfx', async (req, res) => {
+    const { prompt = 'Heavy brass door lock latching shut' } = req.body || {};
+    const modelName = AI_MODEL_REGISTRY.sfx_generator.modelId; // 'gemini-3.1-flash-lite'
+
+    try {
+      const ai = getGenAIClient();
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: `Design a parametric sound effect (SFX) specification for our retro boutique hotel mystery game based on: "${prompt}".
+Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or triangle) with ADSR envelope, filter cutoff, pitch modulation, and noise mix.`,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              type: { type: Type.STRING },
+              durationSeconds: { type: Type.NUMBER },
+              oscillatorType: { type: Type.STRING },
+              baseFrequency: { type: Type.NUMBER },
+              pitchBend: { type: Type.NUMBER },
+              attack: { type: Type.NUMBER },
+              decay: { type: Type.NUMBER },
+              sustain: { type: Type.NUMBER },
+              release: { type: Type.NUMBER },
+              filterType: { type: Type.STRING },
+              filterCutoff: { type: Type.NUMBER },
+              filterResonance: { type: Type.NUMBER },
+              noiseMix: { type: Type.NUMBER },
+              distortion: { type: Type.NUMBER },
+              reverb: { type: Type.NUMBER }
+            },
+            required: [
+              'name',
+              'durationSeconds',
+              'oscillatorType',
+              'baseFrequency',
+              'attack',
+              'decay',
+              'sustain',
+              'release',
+              'noiseMix'
+            ]
+          }
+        }
+      });
+
+      const parsed = JSON.parse((response.text || '{}').trim());
+      if (parsed && parsed.baseFrequency) {
+        res.json({
+          spec: {
+            id: `sfx_ai_${Date.now()}`,
+            name: parsed.name || prompt,
+            type: 'custom',
+            durationSeconds: Math.max(0.1, Math.min(4.0, Number(parsed.durationSeconds) || 1.0)),
+            oscillatorType: parsed.oscillatorType || 'sine',
+            baseFrequency: Math.max(30, Math.min(4000, Number(parsed.baseFrequency) || 220)),
+            pitchBend: Number(parsed.pitchBend) || 0,
+            attack: Math.max(0.001, Number(parsed.attack) || 0.05),
+            decay: Math.max(0.01, Number(parsed.decay) || 0.2),
+            sustain: Math.max(0, Math.min(1, Number(parsed.sustain) || 0.3)),
+            release: Math.max(0.01, Number(parsed.release) || 0.3),
+            filterType: parsed.filterType || 'lowpass',
+            filterCutoff: Math.max(100, Math.min(8000, Number(parsed.filterCutoff) || 1000)),
+            filterResonance: Math.max(0, Math.min(10, Number(parsed.filterResonance) || 2.0)),
+            noiseMix: Math.max(0, Math.min(1, Number(parsed.noiseMix) || 0.2)),
+            distortion: Math.max(0, Math.min(1, Number(parsed.distortion) || 0)),
+            reverb: Math.max(0, Math.min(1, Number(parsed.reverb) || 0.3))
+          },
+          modelUsed: modelName,
+          source: 'gemini-3.1-flash-lite'
+        });
+        return;
+      }
+      throw new Error('Fallback to procedural sound generator');
+    } catch {
+      const fallback = buildProceduralSfxSpecFromPrompt(prompt);
+      res.json({
+        spec: fallback,
+        modelUsed: modelName,
+        source: 'procedural-fallback'
+      });
+    }
+  });
+
+  // 7. Multi-Track Background Music Composer (Cheapest Google model: gemini-3.1-flash-lite)
+  app.post('/api/audio/generate-music', async (req, res) => {
+    const { prompt = 'Rainy boutique hotel lounge noir jazz' } = req.body || {};
+    const modelName = AI_MODEL_REGISTRY.music_composer.modelId; // 'gemini-3.1-flash-lite'
+
+    try {
+      const ai = getGenAIClient();
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: `Compose a multi-voice ambient background music loop for a retro boutique hotel mystery based on: "${prompt}".
+Include mood, bpm (40-140), key/scale, chord progression names, drone frequency, filter cutoff, and 4-8 melody notes (note name e.g. D4, freq, timeOffset in beats 0-8, duration in beats, velocity 0-1) and bass notes.`,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              mood: { type: Type.STRING },
+              bpm: { type: Type.NUMBER },
+              scale: { type: Type.STRING },
+              rootNote: { type: Type.STRING },
+              chords: { type: Type.ARRAY, items: { type: Type.STRING } },
+              droneFreq: { type: Type.NUMBER },
+              reverbAmount: { type: Type.NUMBER },
+              filterCutoff: { type: Type.NUMBER },
+              melody: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    note: { type: Type.STRING },
+                    freq: { type: Type.NUMBER },
+                    timeOffset: { type: Type.NUMBER },
+                    duration: { type: Type.NUMBER },
+                    velocity: { type: Type.NUMBER }
+                  },
+                  required: ['note', 'freq', 'timeOffset', 'duration', 'velocity']
+                }
+              },
+              bass: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    note: { type: Type.STRING },
+                    freq: { type: Type.NUMBER },
+                    timeOffset: { type: Type.NUMBER },
+                    duration: { type: Type.NUMBER },
+                    velocity: { type: Type.NUMBER }
+                  },
+                  required: ['note', 'freq', 'timeOffset', 'duration', 'velocity']
+                }
+              }
+            },
+            required: ['title', 'mood', 'bpm', 'chords', 'droneFreq', 'melody', 'bass']
+          }
+        }
+      });
+
+      const parsed = JSON.parse((response.text || '{}').trim());
+      if (parsed && Array.isArray(parsed.melody) && parsed.melody.length > 0) {
+        res.json({
+          track: {
+            id: `bgm_ai_${Date.now()}`,
+            title: parsed.title || prompt,
+            mood: parsed.mood || 'Retro Hotel Mystery',
+            bpm: Math.max(40, Math.min(140, Number(parsed.bpm) || 72)),
+            scale: parsed.scale || 'natural_minor',
+            rootNote: parsed.rootNote || 'D',
+            chords: Array.isArray(parsed.chords) ? parsed.chords : ['Dm', 'Gm', 'A7'],
+            droneFreq: Math.max(30, Math.min(300, Number(parsed.droneFreq) || 73.42)),
+            reverbAmount: Math.max(0.1, Math.min(0.9, Number(parsed.reverbAmount) || 0.5)),
+            filterCutoff: Math.max(200, Math.min(3000, Number(parsed.filterCutoff) || 900)),
+            melody: parsed.melody,
+            bass: Array.isArray(parsed.bass) ? parsed.bass : []
+          },
+          modelUsed: modelName,
+          source: 'gemini-3.1-flash-lite'
+        });
+        return;
+      }
+      throw new Error('Fallback to procedural music generator');
+    } catch {
+      const fallback = buildProceduralMusicSpecFromPrompt(prompt);
+      res.json({
+        track: fallback,
+        modelUsed: modelName,
+        source: 'procedural-fallback'
+      });
+    }
+  });
+
+  // 8. Gemini Live API WebSocket Bridge (/live) using gemini-3.8-live
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
@@ -535,7 +715,7 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
           },
           systemInstruction:
-            'You are Cylinder #9, the sentient 1920s Brass Pocket Dictaphone carried by the newly hired Night Clerk at The Alderney Arms Hotel in New York. Speak in concise, atmospheric detective tones. Never break character.'
+            'You are Tape #9, the sentient Handheld Microcassette Dictaphone carried by the newly hired Night Clerk at The Alderney Arms Hotel in New York. Speak in concise, atmospheric detective tones. Never break character.'
         },
         callbacks: {
           onmessage: (message: LiveServerMessage) => {
@@ -692,19 +872,19 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
       }
     };
 
-    seedHelper('environment_3d', 'Antique Brass Gramophone', 'seed01', {
+    seedHelper('environment_3d', 'Vintage Brass Table Fan', 'seed01', {
       schemaVersion: '2.0.0',
       savedAt: new Date().toISOString(),
       category: 'environment_3d',
-      asset: buildProcedural3DSpecFromPrompt('Antique Brass Gramophone')
+      asset: buildProcedural3DSpecFromPrompt('Vintage Brass Table Fan')
     });
-    seedHelper('catalog_blueprints', 'Pre-War Mahogany Concierge Desk', 'seed01', {
+    seedHelper('catalog_blueprints', 'Mahogany Concierge Desk', 'seed01', {
       schemaVersion: '2.0.0',
       savedAt: new Date().toISOString(),
       category: 'catalog_blueprints',
       catalogItem: {
         id: 'cat_concierge_desk_seed',
-        name: 'Pre-War Mahogany Concierge Desk',
+        name: 'Mahogany Concierge Desk',
         category: 'furniture',
         subType: 'concierge_desk',
         dimensions: [2.6, 1.1, 0.9],
@@ -713,15 +893,15 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
         collidable: true
       }
     });
-    seedHelper('textures', '1920s Crimson Art Deco Carpet', 'seed01', {
+    seedHelper('textures', 'Crimson Geometric Corridor Carpet', 'seed01', {
       schemaVersion: '2.0.0',
       savedAt: new Date().toISOString(),
       category: 'textures',
       texture: {
         id: 'tex_crimson_deco_seed',
-        name: '1920s Crimson Art Deco Carpet',
+        name: 'Crimson Geometric Corridor Carpet',
         category: 'floor',
-        imageUrl: generateSeamlessSvgTextureDataUrl('1920s crimson carpet')
+        imageUrl: generateSeamlessSvgTextureDataUrl('crimson geometric corridor carpet')
       }
     });
     if (INITIAL_ROOM_BLUEPRINTS.length > 0) {

@@ -12,7 +12,9 @@ import {
   getRoomLabelAtPosition,
   snapToGrid,
   computeWallRowPlacements,
-  WallRowPlacement
+  WallRowPlacement,
+  computeFirstPersonCameraDisplacement,
+  computeCameraPanDelta
 } from '../game/rules';
 import {
   buildAssetMeshGroup,
@@ -22,6 +24,7 @@ import {
 } from '../game/procedural3D';
 import { AssetBlueprint, createBlueprintFromAsset } from '../game/hotelData';
 import { soundFX } from '../game/soundEffects';
+import { audioEngine } from '../game/audioEngine';
 
 export type WorkspaceMode = 'architect' | 'character' | 'walkthrough';
 
@@ -556,6 +559,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     // Input Handling (WASD, Arrows, E Interact, Shift+Click, Marquee Select, & Simultaneous Drag)
     const keysHeld = new Set<string>();
     let isPointerDown = false;
+    let isMiddleMouseDown = false;
+    let isRightMouseDown = false;
+    let isPanningCamera = false;
     let isMarqueeDragging = false;
     let marqueeAdditiveShift = false;
     let draggingAssetId: string | null = null;
@@ -607,6 +613,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       phi: 0.88,
       radius: 20,
       targetX: 0,
+      targetY: 0.5,
       targetZ: 0
     };
 
@@ -616,6 +623,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     const clearInputs = () => {
       keysHeld.clear();
       isPointerDown = false;
+      isMiddleMouseDown = false;
+      isRightMouseDown = false;
+      isPanningCamera = false;
       isMarqueeDragging = false;
       isWallRowDragging = false;
       wallRowStartPos = null;
@@ -627,6 +637,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       hasRecordedDragStart = false;
       ghostPreviewMesh.visible = false;
       setMarqueeBox(null);
+      renderer.domElement.style.cursor = 'default';
     };
 
     // Dedicated "E" key interaction across Walkthrough and Architect modes
@@ -725,13 +736,32 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button === 2) {
-        clearInputs();
-        stateRef.current.onSelectAsset(null, false);
+      // 1. CLICKING THE MOUSE WHEEL (button === 1) ALLOWS FOR ROTATING
+      if (e.button === 1) {
+        e.preventDefault();
+        isMiddleMouseDown = true;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        downStartX = e.clientX;
+        downStartY = e.clientY;
+        renderer.domElement.style.cursor = 'all-scroll';
         return;
       }
-      if (e.button !== 0) return;
+
+      // Secondary / Right-click (button === 2) supports orbit rotation or clearing
+      if (e.button === 2) {
+        isRightMouseDown = true;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        downStartX = e.clientX;
+        downStartY = e.clientY;
+        return;
+      }
+
+      if (e.button !== 0) return; // Only process left click below
+
       isPointerDown = true;
+      isPanningCamera = false;
       hasRecordedDragStart = false;
       lastPointerX = e.clientX;
       lastPointerY = e.clientY;
@@ -828,6 +858,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           return;
         }
 
+        // 4. LEFT CLICKING WITHOUT AN ASSET PRESENT MAKES THE CAMERA PAN LEFT TO RIGHT / UP AND DOWN
+        isPanningCamera = true;
+        renderer.domElement.style.cursor = 'grabbing';
         st.onSelectAsset(null, false);
       } else if (st.mode === 'walkthrough') {
         const hits = _raycaster.intersectObjects(interactableObjects, true);
@@ -850,6 +883,27 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     const onPointerMove = (e: PointerEvent) => {
       const st = stateRef.current;
       updateMouseNDC(e.clientX, e.clientY);
+
+      // CLICKING THE MOUSE WHEEL (or right drag) ALLOWS FOR ROTATING
+      if (isMiddleMouseDown || (isRightMouseDown && Math.hypot(e.clientX - downStartX, e.clientY - downStartY) > 3)) {
+        const dx = e.clientX - lastPointerX;
+        const dy = e.clientY - lastPointerY;
+        if (st.mode === 'architect') {
+          architectOrbit.theta -= dx * 0.007;
+          architectOrbit.phi = Math.max(0.12, Math.min(1.52, architectOrbit.phi - dy * 0.006));
+        } else if (st.mode === 'walkthrough') {
+          playerPoseRef.current.yaw -= dx * 0.0055;
+          playerPoseRef.current.pitch = Math.max(
+            -0.55,
+            Math.min(0.55, playerPoseRef.current.pitch - dy * 0.004)
+          );
+        } else if (st.mode === 'character') {
+          charPreviewRotation += dx * 0.012;
+        }
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        return;
+      }
 
       if (st.mode === 'architect') {
         if (st.isolateSelectedAsset) {
@@ -918,13 +972,32 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
           return;
         }
 
-        if (isPointerDown && !draggingAssetId) {
+        // 2. LEFT CLICKING WITHOUT AN ASSET PRESENT MAKES THE CAMERA PAN LEFT TO RIGHT / UP AND DOWN
+        if (isPointerDown && isPanningCamera) {
           const dx = e.clientX - lastPointerX;
           const dy = e.clientY - lastPointerY;
-          architectOrbit.theta -= dx * 0.007;
-          architectOrbit.phi = Math.max(0.32, Math.min(1.38, architectOrbit.phi - dy * 0.006));
+
+          const rect = renderer.domElement.getBoundingClientRect();
+          _vec3A.setFromMatrixColumn(camera.matrixWorld, 0); // Camera Right
+          _vec3B.setFromMatrixColumn(camera.matrixWorld, 1); // Camera Up
+
+          const { panX, panY, panZ } = computeCameraPanDelta(
+            dx,
+            dy,
+            camera.fov,
+            architectOrbit.radius,
+            rect.height,
+            [_vec3A.x, _vec3A.y, _vec3A.z],
+            [_vec3B.x, _vec3B.y, _vec3B.z]
+          );
+
+          architectOrbit.targetX = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetX + panX));
+          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY + panY));
+          architectOrbit.targetZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetZ + panZ));
+
           lastPointerX = e.clientX;
           lastPointerY = e.clientY;
+          return;
         }
       } else if (st.mode === 'character' && isPointerDown) {
         const dx = e.clientX - lastPointerX;
@@ -945,6 +1018,21 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
     const onPointerUp = (e: PointerEvent) => {
       const st = stateRef.current;
+      renderer.domElement.style.cursor = 'default';
+
+      if (e.button === 1) {
+        isMiddleMouseDown = false;
+        return;
+      }
+
+      if (e.button === 2) {
+        if (isRightMouseDown && Math.hypot(e.clientX - downStartX, e.clientY - downStartY) <= 3) {
+          clearInputs();
+          st.onSelectAsset(null, false);
+        }
+        isRightMouseDown = false;
+        return;
+      }
 
       // Finalize Wall Row Drag-Placement
       if (isWallRowDragging && wallRowStartPos && activeWallRowBlueprint) {
@@ -965,6 +1053,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         ghostRowPreviewGroup.visible = false;
         disposeGroupChildren(ghostRowPreviewGroup);
         isPointerDown = false;
+        isPanningCamera = false;
         return;
       }
 
@@ -996,6 +1085,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       }
 
       isPointerDown = false;
+      isPanningCamera = false;
       draggingAssetId = null;
       hasRecordedDragStart = false;
     };
@@ -1006,6 +1096,10 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       }
     };
 
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', clearInputs);
@@ -1013,6 +1107,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
+    renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
     const resizeObserver = new ResizeObserver(() => {
       if (!container) return;
@@ -1030,6 +1125,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     const startTimeMs = performance.now();
     let prevTimeMs = startTimeMs;
     let lastHudSyncTime = 0;
+    let lastFootstepTime = 0;
 
     function afterDraw(cb: () => void) {
       if (isDisposed) return;
@@ -1079,26 +1175,50 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         isolatedAssetGroup.position.set(0, 0.72, 0);
         isolatedAssetGroup.rotation.y = isolatedRotation;
       } else if (st.mode === 'architect') {
-        const panSpeed = 9.0 * dt;
-        if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) architectOrbit.targetZ -= panSpeed;
-        if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) architectOrbit.targetZ += panSpeed;
-        if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) architectOrbit.targetX -= panSpeed;
-        if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) architectOrbit.targetX += panSpeed;
+        // Classic First-Person Controls (WASD & Arrow Keys with Camera-Oriented Forward/Strafe)
+        let forwardInput = 0;
+        let rightInput = 0;
+        let upInput = 0;
 
-        architectOrbit.targetX = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetX));
-        architectOrbit.targetZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetZ));
+        if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) forwardInput += 1;
+        if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) forwardInput -= 1;
+        if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) rightInput += 1;
+        if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) rightInput -= 1;
+        if (keysHeld.has('Space') || keysHeld.has('PageUp')) upInput += 1;
+        if (keysHeld.has('KeyC') || keysHeld.has('PageDown')) upInput -= 1;
+
+        if (forwardInput !== 0 || rightInput !== 0 || upInput !== 0) {
+          if ((forwardInput !== 0 || rightInput !== 0) && nowMs - lastFootstepTime > 360) {
+            audioEngine.playPresetSound('footstep');
+            lastFootstepTime = nowMs;
+          }
+          const moveSpeed = (keysHeld.has('ShiftLeft') || keysHeld.has('ShiftRight') ? 24.0 : 12.0) * dt;
+          const { dx, dy, dz } = computeFirstPersonCameraDisplacement(
+            architectOrbit.theta,
+            forwardInput,
+            rightInput,
+            upInput,
+            moveSpeed
+          );
+
+          architectOrbit.targetX = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetX + dx));
+          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY + dy));
+          architectOrbit.targetZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetZ + dz));
+        }
 
         const desiredX =
           architectOrbit.targetX +
           architectOrbit.radius * Math.sin(architectOrbit.phi) * Math.sin(architectOrbit.theta);
-        const desiredY = architectOrbit.radius * Math.cos(architectOrbit.phi);
+        const desiredY =
+          architectOrbit.targetY +
+          architectOrbit.radius * Math.cos(architectOrbit.phi);
         const desiredZ =
           architectOrbit.targetZ +
           architectOrbit.radius * Math.sin(architectOrbit.phi) * Math.cos(architectOrbit.theta);
 
-        const dampFactor = 1 - Math.exp(-10 * dt);
+        const dampFactor = 1 - Math.exp(-14 * dt);
         camera.position.lerp(_vec3A.set(desiredX, desiredY, desiredZ), dampFactor);
-        camera.lookAt(architectOrbit.targetX, 0.5, architectOrbit.targetZ);
+        camera.lookAt(architectOrbit.targetX, architectOrbit.targetY, architectOrbit.targetZ);
       } else if (st.mode === 'walkthrough') {
         const pose = playerPoseRef.current;
         const turnSpeed = 1.95 * dt;
@@ -1206,6 +1326,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('wheel', onWheel);
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       renderer.dispose();
     };
   }, []);

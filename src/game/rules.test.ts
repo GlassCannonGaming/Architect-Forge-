@@ -115,7 +115,7 @@ test('buildAgentSystemPrompt and sanitizeAndValidateAgentResponse enforce episte
     status: 'present',
     occupation: 'Mechanical Memory Helper',
     personality: 'Analytical, cryptic, loyal only to the Clerk’s recorded observations.',
-    secretTruth: 'It was built by the original 1898 architect.',
+    secretTruth: 'It was built by the original hotel architect.',
     knownFacts: [],
     memories: [],
     suspicionLevel: 0,
@@ -144,7 +144,7 @@ test('buildAgentSystemPrompt and sanitizeAndValidateAgentResponse enforce episte
     health: 100,
     currentFloor: 'lobby',
     currentRoomLabel: 'Front Desk',
-    discoveredClues: ['clue_ledger_1926'],
+    discoveredClues: ['clue_guest_register'],
     openedPassages: [],
     shiftMinutesElapsed: 5,
     vanishedCount: 1
@@ -154,7 +154,7 @@ test('buildAgentSystemPrompt and sanitizeAndValidateAgentResponse enforce episte
     'Arthur claimed Room 202 has been vacant for a month.'
   ]);
 
-  // Epistemic check: Helper prompt includes discovered clue_ledger_1926, but NOT undiscovered clue_basement_key
+  // Epistemic check: Helper prompt includes discovered clue_guest_register, but NOT undiscovered clue_basement_key
   assert.equal(prompt.includes('Redacted Guest Register'), true);
   assert.equal(prompt.includes('Master Skeleton Key #00'), false);
   assert.equal(prompt.includes('You ONLY know what the player currently knows'), true);
@@ -168,9 +168,9 @@ test('buildAgentSystemPrompt and sanitizeAndValidateAgentResponse enforce episte
 
 test('buildProcedural3DSpecFromPrompt generates multi-part composite 3D geometry specs and converts to catalog blueprint', async () => {
   const { createBlueprintFromAsset } = await import('./hotelData');
-  const spec = buildProcedural3DSpecFromPrompt('Antique brass gramophone player');
+  const spec = buildProcedural3DSpecFromPrompt('Vintage brass table fan');
   assert.equal(spec.parts.length >= 4, true);
-  assert.equal(spec.name, 'Vintage Brass Phonograph');
+  assert.equal(spec.name, 'Vintage brass table fan');
   assert.equal(getRoomLabelAtPosition('floor2', -4, -3), 'Room 201');
   assert.equal(getRoomLabelAtPosition('floor2', 4, 3), 'Room 204');
 
@@ -189,7 +189,7 @@ test('buildProcedural3DSpecFromPrompt generates multi-part composite 3D geometry
     compositeParts: spec.parts
   });
   assert.equal(bp.isGenerated, true);
-  assert.equal(bp.name, 'Vintage Brass Phonograph');
+  assert.equal(bp.name, 'Vintage brass table fan');
   assert.equal(bp.compositeParts?.length, spec.parts.length);
 });
 
@@ -381,7 +381,7 @@ test('Character AI personality editor, offline instruction set sandbox, daily ac
         timestamp: '2026-10-30T10:00:00Z',
         gameTimeFormatted: '07:15 PM',
         phase: 'Evening',
-        timeOfDayEvent: 'Gaslight Dimming & Parlor Social Hour',
+        timeOfDayEvent: 'Lobby Lights Dimming & Parlor Social Hour',
         dailyActionAtTime: 'Conversing in hushed tones',
         characterName: 'Clara Sterling',
         userMessage: 'Did you hear the dumbwaiter?',
@@ -531,7 +531,7 @@ test('Surface Snapping aligns moved objects flush against the closest wall or su
   // A 4.0m wide x 0.3m deep brick wall centered at (0, 1.5, -2.0) -> south face at Z = -2.0 + 0.15 = -1.85
   const northWall: PlacedAsset = {
     id: 'wall_north',
-    name: 'NYC Pre-War Brick Wall',
+    name: 'NYC Standard Brick Wall',
     category: 'wall',
     subType: 'wall_brick_standard',
     floor: 'lobby',
@@ -584,7 +584,7 @@ test('Surface Snapping aligns moved objects flush against the closest wall or su
 
   // Test snapAssetToClosestSurfaceNow from any distance on the floor
   const instantSnap = snapAssetToClosestSurfaceNow([northWall, desk], 'desk_1');
-  assert.equal(instantSnap.snappedToName, 'NYC Pre-War Brick Wall');
+  assert.equal(instantSnap.snappedToName, 'NYC Standard Brick Wall');
   const snappedDeskNow = instantSnap.updatedAssets.find((a) => a.id === 'desk_1')!;
   assert.equal(snappedDeskNow.position[2], -1.4);
 });
@@ -664,7 +664,7 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(check.compliant, true);
   assert.equal(check.violations.length, 0);
   assert.equal(check.meshyModelCount, 1);
-  assert.equal(check.googleModelCount, 8);
+  assert.equal(check.googleModelCount, 10);
 
   // Confirm cheapest models are selected for each task
   assert.equal(AI_MODEL_REGISTRY.character_chat.modelId, 'gemini-3.1-flash-lite');
@@ -672,13 +672,15 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(AI_MODEL_REGISTRY.composite_3d_spec.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.texture_synthesis.modelId, 'gemini-3.1-flash-lite-image');
   assert.equal(AI_MODEL_REGISTRY.architectural_research.modelId, 'gemini-3.8-flash');
+  assert.equal(AI_MODEL_REGISTRY.sfx_generator.modelId, 'gemini-3.1-flash-lite');
+  assert.equal(AI_MODEL_REGISTRY.music_composer.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.meshy_image_to_3d.provider, 'Meshy.ai');
 
-  const svgUrl = generateSeamlessSvgTextureDataUrl('1920s crimson carpet');
+  const svgUrl = generateSeamlessSvgTextureDataUrl('crimson geometric corridor carpet');
   assert.equal(svgUrl.startsWith('data:image/svg+xml;utf8,'), true);
 });
 
-test('Local Computer Workspace defines dedicated folders for all data types including Blueprints and newly added assets', async () => {
+test('Local Computer Workspace defines dedicated folders for all data types including Blueprints, Audio, and newly added assets', async () => {
   const {
     LOCAL_WORKSPACE_FOLDERS,
     buildLocalFolderItemFilename,
@@ -686,25 +688,39 @@ test('Local Computer Workspace defines dedicated folders for all data types incl
     createDefaultStudioWindows
   } = await import('./rules');
 
-  assert.equal(LOCAL_WORKSPACE_FOLDERS.length >= 10, true);
+  assert.equal(LOCAL_WORKSPACE_FOLDERS.length >= 12, true);
 
   const blueprintsFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'blueprints');
   assert.equal(!!blueprintsFolder, true);
   assert.equal(blueprintsFolder?.relativePath, 'blueprints');
   assert.equal(blueprintsFolder?.label.includes('Blueprints'), true);
 
-  const bpFile = buildLocalFolderItemFilename('blueprints', 'Victorian Parlor Suite', 'r101');
-  assert.equal(bpFile, 'blueprint_victorian_parlor_suite_r101.blueprint.json');
+  const sfxFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'audio_sfx');
+  assert.equal(!!sfxFolder, true);
+  assert.equal(sfxFolder?.relativePath, 'audio/sound_effects');
+
+  const musicFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'audio_music');
+  assert.equal(!!musicFolder, true);
+  assert.equal(musicFolder?.relativePath, 'audio/background_music');
+
+  const bpFile = buildLocalFolderItemFilename('blueprints', 'Boutique Parlor Suite', 'r101');
+  assert.equal(bpFile, 'blueprint_boutique_parlor_suite_r101.blueprint.json');
 
   const asset3dFile = buildLocalFolderItemFilename(
     'environment_3d',
-    'Brass Gramophone Turntable',
+    'Brass Table Fan',
     '9021'
   );
-  assert.equal(asset3dFile, 'asset3d_brass_gramophone_turntable_9021.asset3d.json');
+  assert.equal(asset3dFile, 'asset3d_brass_table_fan_9021.asset3d.json');
 
-  const texFile = buildLocalFolderItemFilename('textures', 'Crimson Art Deco Carpet', 't1');
-  assert.equal(texFile, 'texture_crimson_art_deco_carpet_t1.texture.json');
+  const sfxFile = buildLocalFolderItemFilename('audio_sfx', 'Heavy Brass Latch', 'c01');
+  assert.equal(sfxFile, 'sfx_heavy_brass_latch_c01.sfx.json');
+
+  const bgmFile = buildLocalFolderItemFilename('audio_music', 'Lobby Lounge Noir', 'm01');
+  assert.equal(bgmFile, 'bgm_lobby_lounge_noir_m01.track.json');
+
+  const texFile = buildLocalFolderItemFilename('textures', 'Crimson Geometric Carpet', 't1');
+  assert.equal(texFile, 'texture_crimson_geometric_carpet_t1.texture.json');
 
   const scripts = buildLocalSetupScripts();
   assert.equal(scripts.windowsBat.includes('blueprints'), true);
@@ -758,6 +774,38 @@ test('computeWallRowPlacements generates a seamless row of walls along dominant 
   assert.equal(negX[0].x, -1.5);
   assert.equal(negX[1].x, -4.5);
 });
+
+test('first-person camera displacement and pan delta calculate correct motion vectors', async () => {
+  const { computeFirstPersonCameraDisplacement, computeCameraPanDelta } = await import('./rules');
+
+  // 1. First-person forward at theta = 0 (looking towards -Z)
+  const forward0 = computeFirstPersonCameraDisplacement(0, 1, 0, 0, 5);
+  assert.equal(Math.abs(forward0.dx) < 0.0001, true);
+  assert.equal(Math.abs(forward0.dz - (-5)) < 0.0001, true);
+  assert.equal(forward0.dy, 0);
+
+  // 2. Strafe right at theta = 0 (+X)
+  const strafeRight0 = computeFirstPersonCameraDisplacement(0, 0, 1, 0, 5);
+  assert.equal(Math.abs(strafeRight0.dx - 5) < 0.0001, true);
+  assert.equal(Math.abs(strafeRight0.dz) < 0.0001, true);
+
+  // 3. Elevate up (Space)
+  const moveUp = computeFirstPersonCameraDisplacement(0, 0, 0, 1, 3);
+  assert.equal(moveUp.dy, 3);
+
+  // 4. Forward at theta = PI/2 (90 deg, looking towards -X)
+  const forward90 = computeFirstPersonCameraDisplacement(Math.PI / 2, 1, 0, 0, 4);
+  assert.equal(Math.abs(forward90.dx - (-4)) < 0.0001, true);
+  assert.equal(Math.abs(forward90.dz) < 0.0001, true);
+
+  // 5. Camera Pan Delta (100px right drag pulls target left to track cursor)
+  const pan = computeCameraPanDelta(100, -50, 60, 20, 800, [1, 0, 0], [0, 1, 0]);
+  // Right drag -> panX < 0
+  assert.equal(pan.panX < 0, true);
+  // Up drag -> panY < 0
+  assert.equal(pan.panY < 0, true);
+});
+
 
 
 
