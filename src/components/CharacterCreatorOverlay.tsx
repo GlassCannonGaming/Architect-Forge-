@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   CharacterAppearance,
   CharacterStats,
@@ -15,8 +15,22 @@ import {
   getTimeOfDayInfo,
   getActiveDailyAction,
   buildProceduralPersonaFromPrompt,
+  evaluateCharacterInteractionMemory,
+  posePendingQuestionFromAgent,
+  resolveTenantDisposition,
+  PendingTenantQuestion,
   StudioWindowId,
-  StudioWindowState
+  StudioWindowState,
+  getArchetypeDefaults,
+  FacialExpressionType,
+  ScheduledActivityGesture,
+  resolveDailyLocationCoords,
+  GlobalAnimationFps,
+  ALLOWED_GLOBAL_ANIMATION_FPS,
+  DEFAULT_GLOBAL_ANIMATION_FPS,
+  MESHY_ANIMATION_PRESETS,
+  decimateAnimationKeyframes,
+  MeshyCharacterAnimationClipSpec
 } from '../game/rules';
 import { StudioWindowFrame } from './StudioWindowFrame';
 
@@ -34,7 +48,7 @@ interface CharacterCreatorOverlayProps {
   globalInstructionSet: string;
   onChangeGlobalInstructionSet: (next: string) => void;
   gameTimeMinutes: number;
-  onChangeGameTimeMinutes: (nextMinutes: number, eventNote?: string) => void;
+  onChangeGameTimeMinutes: (nextMinutes: number, eventNote?: string, triggerRandomAnomalies?: boolean) => void;
   savedInteractions: SavedInteractionEntry[];
   onRecordInteraction: (entry: SavedInteractionEntry) => void;
   timeOfDayEvents: TimeOfDayEventLog[];
@@ -43,16 +57,23 @@ interface CharacterCreatorOverlayProps {
   onChangeTraits: (next: string[]) => void;
   onSaveCharacterRig: (newRig: HotelAgentProfile) => void;
   onExportCharacterRig: (rig: HotelAgentProfile) => void;
+  agents?: HotelAgentProfile[];
+  onUpdateAgentSchedule?: (agentId: string, nextSchedule: DailyActionEntry[]) => void;
+  globalAnimationFps?: GlobalAnimationFps;
+  onChangeGlobalAnimationFps?: (fps: GlobalAnimationFps) => void;
 }
 
 const ARCHETYPES: CharacterAppearance['archetype'][] = [
+  'Elderly Matron',
   'Detective Clerk',
   'Night Bellhop',
   'Occult Archivist',
-  ' eccentric Socialite'
+  'Eccentric Socialite',
+  'Long-Term Resident'
 ];
 
 const HEAD_SHAPES: CharacterAppearance['headShape'][] = [
+  'proportional_human',
   'chibi_block',
   'rounded_toon',
   'tall_noir'
@@ -66,10 +87,47 @@ const EYE_STYLES: CharacterAppearance['eyeStyle'][] = [
 ];
 
 const HAIR_STYLES: CharacterAppearance['hairStyle'][] = [
+  'silver_bun',
+  'permed_silver',
   'swept_pompadour',
   'messy_curls',
   'bob_cut',
   'bowler_hat'
+];
+
+const FACIAL_EXPRESSIONS: FacialExpressionType[] = [
+  'hollow_stare',
+  'side_eye_glare',
+  'paranoid_twitch',
+  'cryptic_whisper',
+  'suspicious',
+  'weary',
+  'alarmed',
+  'smirk',
+  'grimace',
+  'shocked',
+  'neutral'
+];
+
+const SCHEDULE_LOCATIONS = [
+  'Lobby West Parlor (Social Hour)',
+  'Front Desk & Switchboard',
+  'Room 101 (Floor 1)',
+  'Room 104 (Floor 1)',
+  'Floor 1 Corridor',
+  'Suite 201 (Floor 2)',
+  'Suite 202 (Floor 2)',
+  'Room 304 (Floor 3)',
+  'Basement Boiler Sub-Vault'
+];
+
+const ACTIVITY_GESTURES: { value: ScheduledActivityGesture; label: string }[] = [
+  { value: 'parlor_social', label: '☕ Parlor Social / Converse' },
+  { value: 'wall_listen', label: '👂 Listen at Wall / Door' },
+  { value: 'inspect_ledger', label: '📖 Inspect Ledger / Notes' },
+  { value: 'pace_corridor', label: '🚶 Pace Corridor / Patrol' },
+  { value: 'sleepwalk_trance', label: '🌀 33Hz Sleepwalk Trance' },
+  { value: 'idle_observe', label: '👁️ Stand & Observe' }
 ];
 
 const MOUTH_STYLES: CharacterAppearance['mouthStyle'][] = [
@@ -79,8 +137,8 @@ const MOUTH_STYLES: CharacterAppearance['mouthStyle'][] = [
   'calm_neutral'
 ];
 
-const OUTFIT_COLORS = ['#78352f', '#450a0a', '#1e3a8a', '#0f766e', '#581c87', '#374151'];
-const HAIR_COLORS = ['#451a03', '#1f2937', '#991b1b', '#d97706', '#9ca3af', '#581c87'];
+const OUTFIT_COLORS = ['#78352f', '#450a0a', '#1e3a8a', '#0f766e', '#581c87', '#374151', '#4b5563'];
+const HAIR_COLORS = ['#451a03', '#1f2937', '#991b1b', '#d97706', '#9ca3af', '#d1d5db', '#581c87'];
 
 export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = ({
   windows,
@@ -104,14 +162,22 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
   onChangeStats,
   onChangeTraits,
   onSaveCharacterRig,
-  onExportCharacterRig
+  onExportCharacterRig,
+  agents = [],
+  onUpdateAgentSchedule,
+  globalAnimationFps = DEFAULT_GLOBAL_ANIMATION_FPS,
+  onChangeGlobalAnimationFps
 }) => {
   const [rightTab, setRightTab] = useState<'ai_persona' | 'daily_history' | 'stats_traits'>('ai_persona');
-  const [charName, setCharName] = useState('Vincent Graves');
+  const [charName, setCharName] = useState('Mrs. Eleanor Vance');
+  const [meshySelectedGesture, setMeshySelectedGesture] = useState<ScheduledActivityGesture>('idle_observe');
+  const [meshyBaking, setMeshyBaking] = useState(false);
+  const [meshyStatusNote, setMeshyStatusNote] = useState<string | null>(null);
   const [targetRoom, setTargetRoom] = useState<{ floor: FloorId; room: string }>({
-    floor: 'floor2',
-    room: 'Suite 202'
+    floor: 'floor1',
+    room: 'Room 101'
   });
+  const [selectedScheduleAgentId, setSelectedScheduleAgentId] = useState<string>('custom_creator');
 
   const [aiSeedPrompt, setAiSeedPrompt] = useState(
     'Observant boutique hotel night clerk who guards the brass passkeys and hears footsteps behind Suite 202'
@@ -144,10 +210,174 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
   const [dialogueInput, setDialogueInput] = useState('What have you noticed near Suite 202 tonight?');
   const [dialogueBusy, setDialogueBusy] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
+  const speakReplyAloud = (text: string) => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const cleanSpeech = text.replace(/\*[^*]+\*/g, '').trim();
+        if (cleanSpeech) {
+          const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+          utterance.rate = 0.95;
+          utterance.pitch = appearance.archetype === 'Elderly Matron' ? 1.15 : 0.9;
+          window.speechSynthesis.speak(utterance);
+        }
+      } catch {
+        // speech synthesis fallback
+      }
+    }
+  };
+
+  const handleBakeMeshyAnimations = async () => {
+    setMeshyBaking(true);
+    setMeshyStatusNote(null);
+    try {
+      const response = await fetch('/api/forge/meshy-animate-rig', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          characterName: charName,
+          appearance,
+          gesture: meshySelectedGesture,
+          bakeAllGestures: true,
+          globalFps: globalAnimationFps,
+          existingRigTaskId: appearance.meshyRigTaskId
+        })
+      });
+      if (!response.ok) {
+        throw new Error('Meshy endpoint fallback');
+      }
+      const data = await response.json();
+      const nextAnimations = data.animations as Partial<
+        Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>
+      >;
+      onChangeAppearance({
+        ...appearance,
+        meshyRigTaskId: data.rigTaskId,
+        meshyAnimations: nextAnimations
+      });
+      const primary =
+        nextAnimations?.[meshySelectedGesture] ||
+        (data.primaryClip as MeshyCharacterAnimationClipSpec | undefined);
+      setMeshyStatusNote(
+        `Baked 6 Meshy.ai clips @ ${globalAnimationFps} FPS (${
+          primary ? `${primary.originalFrameCount}→${primary.decimatedFrameCount} frames, -${primary.keyframeReductionPct}%` : 'decimated'
+        })`
+      );
+    } catch {
+      const fallbackRigId = appearance.meshyRigTaskId || `meshy_rig_${Date.now().toString(36)}`;
+      const fallbackAnimations: Partial<
+        Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>
+      > = {};
+      (Object.keys(MESHY_ANIMATION_PRESETS) as ScheduledActivityGesture[]).forEach((g) => {
+        fallbackAnimations[g] = decimateAnimationKeyframes(
+          appearance,
+          g,
+          globalAnimationFps,
+          fallbackRigId,
+          `meshy_anim_${g}_${globalAnimationFps}fps`
+        );
+      });
+      onChangeAppearance({
+        ...appearance,
+        meshyRigTaskId: fallbackRigId,
+        meshyAnimations: fallbackAnimations
+      });
+      const clip = fallbackAnimations[meshySelectedGesture];
+      setMeshyStatusNote(
+        `Baked low-frame rig @ ${globalAnimationFps} FPS (${clip?.originalFrameCount ?? 120}→${
+          clip?.decimatedFrameCount ?? 16
+        } frames, -${clip?.keyframeReductionPct ?? 87}% load)`
+      );
+    } finally {
+      setMeshyBaking(false);
+    }
+  };
+
+  const toggleSpeechRecognition = () => {
+    if (isListeningVoice) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsListeningVoice(false);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSaveFeedback('Speech Recognition is not supported in this browser. Please type directly.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListeningVoice(true);
+        setSaveFeedback('🎙️ Listening... Speak directly to the character now.');
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0]?.[0]?.transcript;
+        if (transcript) {
+          setDialogueInput(transcript);
+          setIsListeningVoice(false);
+          setSaveFeedback(`🎙️ Heard: "${transcript}" — Sending to character...`);
+          handleSendTestDialogue(transcript);
+        }
+      };
+
+      recognition.onerror = () => {
+        setIsListeningVoice(false);
+        setSaveFeedback('Microphone input completed or timed out.');
+      };
+
+      recognition.onend = () => {
+        setIsListeningVoice(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsListeningVoice(false);
+      setSaveFeedback('Could not access microphone.');
+    }
+  };
+
+  // AI Episodic & Relational Memory State (Disposition, Trust/Suspicion, Game Day & Multi-Day Pending Questions)
+  const [gameDay, setGameDay] = useState<number>(1);
+  const [trustLevel, setTrustLevel] = useState<number>(60);
+  const [suspicionLevel, setSuspicionLevel] = useState<number>(20);
+  const [pendingQuestions, setPendingQuestions] = useState<PendingTenantQuestion[]>([
+    {
+      id: 'pq_starter_202',
+      questionText:
+        'Did you check behind the Suite 202 fireplace wall to see if the brass latch is unbolted?',
+      askedOnDay: 1,
+      askedAtTimeFormatted: '07:30 PM',
+      expectedTopics: ['fireplace', '202', 'latch', 'passkey', 'key', 'unbolted', 'checked', 'yes'],
+      resolved: false
+    }
+  ]);
+  const [lastMemoryInfluence, setLastMemoryInfluence] = useState<string | null>(null);
 
   const derived = calculateDerivedStats(stats, assignedTraits);
   const timeInfo = getTimeOfDayInfo(gameTimeMinutes);
   const activeDaily = getActiveDailyAction(dailySchedule, gameTimeMinutes);
+  const currentDisposition = resolveTenantDisposition(trustLevel, suspicionLevel);
+  const unresolvedQuestions = pendingQuestions.filter((q) => !q.resolved);
 
   const parseCommaList = (raw: string): string[] =>
     raw
@@ -192,16 +422,22 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
       personalInstructionSet,
       dailySchedule,
       interactionHistory: charHistory,
-      secretTruth: 'Exportable NPC behavioral & dialogue seed (Offline Game-Lore Sandboxed).',
+      pendingQuestions,
+      disposition: currentDisposition,
+      lastInteractionDay: gameDay,
+      secretTruth: `Behind the ${targetRoom.room} fireplace wainscoting is a pivoted brass latch that opens into the hidden service shaft.`,
       knownFacts: knownFacts.length > 0 ? knownFacts : [`Spawn Zone: ${targetRoom.room}`],
       memories: [
         `Created in ArchitectForge Character Studio (${appearance.headShape}).`,
         `Voice: ${voiceStyle}`,
         `Demeanor: ${demeanor}`,
-        ...charHistory.map((h) => `[${h.gameTimeFormatted}] "${h.userMessage}" -> "${h.agentReply}"`)
+        ...charHistory.map(
+          (h) =>
+            `[Day ${h.gameDay ?? 1} ${h.gameTimeFormatted}] "${h.userMessage}" -> "${h.agentReply}" (${h.gameplayInfluenceSummary || 'Logged'})`
+        )
       ],
-      suspicionLevel: 15,
-      trustLevel: 70,
+      suspicionLevel,
+      trustLevel,
       appearance,
       stats,
       assignedTraits
@@ -262,11 +498,26 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     }
   };
 
-  const handleSendTestDialogue = async () => {
-    const promptMsg = dialogueInput.trim();
+  const handleSendTestDialogue = async (overrideMessage?: string) => {
+    const promptMsg = (overrideMessage !== undefined ? overrideMessage : dialogueInput).trim();
     if (!promptMsg) return;
     setDialogueBusy(true);
     const currentRig = buildRigPayload();
+    const localMemEval = evaluateCharacterInteractionMemory(
+      currentRig,
+      promptMsg,
+      gameTimeMinutes,
+      gameDay
+    );
+
+    // Apply relational & episodic memory updates immediately
+    setTrustLevel(localMemEval.resultingTrust);
+    setSuspicionLevel(localMemEval.resultingSuspicion);
+    if (localMemEval.updatedAgent.pendingQuestions) {
+      setPendingQuestions(localMemEval.updatedAgent.pendingQuestions);
+    }
+    setLastMemoryInfluence(localMemEval.gameplayInfluenceSummary);
+
     try {
       const res = await fetch('/api/agent/chat', {
         method: 'POST',
@@ -276,6 +527,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
           message: promptMsg,
           globalInstructionSet,
           gameTimeMinutes,
+          gameDay,
           history: savedInteractions.slice(-4).flatMap((h) => [
             { role: 'user' as const, text: h.userMessage },
             { role: 'model' as const, text: h.agentReply }
@@ -296,14 +548,39 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
         dailyActionAtTime: `${activeDaily.action} (${activeDaily.location})`,
         characterName: currentRig.name,
         userMessage: promptMsg,
-        agentReply: replyText
+        agentReply: replyText,
+        gameDay,
+        trustDelta: localMemEval.trustDelta,
+        suspicionDelta: localMemEval.suspicionDelta,
+        resultingTrust: localMemEval.resultingTrust,
+        resultingSuspicion: localMemEval.resultingSuspicion,
+        resultingDisposition: localMemEval.resultingDisposition,
+        triggeredLikes: localMemEval.triggeredLikes,
+        triggeredDislikes: localMemEval.triggeredDislikes,
+        answeredQuestionId: localMemEval.answeredQuestion?.id || null,
+        answeredQuestionFromDay: localMemEval.answeredQuestion?.askedOnDay || null,
+        pendingQuestionAsked: localMemEval.newlyAskedQuestion?.questionText || null,
+        unansweredQuestionDaysWaiting: localMemEval.unansweredDaysWaiting,
+        gameplayInfluenceSummary: localMemEval.gameplayInfluenceSummary,
+        unlockedClueId: localMemEval.unlockedClueId
       };
       onRecordInteraction(entry);
-      setDialogueInput('');
+      speakReplyAloud(replyText);
+      if (overrideMessage === undefined) {
+        setDialogueInput('');
+      }
       setSaveFeedback(
-        `Saved dialogue & time-of-day state at ${timeInfo.formattedTime} (${timeInfo.phase})!`
+        `Saved interaction & memory on Day ${gameDay} (${localMemEval.resultingDisposition.toUpperCase()}, Trust ${localMemEval.resultingTrust}/100)!`
       );
     } catch {
+      const fallbackReply = localMemEval.answeredQuestion
+        ? `*${currentRig.name} nods with relief on Day ${gameDay}.* "I've been waiting since Day ${localMemEval.answeredQuestion.askedOnDay} for your answer! Here is what I know about ${targetRoom.room}: ${currentRig.secretTruth}"`
+        : localMemEval.oldestUnansweredQuestion && localMemEval.unansweredDaysWaiting >= 1
+          ? `*${currentRig.name} frowns on Day ${gameDay}.* "I asked you ${localMemEval.unansweredDaysWaiting} day(s) ago on Day ${localMemEval.oldestUnansweredQuestion.askedOnDay}: '${localMemEval.oldestUnansweredQuestion.questionText}' — I'm still waiting for your answer!"`
+          : localMemEval.triggeredDislikes.length > 0
+            ? `*${currentRig.name} turns cold (${localMemEval.resultingDisposition.toUpperCase()}).* "I despise ${localMemEval.triggeredDislikes[0]}, Clerk. My door stays locked to you."`
+            : `*${currentRig.name} speaks in a ${voiceStyle.toLowerCase()}.* "During ${timeInfo.phase.toLowerCase()} while ${activeDaily.action.toLowerCase()}, I keep my attention strictly on ${targetRoom.room}."`;
+
       const entry: SavedInteractionEntry = {
         id: `int_${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -313,20 +590,59 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
         dailyActionAtTime: `${activeDaily.action} (${activeDaily.location})`,
         characterName: currentRig.name,
         userMessage: promptMsg,
-        agentReply: `*${currentRig.name} speaks in a ${voiceStyle.toLowerCase()}.* "During ${timeInfo.phase.toLowerCase()} while ${activeDaily.action.toLowerCase()}, I keep my attention strictly on ${targetRoom.room}."`
+        agentReply: fallbackReply,
+        gameDay,
+        trustDelta: localMemEval.trustDelta,
+        suspicionDelta: localMemEval.suspicionDelta,
+        resultingTrust: localMemEval.resultingTrust,
+        resultingSuspicion: localMemEval.resultingSuspicion,
+        resultingDisposition: localMemEval.resultingDisposition,
+        triggeredLikes: localMemEval.triggeredLikes,
+        triggeredDislikes: localMemEval.triggeredDislikes,
+        answeredQuestionId: localMemEval.answeredQuestion?.id || null,
+        answeredQuestionFromDay: localMemEval.answeredQuestion?.askedOnDay || null,
+        pendingQuestionAsked: localMemEval.newlyAskedQuestion?.questionText || null,
+        unansweredQuestionDaysWaiting: localMemEval.unansweredDaysWaiting,
+        gameplayInfluenceSummary: localMemEval.gameplayInfluenceSummary,
+        unlockedClueId: localMemEval.unlockedClueId
       };
       onRecordInteraction(entry);
-      setDialogueInput('');
-      setSaveFeedback(`Saved offline dialogue & daily action log at ${timeInfo.formattedTime}!`);
+      speakReplyAloud(fallbackReply);
+      if (overrideMessage === undefined) {
+        setDialogueInput('');
+      }
+      setSaveFeedback(`Saved offline dialogue & memory state on Day ${gameDay}!`);
     } finally {
       setDialogueBusy(false);
     }
   };
 
-  const handleUpdateDailyAction = (index: number, field: 'action' | 'location', value: string) => {
-    setDailySchedule((prev) =>
-      prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item))
-    );
+  const activeScheduleTargetList: DailyActionEntry[] =
+    selectedScheduleAgentId === 'custom_creator'
+      ? dailySchedule
+      : agents.find((a) => a.id === selectedScheduleAgentId)?.dailySchedule || DEFAULT_DAILY_SCHEDULE;
+
+  const handleUpdateScheduleEntry = (
+    index: number,
+    updates: Partial<DailyActionEntry>
+  ) => {
+    const updatedList = activeScheduleTargetList.map((item, idx) => {
+      if (idx !== index) return item;
+      const next = { ...item, ...updates };
+      if (updates.location) {
+        const resolved = resolveDailyLocationCoords(updates.location, targetRoom.floor, [0, 0, 0]);
+        next.targetFloor = resolved.floor;
+        next.targetPosition = resolved.position;
+      }
+      return next;
+    });
+
+    if (selectedScheduleAgentId === 'custom_creator') {
+      setDailySchedule(updatedList);
+    } else if (onUpdateAgentSchedule) {
+      onUpdateAgentSchedule(selectedScheduleAgentId, updatedList);
+      setSaveFeedback(`Updated live Daily Schedule for tenant (${selectedScheduleAgentId})!`);
+    }
   };
 
   const handleAddRigToPack = () => {
@@ -343,12 +659,35 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     setSaveFeedback(`Exported "${rig.name}.json" with full personality, instructions & history!`);
   };
 
+  const handleApplyOldLadyPreset = () => {
+    const defaults = getArchetypeDefaults('Elderly Matron');
+    setCharName('Mrs. Eleanor Vance');
+    setTargetRoom({ floor: 'floor1', room: 'Room 101' });
+    onChangeAppearance({
+      ...appearance,
+      ...defaults,
+      archetype: 'Elderly Matron',
+      headShape: 'proportional_human',
+      bodyProportionStyle: 'proportional_human',
+      spineCurvature: 38,
+      hasWalkingCane: true,
+      hasSpectacles: true,
+      facialExpression: 'hollow_stare',
+      hairStyle: 'silver_bun',
+      hairColor: '#d1d5db',
+      outfitColor: '#4b5563',
+      eyeStyle: 'wide_amber',
+      mouthStyle: 'nervous_frown'
+    });
+    setSaveFeedback('👵 Applied Old Lady Preset: 38° Bent Spine (Kyphosis), Walnut Cane, Wire Spectacles & Hollow Stare!');
+  };
+
   return (
     <>
       {/* 1. CREATE-A-CHARACTER APPEARANCE & MESH RIG WINDOW */}
       <StudioWindowFrame
         windowState={windows.char_appearance}
-        badgeText="3D Toon Mesh"
+        badgeText="3D Skeleton & Face Rig"
         onFocus={onFocusWindow}
         onMove={onMoveWindow}
         onResize={onResizeWindow}
@@ -357,6 +696,41 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
         onClose={onCloseWindow}
       >
         <div className="space-y-2 text-xs">
+          {/* Quick Starter Presets Bar */}
+          <div className="flex items-center gap-1.5 bg-amber-100/80 border border-amber-300 rounded-xl p-1.5">
+            <button
+              type="button"
+              data-testid="preset-old-lady-bent-spine-btn"
+              onClick={handleApplyOldLadyPreset}
+              className="flex-1 py-1 px-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-bold text-[10px] shadow-xs transition-all"
+            >
+              👵 Begin Old Lady (38° Bent Spine + Cane)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const defaults = getArchetypeDefaults('Detective Clerk');
+                setCharName('Vincent Graves');
+                setTargetRoom({ floor: 'floor2', room: 'Suite 202' });
+                onChangeAppearance({
+                  ...appearance,
+                  ...defaults,
+                  archetype: 'Detective Clerk',
+                  headShape: 'proportional_human',
+                  bodyProportionStyle: 'proportional_human',
+                  spineCurvature: 4,
+                  hasWalkingCane: false,
+                  hasSpectacles: false,
+                  facialExpression: 'side_eye_glare'
+                });
+                setSaveFeedback('🕵️ Applied Noir Clerk Preset (Upright Spine + Side-Eye Glare)!');
+              }}
+              className="py-1 px-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white font-bold text-[10px] transition-all"
+            >
+              🕵️ Noir Clerk
+            </button>
+          </div>
+
           <label className="block">
             <span className="text-[11px] font-bold text-slate-600">Character Name</span>
             <input
@@ -375,9 +749,12 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                 value={appearance.archetype}
                 onChange={(e) => {
                   e.currentTarget.blur();
+                  const nextArch = e.target.value as CharacterAppearance['archetype'];
+                  const defaults = getArchetypeDefaults(nextArch);
                   onChangeAppearance({
                     ...appearance,
-                    archetype: e.target.value as CharacterAppearance['archetype']
+                    ...defaults,
+                    archetype: nextArch
                   });
                 }}
                 className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-2.5 py-1 text-xs font-semibold text-slate-800"
@@ -402,26 +779,107 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
             </label>
           </div>
 
-          <label className="block">
-            <span className="text-[11px] font-bold text-slate-600">Head Mesh Shape</span>
-            <select
-              value={appearance.headShape}
-              onChange={(e) => {
-                e.currentTarget.blur();
+          {/* Posture & Spine Curvature (Old Lady Bent Spine Kyphosis) */}
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-2 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-bold text-amber-900">
+                🦴 Posture: Spine Curvature ({appearance.spineCurvature ?? 0}°)
+              </span>
+              <span className="text-[10px] font-mono text-amber-700 font-semibold">
+                {(appearance.spineCurvature ?? 0) >= 20 ? 'Elderly Bent Spine (Kyphosis)' : 'Upright Stance'}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="45"
+              step="1"
+              value={appearance.spineCurvature ?? 0}
+              onChange={(e) =>
                 onChangeAppearance({
                   ...appearance,
-                  headShape: e.target.value as CharacterAppearance['headShape']
-                });
-              }}
-              className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-3 py-1 text-xs font-semibold text-slate-800"
-            >
-              {HEAD_SHAPES.map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
-          </label>
+                  spineCurvature: parseInt(e.target.value, 10)
+                })
+              }
+              className="w-full accent-amber-600 h-1.5 bg-amber-200 rounded-lg cursor-pointer"
+            />
+            <div className="flex items-center justify-between text-[10px] pt-0.5">
+              <label className="flex items-center gap-1 font-semibold text-amber-900 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(appearance.hasWalkingCane)}
+                  onChange={(e) =>
+                    onChangeAppearance({
+                      ...appearance,
+                      hasWalkingCane: e.target.checked
+                    })
+                  }
+                  className="rounded text-amber-600 focus:ring-amber-500"
+                />
+                <span>🦯 Wooden Cane</span>
+              </label>
+
+              <label className="flex items-center gap-1 font-semibold text-amber-900 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(appearance.hasSpectacles)}
+                  onChange={(e) =>
+                    onChangeAppearance({
+                      ...appearance,
+                      hasSpectacles: e.target.checked
+                    })
+                  }
+                  className="rounded text-amber-600 focus:ring-amber-500"
+                />
+                <span>👓 Wire Glasses</span>
+              </label>
+            </div>
+          </div>
+
+          {/* 3D Facial Expression Rig */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[11px] font-bold text-slate-600">3D Facial Expression</span>
+              <select
+                value={appearance.facialExpression || 'neutral'}
+                onChange={(e) => {
+                  e.currentTarget.blur();
+                  onChangeAppearance({
+                    ...appearance,
+                    facialExpression: e.target.value as FacialExpressionType
+                  });
+                }}
+                className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-2.5 py-1 text-xs font-semibold text-slate-800 capitalize"
+              >
+                {FACIAL_EXPRESSIONS.map((expr) => (
+                  <option key={expr} value={expr}>
+                    {expr.replace('_', ' ')}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-[11px] font-bold text-slate-600">Head Mesh Shape</span>
+              <select
+                value={appearance.headShape}
+                onChange={(e) => {
+                  e.currentTarget.blur();
+                  onChangeAppearance({
+                    ...appearance,
+                    headShape: e.target.value as CharacterAppearance['headShape']
+                  });
+                }}
+                className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-2.5 py-1 text-xs font-semibold text-slate-800"
+              >
+                {HEAD_SHAPES.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
@@ -557,6 +1015,112 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
               className="w-full accent-[#10b981]"
             />
           </div>
+
+          {/* Meshy.ai Auto-Rigging & Low-Frame Animation Stepper (Alterations 1, 2 & 3) */}
+          <div
+            data-testid="meshy-low-frame-animation-panel"
+            className="pt-2 mt-1 border-t border-slate-200 bg-slate-900/95 text-slate-100 rounded-2xl p-2.5 space-y-2 shadow-inner"
+          >
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-extrabold text-amber-300 flex items-center gap-1">
+                ⚡ Meshy.ai Animate &amp; Low-Frame Rig
+              </span>
+              <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded-md">
+                -{Math.round(((60 - globalAnimationFps) / 60) * 100)}% CPU/GPU Load
+              </span>
+            </div>
+
+            <p className="text-[10px] text-slate-300 leading-tight">
+              Uses Meshy <code className="text-amber-300">/v1/rigging</code> +{' '}
+              <code className="text-amber-300">/v1/animations</code> (<code className="text-sky-300">change_fps</code>) with client-side keyframe decimation, 60Hz facial rig overlay, and distance LOD culling.
+            </p>
+
+            {/* Global Character Animation Step Rate (Strictly Global across all characters) */}
+            <div>
+              <div className="flex items-center justify-between text-[10px] mb-1">
+                <span className="font-bold text-slate-300">Global Step Rate (Engine-Wide):</span>
+                <span className="font-mono font-bold text-amber-300">{globalAnimationFps} FPS</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {ALLOWED_GLOBAL_ANIMATION_FPS.map((fpsVal) => (
+                  <button
+                    key={fpsVal}
+                    type="button"
+                    data-testid={`global-anim-fps-${fpsVal}`}
+                    onClick={() => onChangeGlobalAnimationFps?.(fpsVal)}
+                    className={`py-1 rounded-lg text-[10px] font-bold transition-all border ${
+                      globalAnimationFps === fpsVal
+                        ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-xs'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    {fpsVal} FPS
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Meshy Action Library Preset Selector */}
+            <label className="block">
+              <span className="text-[10px] font-bold text-slate-300">
+                Meshy Animation Preset (<code className="text-amber-300">action_id</code>):
+              </span>
+              <select
+                data-testid="meshy-action-preset-select"
+                value={meshySelectedGesture}
+                onChange={(e) =>
+                  setMeshySelectedGesture(e.target.value as ScheduledActivityGesture)
+                }
+                className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-100"
+              >
+                {Object.values(MESHY_ANIMATION_PRESETS).map((preset) => (
+                  <option key={preset.gesture} value={preset.gesture}>
+                    #{preset.actionId} · {preset.categoryLabel} ({preset.cycleDurationSec}s)
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              type="button"
+              data-testid="meshy-bake-low-frame-btn"
+              disabled={meshyBaking}
+              onClick={handleBakeMeshyAnimations}
+              className="w-full py-1.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold text-[11px] shadow-xs transition-all cursor-pointer"
+            >
+              {meshyBaking
+                ? '⏳ Auto-Rigging & Decimating Keyframes...'
+                : `⚡ Auto-Rig & Bake Low-Frame Clips (${globalAnimationFps} FPS)`}
+            </button>
+
+            {meshyStatusNote && (
+              <div
+                data-testid="meshy-bake-status-note"
+                className="text-[10px] font-mono text-emerald-300 bg-slate-950/80 border border-emerald-500/30 rounded-lg px-2 py-1"
+              >
+                ✓ {meshyStatusNote}
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-1 text-[9px] text-slate-300 pt-0.5">
+              <div className="bg-slate-800/90 border border-slate-700 rounded-md px-1.5 py-1">
+                <div className="font-bold text-amber-300">Alt 1 · Decimated</div>
+                <div>
+                  {appearance.meshyAnimations?.[meshySelectedGesture]
+                    ? `${appearance.meshyAnimations[meshySelectedGesture]?.decimatedFrameCount} kf baked`
+                    : `${Math.round(MESHY_ANIMATION_PRESETS[meshySelectedGesture].cycleDurationSec * globalAnimationFps)} kf / cycle`}
+                </div>
+              </div>
+              <div className="bg-slate-800/90 border border-slate-700 rounded-md px-1.5 py-1">
+                <div className="font-bold text-sky-300">Alt 2 · Face Rig</div>
+                <div>60Hz Eyes &amp; Jaw</div>
+              </div>
+              <div className="bg-slate-800/90 border border-slate-700 rounded-md px-1.5 py-1">
+                <div className="font-bold text-emerald-300">Alt 3 · Dist LOD</div>
+                <div>12m / 24m / 35m</div>
+              </div>
+            </div>
+          </div>
         </div>
       </StudioWindowFrame>
 
@@ -594,7 +1158,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              2 · Time &amp; History ({savedInteractions.length})
+              2 · Schedule &amp; Memory ({savedInteractions.length})
             </button>
             <button
               type="button"
@@ -738,91 +1302,246 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
 
           {rightTab === 'daily_history' && (
             <div className="space-y-2.5 text-xs">
-              <div className="bg-slate-900 text-white rounded-2xl p-3 space-y-1.5">
+              {/* AI EPISODIC & RELATIONAL MEMORY ENGINE PANEL */}
+              <div
+                data-testid="ai-memory-engine-panel"
+                className="bg-amber-50/90 border border-amber-300 rounded-2xl p-2.5 space-y-1.5"
+              >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase tracking-wider text-sky-300 font-bold block">
-                      Gameplay Time &amp; Time-of-Day Event
-                    </span>
-                    <div className="text-sm font-extrabold font-mono text-emerald-300">
-                      {timeInfo.formattedTime} · {timeInfo.phase}
+                  <span className="text-[11px] font-extrabold text-amber-950">
+                    🧠 AI Relational &amp; Multi-Day Memory
+                  </span>
+                  <span
+                    data-testid="tenant-disposition-badge"
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                      currentDisposition === 'hostile' || currentDisposition === 'cold'
+                        ? 'bg-rose-600 text-white'
+                        : currentDisposition === 'confidant' || currentDisposition === 'cordial'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-amber-200 text-amber-950'
+                    }`}
+                  >
+                    {currentDisposition} · Trust {trustLevel}% · Susp {suspicionLevel}%
+                  </span>
+                </div>
+
+                <div className="text-[10px] font-semibold text-slate-700">
+                  {currentDisposition === 'hostile' || currentDisposition === 'cold'
+                    ? `⚠️ ${charName} dislikes you — Withholds ${targetRoom.room} secret passage clues & warns Registrar.`
+                    : currentDisposition === 'confidant' || currentDisposition === 'cordial'
+                      ? `✓ ${charName} trusts you — Volunteers hidden latch & passkey clues in ${targetRoom.room}.`
+                      : `Guarded attitude — Mention their Likes or answer their pending question to earn trust.`}
+                </div>
+
+                {/* Unanswered Question Tracker */}
+                {unresolvedQuestions.length > 0 ? (
+                  <div
+                    data-testid="pending-question-card"
+                    className="bg-white border border-amber-300 rounded-xl p-2 space-y-1"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-bold text-amber-900">
+                      <span>⏳ Waiting for Your Answer</span>
+                      <button
+                        type="button"
+                        data-testid="quick-answer-pending-question-btn"
+                        onClick={() =>
+                          handleSendTestDialogue(
+                            `About your question: Yes, I checked the Suite 202 fireplace latch and found the brass passkey.`
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold"
+                      >
+                        Answer Now
+                      </button>
+                    </div>
+                    <div className="text-[11px] font-medium text-slate-800 italic">
+                      &ldquo;{unresolvedQuestions[0].questionText}&rdquo;
                     </div>
                   </div>
+                ) : (
+                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-2.5 py-1 text-[10px] text-emerald-900 font-semibold">
+                    <span>✓ All tenant questions answered!</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const posed = posePendingQuestionFromAgent(
+                          buildRigPayload(),
+                          gameTimeMinutes,
+                          gameDay
+                        );
+                        setPendingQuestions(posed.updatedAgent.pendingQuestions || [posed.question]);
+                        setSaveFeedback(`Tenant asked a new pending question!`);
+                      }}
+                      className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold"
+                    >
+                      + New Question
+                    </button>
+                  </div>
+                )}
+
+                {/* Quick Memory Simulation Buttons */}
+                <div className="grid grid-cols-2 gap-1 pt-0.5">
                   <button
                     type="button"
+                    data-testid="memory-provoke-dislike-btn"
                     onClick={() =>
-                      onChangeGameTimeMinutes(
-                        (gameTimeMinutes + 60) % 1440,
-                        `Advanced clock +1h`
+                      handleSendTestDialogue(
+                        `You're a liar and a suspect! I know about the missing ledger pages and drafty airshafts!`
                       )
                     }
-                    className="px-2.5 py-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-[11px]"
+                    className="py-1 px-2 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-900 font-bold text-[10px]"
                   >
-                    +1 Hr Clock
+                    ⚡ Test Dislike / Hostile
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="memory-build-trust-btn"
+                    onClick={() =>
+                      handleSendTestDialogue(
+                        `Please accept my thanks — I brought polished brass keys and classic jazz cassettes for your ledger audit.`
+                      )
+                    }
+                    className="py-1 px-2 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold text-[10px]"
+                  >
+                    ✨ Test Liked Topic (+Trust)
                   </button>
                 </div>
-                <div className="text-[11px] text-slate-200">
-                  <span className="font-bold text-amber-300">World Event:</span> {timeInfo.activeWorldEvent}
-                </div>
-                <div className="text-[11px] text-emerald-200">
-                  <span className="font-bold">Active Daily Action:</span> {activeDaily.action} ({activeDaily.location})
-                </div>
-                <div className="grid grid-cols-4 gap-1 pt-1">
-                  {(
-                    [
-                      { label: 'Morning', mins: 8 * 60 + 30 },
-                      { label: 'Afternoon', mins: 14 * 60 },
-                      { label: 'Evening', mins: 19 * 60 + 30 },
-                      { label: 'Late Night', mins: 23 * 60 + 45 }
-                    ] as const
-                  ).map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() =>
-                        onChangeGameTimeMinutes(
-                          preset.mins,
-                          `Triggered ${preset.label} Time-of-Day Event`
-                        )
-                      }
-                      className={`py-1 rounded-full text-[10px] font-bold transition-all ${
-                        timeInfo.phase === preset.label
-                          ? 'bg-sky-500 text-white'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
+
+                {lastMemoryInfluence && (
+                  <div
+                    data-testid="last-memory-influence-banner"
+                    className="text-[10px] font-mono bg-amber-100/90 border border-amber-300 rounded-xl px-2 py-1 text-amber-950"
+                  >
+                    {lastMemoryInfluence}
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-1">
-                <span className="text-[11px] font-bold text-slate-700">
-                  Basic Daily Actions Schedule (Saved per Phase):
-                </span>
-                <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
-                  {dailySchedule.map((entry, idx) => (
+              {/* CHARACTER POSITION & ACTIVITY PRESETS MANAGER */}
+              <div
+                data-testid="daily-schedule-manager-panel"
+                className="bg-slate-100 border border-slate-300 rounded-2xl p-2.5 space-y-1.5"
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[11px] font-extrabold text-slate-800">
+                    📍 Tenant Position &amp; Activity Presets
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="trigger-random-ai-schedule-btn"
+                    onClick={() => {
+                      onChangeGameTimeMinutes(
+                        gameTimeMinutes,
+                        'Triggered Random AI Tenant Activity & Relocation',
+                        true
+                      );
+                      setSaveFeedback('🎲 Triggered Random AI Tenant Activity & Position Update!');
+                    }}
+                    className="px-2 py-0.5 rounded-full bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] shadow-2xs"
+                  >
+                    🎲 Random AI Event Now
+                  </button>
+                </div>
+
+                {/* Target Tenant Selector (Edit Creator Rig or Live Hotel AI Tenants) */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-600 shrink-0">Preset For:</span>
+                  <select
+                    aria-label="Select Tenant for Daily Schedule"
+                    value={selectedScheduleAgentId}
+                    onChange={(e) => setSelectedScheduleAgentId(e.target.value)}
+                    className="flex-1 bg-white border border-slate-300 rounded-full px-2 py-0.5 text-[10px] font-bold text-slate-800"
+                  >
+                    <option value="custom_creator">✨ {charName} (Creator Rig)</option>
+                    {agents
+                      .filter((a) => a.role !== 'helper_entity')
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          🏨 {a.name} ({a.roomNumber} · Now on {a.floor.toUpperCase()})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                  {activeScheduleTargetList.map((entry, idx) => (
                     <div
                       key={entry.phase}
-                      className={`p-2 rounded-2xl border text-[11px] space-y-1 ${
+                      className={`p-2 rounded-xl border text-[10px] space-y-1 ${
                         entry.phase === timeInfo.phase
-                          ? 'bg-emerald-50 border-emerald-300'
-                          : 'bg-slate-50 border-slate-200'
+                          ? 'bg-emerald-50 border-emerald-400 shadow-2xs'
+                          : 'bg-white border-slate-200'
                       }`}
                     >
-                      <div className="flex items-center justify-between font-bold text-slate-700">
+                      <div className="flex items-center justify-between font-bold text-slate-800">
                         <span>
-                          {entry.phase} ({entry.timeRange})
+                          {entry.phase === timeInfo.phase ? '● ' : ''}
+                          Routine Slot {idx + 1} · {entry.phase}
                         </span>
-                        <span className="text-[10px] text-[#0284c7]">{entry.location}</span>
+                        <label className="flex items-center gap-1 text-[9px] font-semibold text-purple-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={entry.randomEventsEnabled !== false}
+                            onChange={(e) =>
+                              handleUpdateScheduleEntry(idx, {
+                                randomEventsEnabled: e.target.checked
+                              })
+                            }
+                            className="rounded text-purple-600"
+                          />
+                          <span>🎲 AI Random Events</span>
+                        </label>
                       </div>
+
+                      <div className="grid grid-cols-2 gap-1">
+                        <select
+                          aria-label={`${entry.phase} Location Target`}
+                          value={
+                            SCHEDULE_LOCATIONS.includes(entry.location)
+                              ? entry.location
+                              : SCHEDULE_LOCATIONS[0]
+                          }
+                          onChange={(e) =>
+                            handleUpdateScheduleEntry(idx, { location: e.target.value })
+                          }
+                          className="bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-0.5 text-[10px] font-semibold text-[#0284c7]"
+                        >
+                          {!SCHEDULE_LOCATIONS.includes(entry.location) && (
+                            <option value={entry.location}>{entry.location}</option>
+                          )}
+                          {SCHEDULE_LOCATIONS.map((loc) => (
+                            <option key={loc} value={loc}>
+                              📍 {loc}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          aria-label={`${entry.phase} Activity Gesture`}
+                          value={entry.activityGesture || 'idle_observe'}
+                          onChange={(e) =>
+                            handleUpdateScheduleEntry(idx, {
+                              activityGesture: e.target.value as ScheduledActivityGesture
+                            })
+                          }
+                          className="bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+                        >
+                          {ACTIVITY_GESTURES.map((g) => (
+                            <option key={g.value} value={g.value}>
+                              {g.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
                       <input
                         type="text"
                         value={entry.action}
-                        onChange={(e) => handleUpdateDailyAction(idx, 'action', e.target.value)}
+                        onChange={(e) =>
+                          handleUpdateScheduleEntry(idx, { action: e.target.value })
+                        }
                         aria-label={`${entry.phase} Daily Action`}
-                        className="w-full bg-white border border-slate-300 rounded-full px-2.5 py-0.5 text-[11px] text-slate-800"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-0.5 text-[10px] text-slate-800"
                       />
                     </div>
                   ))}
@@ -832,7 +1551,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-extrabold text-slate-700">
-                    Live Sandboxed Dialogue &amp; Saved History
+                    Live Sandboxed Dialogue &amp; Saved Memory Log
                   </span>
                   <span className="text-[10px] font-mono text-emerald-700">
                     Auto-Saved ({savedInteractions.length} logs)
@@ -844,13 +1563,28 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                     value={dialogueInput}
                     onChange={(e) => setDialogueInput(e.target.value)}
                     aria-label="Test Character Dialogue Input"
-                    placeholder="Speak to character (saved to history)..."
+                    placeholder="Speak to character (saved to memory)..."
                     className="flex-1 bg-white border border-slate-300 rounded-full px-3 py-1 text-xs text-slate-800"
                   />
                   <button
                     type="button"
+                    onClick={toggleSpeechRecognition}
+                    aria-label="Speak Live to Character via Microphone"
+                    title="Speak Live to Character via Microphone (Speech-to-Text)"
+                    className={`px-2.5 py-1 font-bold rounded-full text-xs flex items-center gap-1 shrink-0 transition-all ${
+                      isListeningVoice
+                        ? 'bg-rose-600 animate-pulse text-white shadow-xs'
+                        : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                    }`}
+                  >
+                    <span>🎙️</span>
+                    <span>{isListeningVoice ? 'Listening...' : 'Speak'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="talk-and-save-dialogue-btn"
                     disabled={dialogueBusy}
-                    onClick={handleSendTestDialogue}
+                    onClick={() => handleSendTestDialogue()}
                     className="px-3 py-1 bg-[#0284c7] hover:bg-[#0369a1] text-white font-bold rounded-full text-xs shrink-0"
                   >
                     {dialogueBusy ? '...' : 'Talk & Save'}
@@ -863,7 +1597,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                 >
                   {savedInteractions.length === 0 ? (
                     <div className="text-[11px] text-slate-400 italic py-1">
-                      No interactions recorded yet — click &ldquo;Talk &amp; Save&rdquo; to log in-character dialogue.
+                      No interactions recorded yet — click &ldquo;Talk &amp; Save&rdquo; to log in-character dialogue &amp; relational memory.
                     </div>
                   ) : (
                     savedInteractions
@@ -875,10 +1609,22 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                           className="bg-white border border-slate-200 rounded-xl p-2 text-[11px] space-y-0.5"
                         >
                           <div className="flex items-center justify-between text-[10px] font-bold text-[#0284c7]">
-                            <span>
-                              {item.characterName} · {item.gameTimeFormatted} ({item.phase})
-                            </span>
-                            <span className="text-slate-400 truncate max-w-36">{item.dailyActionAtTime}</span>
+                            <span>{item.characterName}</span>
+                            {item.resultingDisposition && (
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[9px] uppercase ${
+                                  item.resultingDisposition === 'hostile' ||
+                                  item.resultingDisposition === 'cold'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : item.resultingDisposition === 'confidant' ||
+                                        item.resultingDisposition === 'cordial'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-amber-100 text-amber-900'
+                                }`}
+                              >
+                                {item.resultingDisposition} ({item.resultingTrust ?? 50}%)
+                              </span>
+                            )}
                           </div>
                           <div className="text-slate-600">
                             <span className="font-bold">You:</span> {item.userMessage}
@@ -887,18 +1633,15 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                             <span className="font-bold text-emerald-700">{item.characterName}:</span>{' '}
                             {item.agentReply}
                           </div>
+                          {item.gameplayInfluenceSummary && (
+                            <div className="text-[10px] font-mono text-amber-800 bg-amber-50 rounded px-1.5 py-0.5 mt-0.5">
+                              🧠 {item.gameplayInfluenceSummary}
+                            </div>
+                          )}
                         </div>
                       ))
                   )}
                 </div>
-
-                {timeOfDayEvents.length > 0 && (
-                  <div className="text-[10px] text-slate-500 border-t border-slate-200 pt-1">
-                    Latest Saved Time Event: {timeOfDayEvents[timeOfDayEvents.length - 1].formattedTime} (
-                    {timeOfDayEvents[timeOfDayEvents.length - 1].phase}) —{' '}
-                    {timeOfDayEvents[timeOfDayEvents.length - 1].eventTitle}
-                  </div>
-                )}
               </div>
             </div>
           )}

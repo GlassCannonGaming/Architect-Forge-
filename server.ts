@@ -11,6 +11,7 @@ import {
   buildAgentSystemPrompt,
   buildSandboxedCharacterSystemPrompt,
   buildProceduralPersonaFromPrompt,
+  evaluateCharacterInteractionMemory,
   DEFAULT_GLOBAL_INSTRUCTION_SET,
   getTimeOfDayInfo,
   getActiveDailyAction,
@@ -30,9 +31,25 @@ import {
   buildLocalSetupScripts,
   INITIAL_ROOM_BLUEPRINTS,
   buildProceduralSfxSpecFromPrompt,
-  buildProceduralMusicSpecFromPrompt
+  buildProceduralMusicSpecFromPrompt,
+  DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT,
+  ASSET_IMPORT_AGENT_INSTRUCTION_SET,
+  buildEnforcedLowPolyImagePrompt,
+  parseAssetDescriptionsFile,
+  generateAssetConceptSvgDataUrl,
+  applyAlphaMatteToConceptImageDataUrl,
+  weatherAssetToLate70sStyle,
+  PlacedAsset,
+  CharacterAppearance,
+  ScheduledActivityGesture,
+  MeshyCharacterAnimationClipSpec,
+  MESHY_ANIMATION_PRESETS,
+  normalizeGlobalAnimationFps,
+  buildMeshyRiggingRequestPayload,
+  buildMeshyAnimateRequestPayload,
+  decimateAnimationKeyframes
 } from './src/game/rules';
-import { INITIAL_AGENTS } from './src/game/hotelData';
+import { INITIAL_AGENTS, createBlueprintFromAsset, AssetBlueprint } from './src/game/hotelData';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,39 +79,50 @@ async function startServer() {
     });
   });
 
-  // 1. Multi-Turn Agent Chat Endpoint (Cheapest capable Google model: gemini-3.1-flash-lite, strictly sandboxed to game lore with NO internet access)
+  // 1. Multi-Turn Agent Chat Endpoint with Episodic & Relational Memory (Cheapest capable Google model: gemini-3.1-flash-lite)
   app.post('/api/agent/chat', async (req, res) => {
+    const {
+      agent,
+      gameState,
+      message,
+      history = [],
+      recentConversationMemory = [],
+      globalInstructionSet = DEFAULT_GLOBAL_INSTRUCTION_SET,
+      gameTimeMinutes = 21 * 60 + 30,
+      gameDay = 1
+    }: {
+      agent: HotelAgentProfile;
+      gameState?: GameStateSnapshot;
+      message: string;
+      history?: { role: 'user' | 'model'; text: string }[];
+      recentConversationMemory?: string[];
+      globalInstructionSet?: string;
+      gameTimeMinutes?: number;
+      gameDay?: number;
+    } = req.body || {};
+
+    if (!agent || !message) {
+      res.status(400).json({ error: 'Missing agent profile or message.' });
+      return;
+    }
+
+    const memoryEval = evaluateCharacterInteractionMemory(
+      agent,
+      message,
+      gameTimeMinutes,
+      gameDay
+    );
+
     try {
-      const {
-        agent,
-        gameState,
-        message,
-        history = [],
-        recentConversationMemory = [],
-        globalInstructionSet = DEFAULT_GLOBAL_INSTRUCTION_SET,
-        gameTimeMinutes = 21 * 60 + 30
-      }: {
-        agent: HotelAgentProfile;
-        gameState?: GameStateSnapshot;
-        message: string;
-        history?: { role: 'user' | 'model'; text: string }[];
-        recentConversationMemory?: string[];
-        globalInstructionSet?: string;
-        gameTimeMinutes?: number;
-      } = req.body;
-
-      if (!agent || !message) {
-        res.status(400).json({ error: 'Missing agent profile or message.' });
-        return;
-      }
-
       const sandboxedInstruction = buildSandboxedCharacterSystemPrompt(
-        agent,
+        memoryEval.updatedAgent,
         globalInstructionSet,
-        gameTimeMinutes
+        gameTimeMinutes,
+        gameDay,
+        memoryEval
       );
       const legacyContext = gameState
-        ? `\n\n${buildAgentSystemPrompt(agent, gameState, INITIAL_CLUES, recentConversationMemory)}`
+        ? `\n\n${buildAgentSystemPrompt(memoryEval.updatedAgent, gameState, INITIAL_CLUES, recentConversationMemory)}`
         : '';
       const systemInstruction = `${sandboxedInstruction}${legacyContext}`;
 
@@ -122,35 +150,64 @@ async function startServer() {
       });
 
       const rawReply = response.text || '';
-      const validated = sanitizeAndValidateAgentResponse(rawReply, agent);
+      const validated = sanitizeAndValidateAgentResponse(rawReply, memoryEval.updatedAgent);
 
       res.json({
         reply: validated.text,
         wasFiltered: validated.wasFiltered,
+        memoryEvaluation: memoryEval,
         modelUsed: modelName,
         provider: 'Google'
       });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const agent: HotelAgentProfile | undefined = req.body?.agent;
-      const gameTimeMinutes: number = req.body?.gameTimeMinutes ?? 21 * 60 + 30;
       const timeInfo = getTimeOfDayInfo(gameTimeMinutes);
       const activeDaily = getActiveDailyAction(agent?.dailySchedule, gameTimeMinutes);
       const knownFactHint =
         agent?.knownFacts && agent.knownFacts.length > 0
           ? agent.knownFacts[0]
           : 'The brick partitions on this floor sound hollow after curfew.';
-      const fallbackReply = `*${agent?.name || 'The resident'} (${
-        agent?.demeanor || 'guarded'
-      }) pauses while ${activeDaily.action.toLowerCase()} at ${
-        timeInfo.formattedTime
-      }.* "Speaking in my usual ${
-        agent?.voiceStyle ? agent.voiceStyle.slice(0, 36).toLowerCase() : 'hushed cadence'
-      }, Clerk — all I know for certain is this: ${knownFactHint}"`;
+
+      let fallbackReply = '';
+      if (memoryEval.answeredQuestion) {
+        const waitPhrase =
+          memoryEval.daysWaitedForAnswer >= 1
+            ? `I've been waiting ${memoryEval.daysWaitedForAnswer} day(s) since Day ${memoryEval.answeredQuestion.askedOnDay} for your answer`
+            : `Thank you for answering my question so quickly`;
+        fallbackReply = `*${agent.name} exhales with relief at ${timeInfo.formattedTime} (Disposition: ${memoryEval.resultingDisposition.toUpperCase()}, Trust ${memoryEval.resultingTrust}/100).* "${waitPhrase}, Clerk. Since you kept your word regarding '${memoryEval.answeredQuestion.questionText}', I'll tell you what I've hidden in ${agent.roomNumber}: ${agent.secretTruth || knownFactHint}"`;
+      } else if (memoryEval.oldestUnansweredQuestion && memoryEval.unansweredDaysWaiting >= 1) {
+        fallbackReply = `*${agent.name} narrows their eyes at ${timeInfo.formattedTime} on Day ${gameDay} (Waiting ${memoryEval.unansweredDaysWaiting} day(s) for answer).* "Hold on, Clerk — I asked you ${memoryEval.unansweredDaysWaiting} day(s) ago on Day ${memoryEval.oldestUnansweredQuestion.askedOnDay}: '${memoryEval.oldestUnansweredQuestion.questionText}' You still haven't given me an answer!"`;
+      } else if (
+        memoryEval.resultingDisposition === 'hostile' ||
+        memoryEval.resultingDisposition === 'cold' ||
+        memoryEval.triggeredDislikes.length > 0
+      ) {
+        const dislikeReason =
+          memoryEval.triggeredDislikes[0] || 'your intrusive questioning';
+        fallbackReply = `*${agent.name} steps back coldly in ${agent.roomNumber} (Disposition: ${memoryEval.resultingDisposition.toUpperCase()}, Trust ${memoryEval.resultingTrust}/100).* "I can't stand ${dislikeReason}, Clerk. Until you show some respect around ${agent.roomNumber}, I have nothing more to say to you."`;
+      } else if (memoryEval.newlyAskedQuestion) {
+        fallbackReply = `*${agent.name} (${
+          agent.demeanor || 'guarded'
+        }) pauses while ${activeDaily.action.toLowerCase()} at ${
+          timeInfo.formattedTime
+        }.* "All I know for certain is this: ${knownFactHint} Now tell me, Clerk — ${
+          memoryEval.newlyAskedQuestion.questionText
+        }"`;
+      } else {
+        fallbackReply = `*${agent?.name || 'The resident'} (${
+          agent?.demeanor || 'guarded'
+        }) pauses while ${activeDaily.action.toLowerCase()} at ${
+          timeInfo.formattedTime
+        }.* "Speaking in my usual ${
+          agent?.voiceStyle ? agent.voiceStyle.slice(0, 36).toLowerCase() : 'hushed cadence'
+        }, Clerk — all I know for certain is this: ${knownFactHint}"`;
+      }
+
       res.json({
         reply: fallbackReply,
         wasFiltered: false,
         fallbackUsed: true,
+        memoryEvaluation: memoryEval,
         modelUsed: AI_MODEL_REGISTRY.character_chat.modelId,
         errorDetail: errMsg
       });
@@ -308,8 +365,16 @@ ${globalInstructionSet}`,
     let meshyTaskId: string | null = null;
     let meshyStatus = 'ready';
 
+    // Proposal A: Run automatic studio background alpha matting pre-pass before Meshy.ai Image-to-3D submission
+    const alphaMatteForSingle = referenceImageUrl
+      ? applyAlphaMatteToConceptImageDataUrl(referenceImageUrl)
+      : null;
+    const meshyInputImageUrl = alphaMatteForSingle
+      ? alphaMatteForSingle.mattedImageDataUrl
+      : referenceImageUrl;
+
     // If a reference image is provided and MESHY_API_KEY is configured, invoke Meshy.ai Image-to-3D API (the sole non-Google AI model)
-    if (referenceImageUrl && process.env.MESHY_API_KEY) {
+    if (meshyInputImageUrl && process.env.MESHY_API_KEY) {
       try {
         const meshyRes = await fetch('https://api.meshy.ai/openapi/v1/image-to-3d', {
           method: 'POST',
@@ -318,7 +383,7 @@ ${globalInstructionSet}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            image_url: referenceImageUrl,
+            image_url: meshyInputImageUrl,
             ai_model: 'meshy-4',
             topology: 'quad',
             target_polycount: 4000,
@@ -438,6 +503,154 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
     }
   });
 
+  // 4b. Meshy.ai Auto-Rigging & Low-Frame Character Animation Pipeline (/openapi/v1/rigging + /openapi/v1/animations)
+  app.post('/api/forge/meshy-animate-rig', async (req, res) => {
+    const {
+      characterName = 'Alderney Resident',
+      appearance,
+      gesture = 'idle_observe',
+      bakeAllGestures = true,
+      globalFps = 8,
+      modelUrl = 'https://assets.meshy.ai/alderney/default_humanoid_hull.glb',
+      existingRigTaskId
+    } = req.body || {};
+
+    const validGlobalFps = normalizeGlobalAnimationFps(Number(globalFps));
+    const safeAppearance: CharacterAppearance = appearance || INITIAL_AGENTS[0].appearance;
+    const meshyApiKey = process.env.MESHY_API_KEY;
+
+    let rigTaskId: string =
+      typeof existingRigTaskId === 'string' && existingRigTaskId.trim().length > 0
+        ? existingRigTaskId.trim()
+        : `meshy_rig_${Date.now().toString(36)}`;
+    let meshyRigStatus = 'SYNTHESIZED_LOW_FRAME';
+
+    const riggingPayload = buildMeshyRiggingRequestPayload(modelUrl, safeAppearance);
+
+    // Step 1: If MESHY_API_KEY is configured, dispatch Auto-Rigging task to Meshy.ai REST v1
+    if (meshyApiKey && !existingRigTaskId) {
+      try {
+        const rigRes = await fetch('https://api.meshy.ai/openapi/v1/rigging', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${meshyApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(riggingPayload)
+        });
+        if (rigRes.ok) {
+          const rigData = (await rigRes.json()) as { result?: string };
+          if (rigData.result) {
+            rigTaskId = `meshy_live_${rigData.result}`;
+            meshyRigStatus = 'SUBMITTED_TO_MESHY_V1';
+          }
+        }
+      } catch {
+        meshyRigStatus = 'LOCAL_LOW_FRAME_RIG_FALLBACK';
+      }
+    }
+
+    // Step 2: Bake low-frame decimated animation clips (and dispatch /openapi/v1/animations with post_process.change_fps)
+    const targetGestures: ScheduledActivityGesture[] = bakeAllGestures
+      ? (Object.keys(MESHY_ANIMATION_PRESETS) as ScheduledActivityGesture[])
+      : [gesture as ScheduledActivityGesture];
+
+    const animations: Partial<Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>> = {};
+    const apiPayloadsSent: Array< ReturnType<typeof buildMeshyAnimateRequestPayload> > = [];
+
+    for (const g of targetGestures) {
+      const animPayload = buildMeshyAnimateRequestPayload(rigTaskId, g, validGlobalFps);
+      apiPayloadsSent.push(animPayload);
+
+      let animTaskId = `meshy_anim_${g}_${validGlobalFps}fps_${Date.now().toString(36).slice(-4)}`;
+
+      if (meshyApiKey && g === gesture) {
+        try {
+          const animRes = await fetch('https://api.meshy.ai/openapi/v1/animations', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${meshyApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(animPayload)
+          });
+          if (animRes.ok) {
+            const animData = (await animRes.json()) as { result?: string };
+            if (animData.result) {
+              animTaskId = `meshy_live_anim_${animData.result}`;
+            }
+          }
+        } catch {
+          // Keep deterministic low-frame baked clip ID
+        }
+      }
+
+      animations[g] = decimateAnimationKeyframes(
+        safeAppearance,
+        g,
+        validGlobalFps,
+        rigTaskId,
+        animTaskId,
+        60
+      );
+    }
+
+    // Step 3: Persist the low-frame animated character rig bundle to ./ArchitectForge_Workspace/characters/rigs/
+    let savedDiskPath: string | null = null;
+    try {
+      const rigFolderSpec = getLocalFolderSpec('character_rigs');
+      const absDir = path.join(process.cwd(), LOCAL_WORKSPACE_ROOT_NAME, rigFolderSpec.relativePath);
+      fs.mkdirSync(absDir, { recursive: true });
+      const filename = buildLocalFolderItemFilename(
+        'character_rigs',
+        `${characterName}_meshy_${validGlobalFps}fps`,
+        rigTaskId.slice(-6)
+      );
+      const fullPath = path.join(absDir, filename);
+      fs.writeFileSync(
+        fullPath,
+        JSON.stringify(
+          {
+            schemaVersion: '2.1.0',
+            savedAt: new Date().toISOString(),
+            category: 'character_rigs',
+            characterName,
+            meshyRigTaskId: rigTaskId,
+            globalFps: validGlobalFps,
+            riggingPayload,
+            animationPayloads: apiPayloadsSent,
+            animations
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+      savedDiskPath = `./${LOCAL_WORKSPACE_ROOT_NAME}/${rigFolderSpec.relativePath}/${filename}`;
+    } catch {
+      savedDiskPath = null;
+    }
+
+    const primaryClip = animations[gesture as ScheduledActivityGesture] || Object.values(animations)[0];
+
+    res.json({
+      rigTaskId,
+      meshyRigStatus,
+      globalFps: validGlobalFps,
+      riggingPayload,
+      primaryAnimationPayload: buildMeshyAnimateRequestPayload(
+        rigTaskId,
+        gesture as ScheduledActivityGesture,
+        validGlobalFps
+      ),
+      primaryClip,
+      animations,
+      savedDiskPath,
+      provider: 'Meshy.ai',
+      modelUsed: AI_MODEL_REGISTRY.meshy_image_to_3d.modelId
+    });
+  });
+
   // 5. Custom Texture & Image-to-3D Reference Generation using Google's cheapest image model: gemini-3.1-flash-lite-image
   app.post('/api/forge/generate-texture', async (req, res) => {
     const { prompt = 'Crimson geometric corridor carpet', base64Image, mimeType = 'image/png', aspectRatio = '1:1' } =
@@ -513,8 +726,8 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Design a parametric sound effect (SFX) specification for our retro boutique hotel mystery game based on: "${prompt}".
-Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or triangle) with ADSR envelope, filter cutoff, pitch modulation, and noise mix.`,
+        contents: `Design a SOTA multi-stage parametric sound effect (SFX) specification for our 1990s boutique hotel mystery game based on: "${prompt}".
+Produce an oscillator synthesis envelope (sine, square, sawtooth, or triangle) with FM harmonic modulation (fmRatio, fmDepth), sub-oscillator mix (subOscMix), physical Foley noise color ('white', 'pink', or 'brown'), resonant filter cutoff, warm saturation distortion, and room acoustic reverb preset ('small_room', 'tiled_bathroom', 'grand_lobby', or 'sub_vault').`,
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -534,8 +747,13 @@ Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or t
               filterCutoff: { type: Type.NUMBER },
               filterResonance: { type: Type.NUMBER },
               noiseMix: { type: Type.NUMBER },
+              noiseColor: { type: Type.STRING },
+              fmRatio: { type: Type.NUMBER },
+              fmDepth: { type: Type.NUMBER },
+              subOscMix: { type: Type.NUMBER },
               distortion: { type: Type.NUMBER },
-              reverb: { type: Type.NUMBER }
+              reverb: { type: Type.NUMBER },
+              reverbPreset: { type: Type.STRING }
             },
             required: [
               'name',
@@ -554,6 +772,8 @@ Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or t
 
       const parsed = JSON.parse((response.text || '{}').trim());
       if (parsed && parsed.baseFrequency) {
+        const validNoiseColors = ['white', 'pink', 'brown'];
+        const validReverbPresets = ['small_room', 'tiled_bathroom', 'grand_lobby', 'sub_vault'];
         res.json({
           spec: {
             id: `sfx_ai_${Date.now()}`,
@@ -571,8 +791,13 @@ Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or t
             filterCutoff: Math.max(100, Math.min(8000, Number(parsed.filterCutoff) || 1000)),
             filterResonance: Math.max(0, Math.min(10, Number(parsed.filterResonance) || 2.0)),
             noiseMix: Math.max(0, Math.min(1, Number(parsed.noiseMix) || 0.2)),
+            noiseColor: validNoiseColors.includes(parsed.noiseColor) ? parsed.noiseColor : 'pink',
+            fmRatio: Math.max(0.5, Math.min(8, Number(parsed.fmRatio) || 1.5)),
+            fmDepth: Math.max(0, Math.min(600, Number(parsed.fmDepth) || 35)),
+            subOscMix: Math.max(0, Math.min(1, Number(parsed.subOscMix) || 0.25)),
             distortion: Math.max(0, Math.min(1, Number(parsed.distortion) || 0)),
-            reverb: Math.max(0, Math.min(1, Number(parsed.reverb) || 0.3))
+            reverb: Math.max(0, Math.min(1, Number(parsed.reverb) || 0.3)),
+            reverbPreset: validReverbPresets.includes(parsed.reverbPreset) ? parsed.reverbPreset : 'small_room'
           },
           modelUsed: modelName,
           source: 'gemini-3.1-flash-lite'
@@ -599,8 +824,8 @@ Produce an oscillator synthesis parameter envelope (sine, square, sawtooth, or t
       const ai = getGenAIClient();
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: `Compose a multi-voice ambient background music loop for a retro boutique hotel mystery based on: "${prompt}".
-Include mood, bpm (40-140), key/scale, chord progression names, drone frequency, filter cutoff, and 4-8 melody notes (note name e.g. D4, freq, timeOffset in beats 0-8, duration in beats, velocity 0-1) and bass notes.`,
+        contents: `Compose a SOTA polyphonic multi-voice ambient background music loop for a 1990s boutique hotel mystery based on: "${prompt}".
+Include mood, bpm (40-140), key/scale, 4 jazz/ambient chord progression symbols (e.g. Dm7, G7, Bbmaj7, A7b9), padInstrument ('warm_epiano', 'vintage_pad', 'noir_organ', or 'glass_marimba'), reverbPreset ('small_room', 'tiled_bathroom', 'grand_lobby', or 'sub_vault'), stereoWidth (0.2-1.0), drone frequency, filter cutoff, and 4-8 melody notes (note name e.g. D4, freq, timeOffset in beats 0-8, duration in beats, velocity 0-1) and bass notes.`,
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -614,6 +839,9 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
               chords: { type: Type.ARRAY, items: { type: Type.STRING } },
               droneFreq: { type: Type.NUMBER },
               reverbAmount: { type: Type.NUMBER },
+              reverbPreset: { type: Type.STRING },
+              padInstrument: { type: Type.STRING },
+              stereoWidth: { type: Type.NUMBER },
               filterCutoff: { type: Type.NUMBER },
               melody: {
                 type: Type.ARRAY,
@@ -651,6 +879,8 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
 
       const parsed = JSON.parse((response.text || '{}').trim());
       if (parsed && Array.isArray(parsed.melody) && parsed.melody.length > 0) {
+        const validPads = ['warm_epiano', 'vintage_pad', 'noir_organ', 'glass_marimba'];
+        const validReverbs = ['small_room', 'tiled_bathroom', 'grand_lobby', 'sub_vault'];
         res.json({
           track: {
             id: `bgm_ai_${Date.now()}`,
@@ -659,9 +889,12 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
             bpm: Math.max(40, Math.min(140, Number(parsed.bpm) || 72)),
             scale: parsed.scale || 'natural_minor',
             rootNote: parsed.rootNote || 'D',
-            chords: Array.isArray(parsed.chords) ? parsed.chords : ['Dm', 'Gm', 'A7'],
+            chords: Array.isArray(parsed.chords) ? parsed.chords : ['Dm7', 'Gm7', 'A7b9', 'Dm7'],
             droneFreq: Math.max(30, Math.min(300, Number(parsed.droneFreq) || 73.42)),
             reverbAmount: Math.max(0.1, Math.min(0.9, Number(parsed.reverbAmount) || 0.5)),
+            reverbPreset: validReverbs.includes(parsed.reverbPreset) ? parsed.reverbPreset : 'grand_lobby',
+            padInstrument: validPads.includes(parsed.padInstrument) ? parsed.padInstrument : 'warm_epiano',
+            stereoWidth: Math.max(0.2, Math.min(1.0, Number(parsed.stereoWidth) || 0.7)),
             filterCutoff: Math.max(200, Math.min(3000, Number(parsed.filterCutoff) || 900)),
             melody: parsed.melody,
             bass: Array.isArray(parsed.bass) ? parsed.bass : []
@@ -864,6 +1097,20 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
       }
     };
 
+    // Seed the Asset Image Descriptions Import Queue folder (./ArchitectForge_Workspace/assets/image_descriptions_import/)
+    const descSpec = getLocalFolderSpec('asset_descriptions');
+    const descDir = path.join(localWorkspaceRoot, descSpec.relativePath);
+    const existingDescFiles = fs.existsSync(descDir)
+      ? fs.readdirSync(descDir).filter((f) => !f.startsWith('.'))
+      : [];
+    if (existingDescFiles.length === 0) {
+      fs.writeFileSync(
+        path.join(descDir, 'late70s_hotel_asset_descriptions.descriptions.txt'),
+        DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT,
+        'utf-8'
+      );
+    }
+
     seedHelper('environment_3d', 'Vintage Brass Table Fan', 'seed01', {
       schemaVersion: '2.0.0',
       savedAt: new Date().toISOString(),
@@ -880,7 +1127,7 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
         category: 'furniture',
         subType: 'concierge_desk',
         dimensions: [2.6, 1.1, 0.9],
-        defaultColor: '#5c3824',
+        defaultColor: '#3b2314',
         defaultTextureId: 'oak_parquet',
         collidable: true
       }
@@ -994,6 +1241,22 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
       }
       const filename = buildLocalFolderItemFilename(spec.category, itemName, uniqueId);
       const fullPath = path.join(targetDir, filename);
+
+      // If saving into asset_descriptions and payload is a string or has rawText, write raw text so user can edit it directly on disk
+      if (spec.category === 'asset_descriptions' && typeof payload === 'string') {
+        fs.writeFileSync(fullPath, payload, 'utf-8');
+        res.json({
+          saved: true,
+          category: spec.category,
+          filename,
+          relativePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`,
+          fullDiskPath: fullPath,
+          sizeBytes: Buffer.byteLength(payload, 'utf-8'),
+          savedAt: new Date().toISOString()
+        });
+        return;
+      }
+
       const envelope = {
         schemaVersion: '2.0.0',
         savedAt: new Date().toISOString(),
@@ -1021,6 +1284,49 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
     }
   });
 
+  // Save or upload a raw .txt, .md, or .json asset description file into ./ArchitectForge_Workspace/assets/image_descriptions_import/
+  app.post('/api/local-fs/save-description-file', (req, res) => {
+    try {
+      ensureLocalWorkspaceDirectories();
+      const {
+        filename = `custom_70s_assets_${String(Date.now()).slice(-5)}.descriptions.txt`,
+        content = DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT
+      }: {
+        filename?: string;
+        content?: string;
+      } = req.body || {};
+
+      const spec = getLocalFolderSpec('asset_descriptions');
+      const targetDir = path.join(localWorkspaceRoot, spec.relativePath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      const safeFilename =
+        path
+          .basename(filename)
+          .replace(/[^a-zA-Z0-9._-]/g, '_')
+          .slice(0, 80) || 'asset_descriptions.txt';
+      const fullPath = path.join(targetDir, safeFilename);
+      fs.writeFileSync(fullPath, content, 'utf-8');
+      const parsedItems = parseAssetDescriptionsFile(safeFilename, content);
+
+      res.json({
+        saved: true,
+        category: 'asset_descriptions',
+        filename: safeFilename,
+        relativePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${safeFilename}`,
+        fullDiskPath: fullPath,
+        sizeBytes: Buffer.byteLength(content, 'utf-8'),
+        parsedCount: parsedItems.length,
+        parsedItems
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to save asset description file'
+      });
+    }
+  });
+
   app.get('/api/local-fs/read-item', (req, res) => {
     try {
       const category = (req.query.category as LocalFolderCategory) || 'environment_3d';
@@ -1032,15 +1338,305 @@ Include mood, bpm (40-140), key/scale, chord progression names, drone frequency,
         return;
       }
       const raw = fs.readFileSync(fullPath, 'utf-8');
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = {
+          rawText: raw,
+          items: parseAssetDescriptionsFile(filename, raw)
+        };
+      }
       res.json({
         category: spec.category,
         filename,
         relativePath: `./${LOCAL_WORKSPACE_ROOT_NAME}/${spec.relativePath}/${filename}`,
-        parsed: JSON.parse(raw)
+        rawText: raw,
+        parsed
       });
     } catch (err: unknown) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Failed to read item from dedicated folder'
+      });
+    }
+  });
+
+  // 9. Batch Asset Description File -> Cheapest Image Model (gemini-3.1-flash-lite-image) -> Meshy.ai Image-to-3D -> Game Catalog Pipeline
+  app.post('/api/forge/batch-import-descriptions', async (req, res) => {
+    try {
+      ensureLocalWorkspaceDirectories();
+      const {
+        filename = 'late70s_hotel_asset_descriptions.descriptions.txt',
+        rawContent,
+        floor = 'lobby'
+      }: {
+        filename?: string;
+        rawContent?: string;
+        floor?: string;
+      } = req.body || {};
+
+      const descSpec = getLocalFolderSpec('asset_descriptions');
+      const fullDescPath = path.join(
+        localWorkspaceRoot,
+        descSpec.relativePath,
+        path.basename(filename)
+      );
+
+      let textToParse = rawContent || '';
+      if (!textToParse && fs.existsSync(fullDescPath)) {
+        textToParse = fs.readFileSync(fullDescPath, 'utf-8');
+      }
+      if (!textToParse) {
+        textToParse = DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT;
+      }
+
+      const entries = parseAssetDescriptionsFile(filename, textToParse).slice(0, 8);
+      if (entries.length === 0) {
+        res.status(400).json({
+          error: 'No valid asset descriptions found in file.'
+        });
+        return;
+      }
+
+      const imageModelId = AI_MODEL_REGISTRY.description_to_image.modelId; // 'gemini-3.1-flash-lite-image'
+      const meshyModelId = AI_MODEL_REGISTRY.meshy_image_to_3d.modelId; // 'meshy-4-image-to-3d'
+      const compositeModelId = AI_MODEL_REGISTRY.composite_3d_spec.modelId; // 'gemini-3.1-flash-lite'
+      const ai = getGenAIClient();
+
+      const importedResults = await Promise.all(
+        entries.map(async (entry, idx) => {
+          // Step A1: Asset Import Agent (Text/image/3d model instruction Set) -> Generate mandatory enforced low-poly 2D image prompt
+          let enforcedImagePrompt =
+            entry.enforcedImagePrompt ||
+            buildEnforcedLowPolyImagePrompt(entry.name, entry.description);
+
+          try {
+            if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MISSING_KEY') {
+              const promptResp = await Promise.race([
+                ai.models.generateContent({
+                  model: compositeModelId, // 'gemini-3.1-flash-lite'
+                  contents: `Asset Name: ${entry.name}\nFunctional / Visual Details: ${entry.description}`,
+                  config: {
+                    systemInstruction: ASSET_IMPORT_AGENT_INSTRUCTION_SET,
+                    temperature: 0.2
+                  }
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Prompt agent timeout')), 3500)
+                )
+              ]);
+              const candidatePrompt = (promptResp.text || '').trim().replace(/^["']|["']$/g, '');
+              if (
+                candidatePrompt.includes('low-poly game asset, isolated 3D asset style') &&
+                candidatePrompt.includes('Flat texture maps, optimized for low-poly 3D reconstruction')
+              ) {
+                enforcedImagePrompt = candidatePrompt;
+              }
+            }
+          } catch {
+            // Deterministic enforcer already populated enforcedImagePrompt
+          }
+
+          // Step A2: Turn the enforced 2D image prompt into a 1:1 concept art image using the cheapest capable model: gemini-3.1-flash-lite-image
+          let referenceImageUrl = '';
+          try {
+            if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MISSING_KEY') {
+              const imgResp = await Promise.race([
+                ai.models.generateContent({
+                  model: imageModelId,
+                  contents: {
+                    parts: [
+                      {
+                        text: enforcedImagePrompt
+                      }
+                    ]
+                  },
+                  config: {
+                    imageConfig: {
+                      aspectRatio: '1:1'
+                    }
+                  }
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Image generation timeout')), 5500)
+                )
+              ]);
+              for (const part of imgResp.candidates?.[0]?.content?.parts || []) {
+                if (part.inlineData?.data) {
+                  const outMime = part.inlineData.mimeType || 'image/png';
+                  referenceImageUrl = `data:${outMime};base64,${part.inlineData.data}`;
+                  break;
+                }
+              }
+            }
+          } catch {
+            // Fallback to deterministic Late-70s orthographic diffuse-white concept SVG data URI
+          }
+
+          if (!referenceImageUrl) {
+            referenceImageUrl = generateAssetConceptSvgDataUrl(entry.name, entry.description);
+          }
+
+          // Step A3 (Proposal A): Automatic Studio Background Alpha Matting Pre-Pass (#f8fafc -> RGBA 0,0,0,0) before Meshy.ai
+          const alphaMatteResult = applyAlphaMatteToConceptImageDataUrl(referenceImageUrl);
+          const mattedImageDataUrl = alphaMatteResult.mattedImageDataUrl;
+
+          // Step B: Pass the alpha-matted reference image to Meshy.ai Image-to-3D (meshy-4-image-to-3d)
+          let meshyTaskId: string | null = null;
+          let meshyStatus = 'meshy-4-image-to-3d-ready';
+          if (process.env.MESHY_API_KEY) {
+            try {
+              const meshyRes = await fetch('https://api.meshy.ai/openapi/v1/image-to-3d', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${process.env.MESHY_API_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  image_url: mattedImageDataUrl,
+                  ai_model: 'meshy-4',
+                  topology: 'quad',
+                  target_polycount: 4000,
+                  should_remesh: true,
+                  enable_pbr: true
+                })
+              });
+              if (meshyRes.ok) {
+                const meshyData = (await meshyRes.json()) as { result?: string };
+                meshyTaskId = meshyData.result || null;
+                meshyStatus = 'meshy-4-image-to-3d-dispatched';
+              }
+            } catch {
+              meshyStatus = 'meshy-local-composite-bridge';
+            }
+          } else {
+            meshyTaskId = `meshy4_img2mesh_${Date.now()}_${idx + 1}`;
+            meshyStatus = 'meshy-4-image-to-3d-bridged';
+          }
+
+          // Step C: Build 3D composite geometry (multimodal gemini-3.1-flash-lite + procedural late-70s weathered fallback)
+          const baseSpec = buildProcedural3DSpecFromPrompt(`${entry.name} ${entry.description}`);
+          const dimensions: [number, number, number] =
+            entry.dimensionsHint || baseSpec.dimensions || [1.0, 1.25, 0.75];
+
+          const rawAsset: PlacedAsset = {
+            id: `batch3d_${Date.now()}_${idx + 1}`,
+            name: entry.name,
+            category: entry.categoryHint || baseSpec.category || 'custom_ai',
+            subType: `meshy_batch_${entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24)}`,
+            floor,
+            roomNumber: 'Imported Batch',
+            position: [
+              Number((-3.0 + idx * 2.0).toFixed(2)),
+              Number((dimensions[1] / 2).toFixed(2)),
+              0
+            ],
+            dimensions,
+            rotationY: 0,
+            color: baseSpec.parts[0]?.color || '#3b2314',
+            textureId: 'aged_brass',
+            customTextureUrl: mattedImageDataUrl,
+            collidable: true,
+            compositeParts: baseSpec.parts,
+            meshyTaskId: meshyTaskId || undefined,
+            inspectText: `${entry.description} [Image: ${imageModelId} → Alpha-Matted RGBA(0,0,0,0) → 3D: ${meshyModelId}]`
+          };
+
+          const weatheredAsset = weatherAssetToLate70sStyle(rawAsset);
+          const catalogBlueprint = createBlueprintFromAsset(weatheredAsset);
+
+          // Save both the 3D asset and the catalog blueprint to their dedicated local workspace folders on disk
+          const envDir = path.join(localWorkspaceRoot, getLocalFolderSpec('environment_3d').relativePath);
+          const catDir = path.join(localWorkspaceRoot, getLocalFolderSpec('catalog_blueprints').relativePath);
+          const envFile = buildLocalFolderItemFilename('environment_3d', weatheredAsset.name, String(idx + 1));
+          const catFile = buildLocalFolderItemFilename('catalog_blueprints', catalogBlueprint.name, String(idx + 1));
+
+          fs.writeFileSync(
+            path.join(envDir, envFile),
+            JSON.stringify(
+              {
+                schemaVersion: '2.0.0',
+                savedAt: new Date().toISOString(),
+                category: 'environment_3d',
+                pipeline: {
+                  descriptionSourceFile: filename,
+                  enforcedImagePrompt,
+                  imageModel: imageModelId,
+                  alphaMatted: alphaMatteResult.alphaMatted,
+                  alphaMatteKeyHex: alphaMatteResult.backgroundKeyHex,
+                  meshyModel: meshyModelId,
+                  compositeModel: compositeModelId,
+                  meshyTaskId
+                },
+                data: weatheredAsset
+              },
+              null,
+              2
+            ),
+            'utf-8'
+          );
+
+          fs.writeFileSync(
+            path.join(catDir, catFile),
+            JSON.stringify(
+              {
+                schemaVersion: '2.0.0',
+                savedAt: new Date().toISOString(),
+                category: 'catalog_blueprints',
+                pipeline: {
+                  descriptionSourceFile: filename,
+                  enforcedImagePrompt,
+                  imageModel: imageModelId,
+                  alphaMatted: alphaMatteResult.alphaMatted,
+                  meshyModel: meshyModelId
+                },
+                data: catalogBlueprint
+              },
+              null,
+              2
+            ),
+            'utf-8'
+          );
+
+          return {
+            entryId: entry.id,
+            name: weatheredAsset.name,
+            category: weatheredAsset.category,
+            description: entry.description,
+            enforcedImagePrompt,
+            referenceImageUrl,
+            mattedImageDataUrl,
+            alphaMatted: alphaMatteResult.alphaMatted,
+            imageModelUsed: imageModelId,
+            meshyModelUsed: meshyModelId,
+            meshyTaskId,
+            meshyStatus,
+            catalogBlueprint,
+            placedAsset: weatheredAsset
+          };
+        })
+      );
+
+      res.json({
+        sourceFilename: filename,
+        importedCount: importedResults.length,
+        instructionSetEnforced: 'Text/image/3d model instruction Set (Mandatory Low-Poly Enforcer)',
+        alphaMattingPrePass: 'Proposal A — Studio Background Chroma Key (#f8fafc -> RGBA 0,0,0,0)',
+        pipelineModels: {
+          promptEnforcerAgentModel: compositeModelId,
+          descriptionToImageModel: imageModelId,
+          alphaMattingPrePass: 'rgba-chroma-distance-feather',
+          imageTo3DModel: meshyModelId,
+          compositeFallbackModel: compositeModelId
+        },
+        items: importedResults
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to process asset description file through Image-to-3D pipeline'
       });
     }
   });

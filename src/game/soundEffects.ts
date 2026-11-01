@@ -1,6 +1,13 @@
+import {
+  computeSynchronizedHingeFoleySpec,
+  HingeSwingMode,
+  SynchronizedHingeFoleySpec
+} from './rules';
+
 class SoundController {
   private ctx: AudioContext | null = null;
-  public muted = false;
+  public muted = true;
+  public lastHingeFoleySpec: SynchronizedHingeFoleySpec | null = null;
 
   private getContext(): AudioContext | null {
     if (this.muted || typeof window === 'undefined') return null;
@@ -51,22 +58,77 @@ class SoundController {
     osc.stop(now + 0.11);
   }
 
-  public playSecretPassageOpen() {
+  /**
+   * Proposal 1: Synchronized 500ms Creak / Stone-Scrape / Pocket-Rail Foley Envelope on Hinge Swing.
+   * Sweeps resonant filter cutoff and pitch from 0ms to 460ms along the cubic ease-in-out swing curve,
+   * and fires a crisp mechanical brass latch-click / stone-stop transient right at t = 480ms.
+   */
+  public playSecretPassageOpen(options?: {
+    swingMode?: HingeSwingMode;
+    isOpening?: boolean;
+    isSecretPassage?: boolean;
+    durationMs?: number;
+  }): SynchronizedHingeFoleySpec {
+    const spec = computeSynchronizedHingeFoleySpec(options);
+    this.lastHingeFoleySpec = spec;
     const ctx = this.getContext();
-    if (!ctx) return;
+    if (!ctx) return spec;
     const now = ctx.currentTime;
-    // Heavy stone/brick slide + brass chime
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(72, now);
-    osc.frequency.linearRampToValueAtTime(118, now + 0.35);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.45);
+
+    // Stage 1 (0ms -> 460ms): Continuous hinge creak / stone-scrape / pocket-rail sweep
+    const swingOsc = ctx.createOscillator();
+    const swingFilter = ctx.createBiquadFilter();
+    const swingGain = ctx.createGain();
+
+    swingOsc.type = spec.oscillatorType;
+    swingOsc.frequency.setValueAtTime(spec.sweepStartHz, now);
+    swingOsc.frequency.linearRampToValueAtTime(
+      (spec.sweepStartHz + spec.sweepEndHz) * 0.55,
+      now + spec.swingPhaseEndSec * 0.5
+    );
+    swingOsc.frequency.linearRampToValueAtTime(spec.sweepEndHz, now + spec.swingPhaseEndSec);
+
+    swingFilter.type = spec.filterType;
+    swingFilter.Q.setValueAtTime(3.2, now);
+    swingFilter.frequency.setValueAtTime(spec.filterStartCutoffHz, now);
+    swingFilter.frequency.exponentialRampToValueAtTime(
+      spec.filterPeakCutoffHz,
+      now + spec.swingPhaseEndSec * 0.52
+    );
+    swingFilter.frequency.exponentialRampToValueAtTime(
+      Math.max(120, spec.filterStartCutoffHz * 0.9),
+      now + spec.swingPhaseEndSec
+    );
+
+    swingGain.gain.setValueAtTime(0.01, now);
+    swingGain.gain.linearRampToValueAtTime(0.14, now + spec.swingPhaseEndSec * 0.45);
+    swingGain.gain.exponentialRampToValueAtTime(0.002, now + spec.swingPhaseEndSec);
+
+    swingOsc.connect(swingFilter);
+    swingFilter.connect(swingGain);
+    swingGain.connect(ctx.destination);
+    swingOsc.start(now);
+    swingOsc.stop(now + spec.swingPhaseEndSec + 0.01);
+
+    // Stage 2 (t = 480ms): Crisp mechanical brass latch-click / stone-stop transient
+    const clickStart = now + spec.latchClickTimeSec;
+    const clickOsc = ctx.createOscillator();
+    const clickGain = ctx.createGain();
+    clickOsc.type = 'triangle';
+    clickOsc.frequency.setValueAtTime(spec.latchClickFreqHz, clickStart);
+    clickOsc.frequency.exponentialRampToValueAtTime(
+      Math.max(180, spec.latchClickFreqHz * 0.34),
+      clickStart + spec.latchClickDurationSec
+    );
+    clickGain.gain.setValueAtTime(0.16, clickStart);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, clickStart + spec.latchClickDurationSec);
+
+    clickOsc.connect(clickGain);
+    clickGain.connect(ctx.destination);
+    clickOsc.start(clickStart);
+    clickOsc.stop(clickStart + spec.latchClickDurationSec + 0.005);
+
+    return spec;
   }
 
   public playClueFound() {

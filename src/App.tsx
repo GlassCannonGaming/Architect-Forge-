@@ -23,8 +23,13 @@ import {
   batchModifySelectedAssets,
   DEFAULT_GLOBAL_INSTRUCTION_SET,
   SavedInteractionEntry,
+  NotebookMemoEntry,
+  createNotebookMemo,
+  evaluateCharacterInteractionMemory,
   TimeOfDayEventLog,
   getTimeOfDayInfo,
+  DailyActionEntry,
+  computeScheduledAgentsForTime,
   RoomBlueprint,
   INITIAL_ROOM_BLUEPRINTS,
   createRoomBlueprintFromAssets,
@@ -48,7 +53,28 @@ import {
   LOCAL_WORKSPACE_ROOT_NAME,
   getLocalFolderSpec,
   buildLocalFolderItemFilename,
-  WallRowPlacement
+  WallRowPlacement,
+  weatherAssetToLate70sStyle,
+  weatherAssetsListToLate70sStyle,
+  DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT,
+  parseAssetDescriptionsFile,
+  generateAssetConceptSvgDataUrl,
+  applyAlphaMatteToConceptImageDataUrl,
+  HINGE_TRANSITION_DURATION_MS,
+  HingeSwingMode,
+  initiateAssetHingeToggle,
+  AI_MODEL_REGISTRY,
+  KeybindingsMap,
+  DEFAULT_KEYBINDINGS,
+  normalizeAndMergeKeybindings,
+  isActionKeyPressed,
+  getPrimaryActionKeyLabel,
+  GlobalAnimationFps,
+  DEFAULT_GLOBAL_ANIMATION_FPS,
+  TOP_EDITOR_MODE_TABS,
+  STUDIO_HEADER_BRAND_SPEC,
+  getTaskbarWindowIdsForMode,
+  assignSoundToAssetOrBlueprint
 } from './game/rules';
 import {
   INITIAL_PLACED_ASSETS,
@@ -67,14 +93,31 @@ import { QuickEditWindowF } from './components/QuickEditWindowF';
 import { ProjectSaveLoadWindow } from './components/ProjectSaveLoadWindow';
 import {
   LocalDiskFoldersWindow,
-  LocalDiskFolderStatus
+  LocalDiskFolderStatus,
+  BatchImportedAssetSummary
 } from './components/LocalDiskFoldersWindow';
 import { AudioStudioWindow } from './components/AudioStudioWindow';
+import { KeybindingsWindow } from './components/KeybindingsWindow';
 import { soundFX } from './game/soundEffects';
 import { audioEngine, BUILTIN_SOUND_EFFECTS, BUILTIN_BGM_TRACKS } from './game/audioEngine';
+import {
+  auth,
+  onAuthStateChanged,
+  signInWithGooglePopup,
+  signOutFromFirebase,
+  syncUserProfileToCloud,
+  saveProjectToCloudFirestore,
+  deleteProjectFromCloudFirestore,
+  subscribeToUserCloudProjects,
+  type CloudSyncedProjectRecord,
+  type User
+} from './firebase';
 
 export default function App() {
   const [mode, setMode] = useState<WorkspaceMode>('architect');
+  const [globalAnimationFps, setGlobalAnimationFps] = useState<GlobalAnimationFps>(
+    DEFAULT_GLOBAL_ANIMATION_FPS
+  );
   const [floorLayers, setFloorLayers] = useState<FloorLayer[]>(() => {
     try {
       const saved = localStorage.getItem('architectforge_autosave_canvas_v1');
@@ -104,36 +147,68 @@ export default function App() {
   const [currentRoomLabel, setCurrentRoomLabel] = useState<string>('Ground Floor · Layer L1');
   const [nearbyPrompt, setNearbyPrompt] = useState<string | null>(null);
 
-  // Audio Engine State & In-Game Walkthrough Ambience
-  const [walkthroughBgmEnabled, setWalkthroughBgmEnabled] = useState<boolean>(true);
-  const [footstepsEnabled, setFootstepsEnabled] = useState<boolean>(true);
+  // Audio Engine State (No automatic sounds or footsteps in ArchitectForge Studio)
+  const [walkthroughBgmEnabled, setWalkthroughBgmEnabled] = useState<boolean>(false);
+  const [footstepsEnabled, setFootstepsEnabled] = useState<boolean>(false);
 
-  // Synchronize Walkthrough Ambient Music
+  // Proposal 2: 1970s Chrome D-Cell / UV Flashlight Inspection Cone in Walk Mode ([L])
+  const [flashlightEnabled, setFlashlightEnabled] = useState<boolean>(true);
+  const [flashlightRevealText, setFlashlightRevealText] = useState<string | null>(null);
+
+  // Synchronize Sound Board Mode Window Activation (never auto-play BGM on mode change)
   useEffect(() => {
-    if (mode === 'walkthrough' && walkthroughBgmEnabled) {
-      audioEngine.playBgm(BUILTIN_BGM_TRACKS[0]);
-    } else if (mode !== 'walkthrough') {
+    if (mode !== 'soundboard') {
       audioEngine.stopBgm();
     }
-  }, [mode, walkthroughBgmEnabled]);
+    if (mode === 'soundboard') {
+      setStudioWindows((prev) => {
+        const opened = toggleStudioWindowOpen(prev, 'audio', true);
+        const focused = focusStudioWindow(opened, 'audio');
+        return {
+          ...focused,
+          audio: {
+            ...focused.audio,
+            x: 18,
+            y: 84,
+            width: 610,
+            height: 575,
+            isOpen: true,
+            isMinimized: false
+          }
+        };
+      });
+    } else {
+      setStudioWindows((prev) =>
+        prev.audio?.isOpen ? toggleStudioWindowOpen(prev, 'audio', false) : prev
+      );
+    }
+  }, [mode]);
 
-  // Start with a Blank 128x128 Square Tiles Canvas by default (or restore auto-saved canvas)
+  // Restore auto-saved canvas (automatically weathered to late-70s thriller palette) or start with the pre-built late-70s residential hotel
   const [assets, setAssets] = useState<PlacedAsset[]>(() => {
     try {
       const saved = localStorage.getItem('architectforge_autosave_canvas_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed.assets)) return parsed.assets;
+        if (Array.isArray(parsed.assets) && parsed.assets.length > 0) {
+          return weatherAssetsListToLate70sStyle(parsed.assets);
+        }
       }
     } catch {
       // ignore storage error
     }
-    return [];
+    return weatherAssetsListToLate70sStyle(INITIAL_PLACED_ASSETS);
   });
   const [undoStack, setUndoStack] = useState<UndoHistoryEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoHistoryEntry[]>([]);
   const [catalogAssets, setCatalogAssets] = useState<AssetBlueprint[]>(ASSET_CATALOG);
-  const [agents, setAgents] = useState<HotelAgentProfile[]>([]);
+  const [agents, setAgents] = useState<HotelAgentProfile[]>(() =>
+    computeScheduledAgentsForTime(
+      INITIAL_AGENTS.filter((a) => a.role !== 'helper_entity'),
+      19 * 60 + 30,
+      false
+    )
+  );
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [marqueeModeActive, setMarqueeModeActive] = useState<boolean>(false);
@@ -152,6 +227,27 @@ export default function App() {
     `Blank ${GRID_TILE_COUNT}×${GRID_TILE_COUNT} Tile Canvas Ready — Drag any window header to customize layout, save/load Room Blueprints, or press [F] for Quick Edit.`
   );
 
+  // User-Defined Keybindings State (preserves all already-assigned keys by default)
+  const [keybindings, setKeybindings] = useState<KeybindingsMap>(() => {
+    try {
+      const saved = localStorage.getItem('architectforge_keybindings_v1');
+      if (saved) {
+        return normalizeAndMergeKeybindings(JSON.parse(saved));
+      }
+    } catch {
+      // ignore storage error
+    }
+    return DEFAULT_KEYBINDINGS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('architectforge_keybindings_v1', JSON.stringify(keybindings));
+    } catch {
+      // ignore storage error
+    }
+  }, [keybindings]);
+
   // Floating Window Manager State (persisted to localStorage)
   const [studioWindows, setStudioWindows] = useState<Record<StudioWindowId, StudioWindowState>>(() => {
     const defaults = createDefaultStudioWindows();
@@ -163,7 +259,10 @@ export default function App() {
           ...defaults,
           ...parsed,
           projects: parsed.projects ? { ...defaults.projects, ...parsed.projects } : defaults.projects,
-          local_fs: parsed.local_fs ? { ...defaults.local_fs, ...parsed.local_fs } : defaults.local_fs
+          local_fs: parsed.local_fs ? { ...defaults.local_fs, ...parsed.local_fs } : defaults.local_fs,
+          keybindings: parsed.keybindings
+            ? { ...defaults.keybindings, ...parsed.keybindings }
+            : defaults.keybindings
         };
       }
     } catch {
@@ -254,20 +353,25 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Character Rig Creator State
+  // Character Rig Creator State (defaults to Old Lady with 38° Bent Spine, Walnut Cane & Hollow Stare)
   const [customAppearance, setCustomAppearance] = useState<CharacterAppearance>({
-    archetype: 'Detective Clerk',
-    headShape: 'chibi_block',
-    skinColor: '#f3d9c4',
+    archetype: 'Elderly Matron',
+    headShape: 'proportional_human',
+    bodyProportionStyle: 'proportional_human',
+    skinColor: '#eed8c7',
     eyeStyle: 'wide_amber',
-    hairStyle: 'swept_pompadour',
-    hairColor: '#451a03',
-    outfitColor: '#78350f',
-    accentColor: '#eab308',
-    mouthStyle: 'slight_smirk',
-    heightScale: 1.0,
-    widthScale: 1.0,
-    headScale: 1.08
+    hairStyle: 'silver_bun',
+    hairColor: '#d1d5db',
+    outfitColor: '#4b5563',
+    accentColor: '#b45309',
+    mouthStyle: 'nervous_frown',
+    facialExpression: 'hollow_stare',
+    spineCurvature: 38,
+    hasWalkingCane: true,
+    hasSpectacles: true,
+    heightScale: 0.94,
+    widthScale: 0.98,
+    headScale: 1.0
   });
 
   const [customStats, setCustomStats] = useState<CharacterStats>({
@@ -373,6 +477,43 @@ export default function App() {
       // ignore storage quota errors
     }
   }, [globalInstructionSet, gameTimeMinutes, savedInteractions, timeOfDayEvents, agents]);
+
+  // ============================================================================
+  // 1978 DETECTIVE NOTEBOOK & DICTAPHONE MEMOS STATE (Case Folio & Corkboard)
+  // ============================================================================
+  const [notebookMemos, setNotebookMemos] = useState<NotebookMemoEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem('architectforge_notebook_memos_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage error
+    }
+    return [
+      createNotebookMemo({
+        title: 'Case Folio Opened — St. Jude Hotel',
+        content:
+          'Late autumn, 1978. Room 202 brickwork vibrating at dusk. Mrs. Eleanor Vance in 204 heard footsteps in the service dumbwaiter. Speak to the tenants directly — keep audio cassette records of all statements.',
+        category: 'clue',
+        tapeRecorded: true,
+        audioDurationSec: 14,
+        roomLocation: 'Lobby & Suite 202',
+        tags: ['Passkey Code', 'Secret Passage', 'To Investigate']
+      })
+    ];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('architectforge_notebook_memos_v1', JSON.stringify(notebookMemos));
+    } catch {
+      // ignore storage error
+    }
+  }, [notebookMemos]);
+
+  const [activeSpeakingAgentId, setActiveSpeakingAgentId] = useState<string | null>(null);
 
   // ============================================================================
   // 100% LOCAL COMPUTER WORKSPACE & DEDICATED ASSET FOLDERS MANAGER
@@ -514,10 +655,19 @@ export default function App() {
   }, [localRootDiskPath]);
 
   const handleChangeGameTimeMinutes = useCallback(
-    (nextMinutes: number, eventNote?: string) => {
+    (nextMinutes: number, eventNote?: string, triggerRandomAnomalies = false) => {
       const normalized = ((Math.round(nextMinutes) % 1440) + 1440) % 1440;
       const info = getTimeOfDayInfo(normalized);
       setGameTimeMinutes(normalized);
+      setAgents((prevAgents) => {
+        const scheduled = computeScheduledAgentsForTime(
+          prevAgents,
+          normalized,
+          triggerRandomAnomalies,
+          Date.now()
+        );
+        return scheduled;
+      });
       const newEvent: TimeOfDayEventLog = {
         id: `evt_${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -530,15 +680,45 @@ export default function App() {
       setTimeOfDayEvents((prev) => [...prev, newEvent]);
       saveItemToDedicatedFolder('time_events', `${info.phase}_${info.formattedTime}`, newEvent);
       setStatusBanner(
-        `Gameplay Clock: ${info.formattedTime} (${info.phase}) — Saved Time-of-Day Event to dedicated folder!`
+        `🕒 ${info.formattedTime} (${info.phase}) — Tenants relocated for ${info.phase} schedule${
+          triggerRandomAnomalies ? ' (with 🎲 Random AI Anomaly!)' : ''
+        }!`
       );
     },
     [saveItemToDedicatedFolder]
   );
 
+  const handleUpdateAgentSchedule = useCallback(
+    (agentId: string, nextSchedule: DailyActionEntry[]) => {
+      setAgents((prevAgents) => {
+        const withUpdatedSchedule = prevAgents.map((ag) =>
+          ag.id === agentId ? { ...ag, dailySchedule: nextSchedule } : ag
+        );
+        return computeScheduledAgentsForTime(withUpdatedSchedule, gameTimeMinutes, false);
+      });
+    },
+    [gameTimeMinutes]
+  );
+
   const handleRecordInteraction = useCallback(
     (entry: SavedInteractionEntry) => {
       setSavedInteractions((prev) => [...prev, entry]);
+      if (entry.resultingDisposition || typeof entry.resultingTrust === 'number') {
+        setAgents((prev) =>
+          prev.map((ag) =>
+            ag.name.toLowerCase() === entry.characterName.toLowerCase()
+              ? {
+                  ...ag,
+                  trustLevel: entry.resultingTrust ?? ag.trustLevel,
+                  suspicionLevel: entry.resultingSuspicion ?? ag.suspicionLevel,
+                  disposition: entry.resultingDisposition ?? ag.disposition,
+                  lastInteractionDay: entry.gameDay ?? ag.lastInteractionDay,
+                  interactionHistory: [...(ag.interactionHistory || []), entry]
+                }
+              : ag
+          )
+        );
+      }
       saveItemToDedicatedFolder(
         'interactions',
         `${entry.characterName}_${entry.phase}`,
@@ -546,10 +726,125 @@ export default function App() {
         entry.id
       );
       setStatusBanner(
-        `Saved Dialogue & Daily Action History for "${entry.characterName}" to ./ArchitectForge_Workspace/gameplay_logs/interactions/!`
+        entry.gameplayInfluenceSummary
+          ? `🧠 Memory Saved for "${entry.characterName}": ${entry.gameplayInfluenceSummary}`
+          : `Saved Dialogue & Daily Action History for "${entry.characterName}" to ./ArchitectForge_Workspace/gameplay_logs/interactions/!`
       );
     },
     [saveItemToDedicatedFolder]
+  );
+
+  // Live Speech-to-Text & AI Interrogation in Walkthrough Mode (Hold [V])
+  const handleWalkthroughSpeakToAgent = useCallback(
+    async (agent: HotelAgentProfile, text: string) => {
+      const cleanText = text.trim();
+      if (!cleanText) return;
+      setStatusBanner(`🎙️ Spoke to ${agent.name}: "${cleanText}" — consulting character memory...`);
+      const memEval = evaluateCharacterInteractionMemory(
+        agent,
+        cleanText,
+        gameTimeMinutes,
+        1
+      );
+
+      let reply = `*${agent.name} pauses, considering your words.* "The walls in ${agent.roomNumber || 'this hotel'} hold many secrets."`;
+      try {
+        const res = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent: memEval.updatedAgent,
+            message: cleanText,
+            globalInstructionSet,
+            gameTimeMinutes,
+            gameDay: 1,
+            history: savedInteractions.slice(-4).flatMap((h) => [
+              { role: 'user' as const, text: h.userMessage },
+              { role: 'model' as const, text: h.agentReply }
+            ])
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.reply) reply = data.reply;
+        }
+      } catch {
+        // offline fallback
+        if (memEval.triggeredDislikes.length > 0) {
+          reply = `*${agent.name} stiffens defensively.* "I have no patience for ${memEval.triggeredDislikes[0]}, Detective."`;
+        } else if (memEval.answeredQuestion) {
+          reply = `*${agent.name} breathes a quiet sigh of relief.* "Thank goodness you answered. Here is what I discovered: ${agent.secretTruth || 'The passage behind 202 is real.'}"`;
+        }
+      }
+
+      // Update agent state in scene
+      setAgents((prev) =>
+        prev.map((ag) => (ag.id === agent.id ? memEval.updatedAgent : ag))
+      );
+
+      // Record interaction entry
+      const timeInfo = getTimeOfDayInfo(gameTimeMinutes);
+      const intEntry: SavedInteractionEntry = {
+        id: `int_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        gameTimeFormatted: timeInfo.formattedTime,
+        phase: timeInfo.phase,
+        timeOfDayEvent: timeInfo.activeWorldEvent,
+        dailyActionAtTime: `${agent.occupation || 'Resident'} at ${timeInfo.formattedTime}`,
+        characterName: agent.name,
+        userMessage: cleanText,
+        agentReply: reply,
+        gameDay: 1,
+        trustDelta: memEval.trustDelta,
+        suspicionDelta: memEval.suspicionDelta,
+        resultingTrust: memEval.resultingTrust,
+        resultingSuspicion: memEval.resultingSuspicion,
+        resultingDisposition: memEval.resultingDisposition,
+        triggeredLikes: memEval.triggeredLikes,
+        triggeredDislikes: memEval.triggeredDislikes,
+        gameplayInfluenceSummary: memEval.gameplayInfluenceSummary,
+        unlockedClueId: memEval.unlockedClueId
+      };
+      handleRecordInteraction(intEntry);
+
+      // Auto-create Notebook Memo
+      const newMemo = createNotebookMemo({
+        title: `Interrogation: ${agent.name} (${agent.roomNumber || 'Hotel'})`,
+        content: `Investigator: "${cleanText}"\n${agent.name}: "${reply}"`,
+        category: 'transcript',
+        agentId: agent.id,
+        agentName: agent.name,
+        roomLocation: agent.roomNumber || currentRoomLabel || 'Corridor',
+        tags: ['🎙️ Dictaphone Memo', agent.name, memEval.resultingDisposition],
+        tapeRecorded: true,
+        audioDurationSec: Math.max(4, Math.round(reply.length / 14))
+      });
+      setNotebookMemos((prev) => [newMemo, ...prev]);
+
+      // Speak aloud with Web Speech API and animate 3D mouth articulation
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+          const cleanSpeech = reply.replace(/\*[^*]+\*/g, '').trim();
+          if (cleanSpeech) {
+            const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+            utterance.rate = 0.95;
+            utterance.pitch = agent.appearance?.archetype === 'Elderly Matron' ? 1.15 : 0.9;
+            setActiveSpeakingAgentId(agent.id);
+            utterance.onend = () => setActiveSpeakingAgentId(null);
+            utterance.onerror = () => setActiveSpeakingAgentId(null);
+            window.speechSynthesis.speak(utterance);
+          }
+        } catch {
+          setActiveSpeakingAgentId(null);
+        }
+      }
+
+      setStatusBanner(
+        `🗣️ ${agent.name} replied (${memEval.resultingDisposition.toUpperCase()}) — Saved to 1978 Investigator Notebook [J]!`
+      );
+    },
+    [gameTimeMinutes, globalInstructionSet, savedInteractions, handleRecordInteraction, currentRoomLabel]
   );
 
   // AI 3D Mesh & Texture Synthesis State
@@ -786,7 +1081,7 @@ export default function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') {
-        if (e.code === 'Escape') {
+        if (isActionKeyPressed('clear_selection', e.code, keybindings)) {
           (e.target as HTMLElement).blur();
           handleClearMouse();
         }
@@ -811,8 +1106,9 @@ export default function App() {
         return;
       }
 
-      if (e.code === 'KeyF') {
+      if (isActionKeyPressed('quick_edit', e.code, keybindings) && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
+        const qeLabel = getPrimaryActionKeyLabel('quick_edit', keybindings);
         if (selectedAssetId) {
           soundFX.playPlaceAsset();
           setQuickEditWindowOpen((prev) => {
@@ -820,18 +1116,20 @@ export default function App() {
             const found = assets.find((a) => a.id === selectedAssetId);
             setStatusBanner(
               nextOpen
-                ? `Opened Quick Edit Window [F] to the right of "${found ? found.name : 'Asset'}" — Resize or alter color!`
-                : 'Closed Quick Edit Window [F].'
+                ? `Opened Quick Edit Window [${qeLabel}] to the right of "${found ? found.name : 'Asset'}" — Resize or alter color!`
+                : `Closed Quick Edit Window [${qeLabel}].`
             );
             return nextOpen;
           });
         } else {
-          setStatusBanner('Select an asset first (Click or Shift+Click), then press [F] to open the Quick Edit Window.');
+          setStatusBanner(
+            `Select an asset first (Click or Shift+Click), then press [${qeLabel}] to open the Quick Edit Window.`
+          );
         }
         return;
       }
 
-      if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
+      if (isActionKeyPressed('rotate_asset', e.code, keybindings) && !e.ctrlKey && !e.metaKey) {
         const targetIds =
           selectedAssetIds.length > 0
             ? selectedAssetIds
@@ -845,16 +1143,17 @@ export default function App() {
           setAssets((prev) =>
             batchModifySelectedAssets(prev, targetIds, { rotationDeltaY: Math.PI / 2 })
           );
+          const rotLabel = getPrimaryActionKeyLabel('rotate_asset', keybindings);
           setStatusBanner(
             `Rotated ${targetIds.length} ${
               targetIds.length === 1 ? 'object' : 'selected objects'
-            } by 90° [R].`
+            } by 90° [${rotLabel}].`
           );
           return;
         }
       }
 
-      if (e.code === 'Delete' || e.code === 'Backspace') {
+      if (isActionKeyPressed('delete_asset', e.code, keybindings)) {
         const targetIds =
           selectedAssetIds.length > 0
             ? selectedAssetIds
@@ -875,19 +1174,25 @@ export default function App() {
           setSelectedAssetIds([]);
           setQuickEditWindowOpen(false);
           setIsolateSelectedAsset(false);
+          const delLabel = getPrimaryActionKeyLabel('delete_asset', keybindings);
           setStatusBanner(
             `Deleted ${targetIds.length} ${
               targetIds.length === 1 ? 'object' : 'selected objects'
-            } [Del] — Press Ctrl+Z to undo.`
+            } [${delLabel}] — Press Ctrl+Z to undo.`
           );
           return;
         }
       }
 
-      if (e.code === 'Escape') {
+      if (isActionKeyPressed('clear_selection', e.code, keybindings)) {
         e.preventDefault();
         handleClearMouse();
-      } else if (e.code === 'KeyB' && !e.ctrlKey && !e.metaKey && mode === 'architect') {
+      } else if (
+        isActionKeyPressed('wall_tool', e.code, keybindings) &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        mode === 'architect'
+      ) {
         e.preventDefault();
         soundFX.playPlaceAsset();
         const wallBp = catalogAssets.find((b) => b.category === 'wall') || catalogAssets[0];
@@ -895,22 +1200,47 @@ export default function App() {
         setSelectedAssetId(null);
         setSelectedAssetIds([]);
         setQuickEditWindowOpen(false);
+        const wallLabel = getPrimaryActionKeyLabel('wall_tool', keybindings);
         setStatusBanner(
-          `🧱 Wall Tool active [B] ("${wallBp.name}") — Click & Drag across the grid to place a seamless row of walls!`
+          `🧱 Wall Tool active [${wallLabel}] ("${wallBp.name}") — Click & Drag across the grid to place a seamless row of walls!`
         );
         return;
-      } else if (e.code === 'KeyH') {
+      } else if (
+        isActionKeyPressed('toggle_notebook', e.code, keybindings) &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        soundFX.playPlaceAsset();
+        const notebookBp = catalogAssets.find(
+          (b) => b.subType === 'investigator_notebook_prop'
+        );
+        if (notebookBp) {
+          setActiveBlueprint(notebookBp);
+          setStatusBanner(
+            `📓 Selected "${notebookBp.name}" Asset Creation Template — Place 3D model on canvas or use Image / 3D / Sound studio tools.`
+          );
+        }
+      } else if (
+        isActionKeyPressed('toggle_keybindings', e.code, keybindings) &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        soundFX.playPlaceAsset();
+        setStudioWindows((prev) => toggleStudioWindowOpen(prev, 'keybindings'));
+      } else if (isActionKeyPressed('reset_windows', e.code, keybindings)) {
         handleResetWindowLayout();
-      } else if (e.code === 'KeyM') {
+      } else if (isActionKeyPressed('toggle_mute', e.code, keybindings)) {
         setIsMuted((m) => {
           soundFX.muted = !m;
           return !m;
         });
-      } else if (e.code === 'Digit1') {
+      } else if (isActionKeyPressed('mode_build', e.code, keybindings)) {
         setMode('architect');
-      } else if (e.code === 'Digit2') {
+      } else if (isActionKeyPressed('mode_character', e.code, keybindings)) {
         setMode('character');
-      } else if (e.code === 'Digit3') {
+      } else if (isActionKeyPressed('mode_walkthrough', e.code, keybindings)) {
         setMode('walkthrough');
       }
     };
@@ -927,7 +1257,8 @@ export default function App() {
     selectedAssetIds,
     assets,
     mode,
-    catalogAssets
+    catalogAssets,
+    keybindings
   ]);
 
   // Place new asset blueprint on 128x128 grid (Addition -> tracked on undo stack)
@@ -951,7 +1282,9 @@ export default function App() {
         isSecretPassage: activeBlueprint.isSecretPassage,
         isOpen: false,
         collidable: activeBlueprint.collidable,
-        compositeParts: activeBlueprint.compositeParts
+        compositeParts: activeBlueprint.compositeParts,
+        tags: activeBlueprint.tags ? [...activeBlueprint.tags] : undefined,
+        soundPresetId: activeBlueprint.soundPresetId
       };
       setAssets((prev) => [...prev, newAsset]);
       setSelectedAssetId(newAsset.id);
@@ -994,7 +1327,9 @@ export default function App() {
         isSecretPassage: bp.isSecretPassage,
         isOpen: false,
         collidable: bp.collidable,
-        compositeParts: bp.compositeParts
+        compositeParts: bp.compositeParts,
+        tags: bp.tags ? [...bp.tags] : undefined,
+        soundPresetId: bp.soundPresetId
       }));
 
       setAssets((prev) => [...prev, ...newAssets]);
@@ -1079,7 +1414,7 @@ export default function App() {
     }
   }, [assets, selectedAssetId, recordUndoSnapshot]);
 
-  // Batch resize, recolor, or rotate selected asset(s) from the [F] Quick Edit Window
+  // Batch resize, recolor, rotate, or change hinge swing mode on selected asset(s) from the [F] Quick Edit Window
   const handleBatchModifySelected = useCallback(
     (patch: {
       color?: string;
@@ -1087,6 +1422,8 @@ export default function App() {
       scaleMultiplier?: number;
       dimensions?: [number, number, number];
       rotationDeltaY?: number;
+      hingeSwingMode?: HingeSwingMode;
+      isSecretPassage?: boolean;
     }) => {
       const targetIds =
         selectedAssetIds.length > 0
@@ -1102,26 +1439,74 @@ export default function App() {
       );
       setAssets((prev) => batchModifySelectedAssets(prev, targetIds, patch));
       setStatusBanner(
-        `Updated ${targetIds.length} ${
-          targetIds.length === 1 ? 'asset' : 'selected assets'
-        } via Quick Edit [F] — Use Undo (Ctrl+Z) to revert.`
+        patch.hingeSwingMode
+          ? `Set 500ms Hinge Swing Mode to "${patch.hingeSwingMode}" via Quick Edit [F] — Press [E] to test!`
+          : `Updated ${targetIds.length} ${
+              targetIds.length === 1 ? 'asset' : 'selected assets'
+            } via Quick Edit [F] — Use Undo (Ctrl+Z) to revert.`
       );
     },
     [selectedAssetIds, selectedAssetId, recordUndoSnapshot]
   );
 
-  // Toggle hinged door / secret wall swing preview (Modification -> tracked on undo stack)
+  // Toggle hinged door / secret wall swing preview with smooth 500ms hinge transition + synchronized Foley (Proposals 1 & 2)
+  const hingeTimersRef = useRef<Map<string, number>>(new Map());
+
   const handleToggleAssetOpen = useCallback(
     (asset: PlacedAsset) => {
-      recordUndoSnapshot(`${asset.isOpen ? 'Close' : 'Open'} "${asset.name}"`);
-      soundFX.playSecretPassageOpen();
+      const nowMs = Date.now();
       const nextOpen = !asset.isOpen;
-      setAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isOpen: nextOpen } : a)));
+      const swingMode: HingeSwingMode = asset.hingeSwingMode || 'right_hinge';
+      const isSecret = Boolean(asset.isSecretPassage || asset.category === 'secret_wall');
+
+      recordUndoSnapshot(`${asset.isOpen ? 'Close' : 'Open'} "${asset.name}"`);
+      const foleySpec = soundFX.playSecretPassageOpen({
+        swingMode,
+        isOpening: nextOpen,
+        isSecretPassage: isSecret,
+        durationMs: HINGE_TRANSITION_DURATION_MS
+      });
+
+      const existingTimer = hingeTimersRef.current.get(asset.id);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === asset.id
+            ? initiateAssetHingeToggle(a, nowMs, HINGE_TRANSITION_DURATION_MS)
+            : a
+        )
+      );
       setSelectedAssetId(asset.id);
       setSelectedAssetIds((prev) => (prev.includes(asset.id) ? prev : [asset.id]));
       setStatusBanner(
-        `${nextOpen ? 'Opened' : 'Closed'} hinge on "${asset.name}" [E] for clearance & scale preview.`
+        `${nextOpen ? 'Opening' : 'Closing'} "${asset.name}" [E] over ${HINGE_TRANSITION_DURATION_MS}ms (${swingMode} · ${foleySpec.descriptionLabel})...`
       );
+
+      const timerId = window.setTimeout(() => {
+        hingeTimersRef.current.delete(asset.id);
+        setAssets((prev) =>
+          prev.map((a) =>
+            a.id === asset.id
+              ? {
+                  ...a,
+                  isOpen: nextOpen,
+                  openProgress: nextOpen ? 1 : 0,
+                  hingeTransitionStartMs: undefined,
+                  hingeTransitionFrom: undefined,
+                  hingeTransitionTo: undefined
+                }
+              : a
+          )
+        );
+        setStatusBanner(
+          `${nextOpen ? 'Opened' : 'Closed'} "${asset.name}" [E] (${HINGE_TRANSITION_DURATION_MS}ms ${swingMode} complete + 480ms latch click).`
+        );
+      }, HINGE_TRANSITION_DURATION_MS);
+
+      hingeTimersRef.current.set(asset.id, timerId);
     },
     [recordUndoSnapshot]
   );
@@ -1310,7 +1695,7 @@ export default function App() {
 
   // Save a Room Blueprint (from selected assets or all assets on the active floor) into the JSON Library
   const handleSaveRoomBlueprint = useCallback(
-    (name: string, description: string, useSelectionOnly: boolean) => {
+    (name: string, description: string, useSelectionOnly: boolean, customTags?: string[]) => {
       const sourceAssets = useSelectionOnly
         ? assets.filter((a) => selectedAssetIds.includes(a.id) || a.id === selectedAssetId)
         : assets.filter((a) => a.floor === currentFloor);
@@ -1323,18 +1708,85 @@ export default function App() {
       }
 
       soundFX.playPlaceAsset();
-      const newBp = createRoomBlueprintFromAssets(name, description, sourceAssets, [
-        String(currentFloor),
-        useSelectionOnly ? 'selection' : 'full_room'
-      ]);
+      const mergedTags = Array.from(
+        new Set([
+          String(currentFloor),
+          useSelectionOnly ? 'selection' : 'full_room',
+          ...(customTags || [])
+        ])
+      );
+      const newBp = createRoomBlueprintFromAssets(name, description, sourceAssets, mergedTags);
       setRoomBlueprints((prev) => [newBp, ...prev]);
       saveItemToDedicatedFolder('blueprints', newBp.name, newBp, newBp.id);
       saveItemToDedicatedFolder('room_blueprints', newBp.name, newBp, newBp.id);
       setStatusBanner(
-        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects) to ./ArchitectForge_Workspace/blueprints/!`
+        `Saved Room Blueprint "${newBp.name}" (${newBp.items.length} objects, tags: ${newBp.tags.map((t) => `#${t}`).join(' ')}) to ./ArchitectForge_Workspace/blueprints/!`
       );
     },
     [assets, selectedAssetIds, selectedAssetId, currentFloor, saveItemToDedicatedFolder]
+  );
+
+  const handleUpdateRoomBlueprint = useCallback(
+    (updated: RoomBlueprint) => {
+      setRoomBlueprints((prev) => prev.map((bp) => (bp.id === updated.id ? updated : bp)));
+      saveItemToDedicatedFolder('blueprints', updated.name, updated, updated.id);
+      setStatusBanner(
+        `Updated Room Blueprint tags on "${updated.name}" (${(updated.tags || []).map((t) => `#${t}`).join(' ')}).`
+      );
+    },
+    [saveItemToDedicatedFolder]
+  );
+
+  const handleUpdateCatalogBlueprint = useCallback(
+    (updated: AssetBlueprint) => {
+      setCatalogAssets((prev) =>
+        prev.map((bp) => (bp.subType === updated.subType ? updated : bp))
+      );
+      saveItemToDedicatedFolder('catalog_blueprints', updated.name, updated, updated.subType);
+      setStatusBanner(
+        `Updated Blueprint tags on "${updated.name}" (${(updated.tags || []).map((t) => `#${t}`).join(' ')}).`
+      );
+    },
+    [saveItemToDedicatedFolder]
+  );
+
+  const handleAssignSoundToAsset = useCallback(
+    (assetId: string, soundPresetId: string, soundName: string) => {
+      setAssets((prev) =>
+        prev.map((a) => {
+          if (a.id !== assetId) return a;
+          const updated = assignSoundToAssetOrBlueprint(a, soundPresetId);
+          saveItemToDedicatedFolder('environment_3d', updated.name, updated, updated.id);
+          return updated;
+        })
+      );
+      setStatusBanner(
+        `🔊 Assigned sound "${soundName}" (${soundPresetId}) to 3D asset!`
+      );
+    },
+    [saveItemToDedicatedFolder]
+  );
+
+  const handleAssignSoundToBlueprint = useCallback(
+    (subType: string, soundPresetId: string, soundName: string) => {
+      setCatalogAssets((prev) =>
+        prev.map((bp) => {
+          if (bp.subType !== subType) return bp;
+          const updated = assignSoundToAssetOrBlueprint(bp, soundPresetId);
+          saveItemToDedicatedFolder('catalog_blueprints', updated.name, updated, updated.subType);
+          return updated;
+        })
+      );
+      setActiveBlueprint((prev) =>
+        prev && prev.subType === subType
+          ? assignSoundToAssetOrBlueprint(prev, soundPresetId)
+          : prev
+      );
+      setStatusBanner(
+        `🔊 Assigned sound "${soundName}" (${soundPresetId}) to Catalog Blueprint!`
+      );
+    },
+    [saveItemToDedicatedFolder]
   );
 
   // Load & instantiate a Room Blueprint onto the active floor layer (tracked on Undo stack)
@@ -1557,7 +2009,7 @@ export default function App() {
         project.floorLayers.length > 0 ? project.floorLayers : INITIAL_FLOOR_LAYERS
       );
       setCurrentFloor(project.currentFloor || 'lobby');
-      setAssets(project.assets || []);
+      setAssets(weatherAssetsListToLate70sStyle(project.assets || []));
       if (Array.isArray(project.catalogBlueprints) && project.catalogBlueprints.length > 0) {
         setCatalogAssets(project.catalogBlueprints as AssetBlueprint[]);
       }
@@ -1636,6 +2088,114 @@ export default function App() {
     },
     [activeProjectId]
   );
+
+  // ============================================================================
+  // FIREBASE AUTHENTICATION & FIRESTORE CLOUD PROJECT SYNC
+  // ============================================================================
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [firebaseAuthReady, setFirebaseAuthReady] = useState<boolean>(false);
+  const [cloudProjects, setCloudProjects] = useState<CloudSyncedProjectRecord[]>([]);
+  const [cloudSyncBusy, setCloudSyncBusy] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      setFirebaseAuthReady(true);
+      if (!user) {
+        setCloudProjects([]);
+      }
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseAuthReady || !firebaseUser) return;
+    const unsubscribeCloud = subscribeToUserCloudProjects(
+      firebaseUser.uid,
+      (records) => {
+        setCloudProjects(records);
+      },
+      (errMessage) => {
+        console.warn('Firestore subscription notice:', errMessage);
+      }
+    );
+    return () => unsubscribeCloud();
+  }, [firebaseAuthReady, firebaseUser]);
+
+  const handleSignInFirebase = useCallback(async () => {
+    try {
+      const signedInUser = await signInWithGooglePopup();
+      setFirebaseUser(signedInUser);
+      await syncUserProfileToCloud(signedInUser, activeProjectId || 'proj_starter_hotel');
+      setStatusBanner(
+        `☁️ Signed in to Firebase Cloud as ${signedInUser.displayName || signedInUser.email}!`
+      );
+    } catch (err) {
+      setStatusBanner(
+        `Firebase Google Sign-In notice: ${err instanceof Error ? err.message : 'Popup closed'}`
+      );
+    }
+  }, [activeProjectId]);
+
+  const handleSignOutFirebase = useCallback(async () => {
+    try {
+      await signOutFromFirebase();
+      setFirebaseUser(null);
+      setCloudProjects([]);
+      setStatusBanner('Signed out from Firebase Cloud.');
+    } catch {
+      // ignore sign-out error
+    }
+  }, []);
+
+  const handleSyncCurrentProjectToCloud = useCallback(async () => {
+    if (!firebaseUser) {
+      handleToggleOpenWindow('projects', true);
+      handleFocusWindow('projects');
+      setStatusBanner('Sign in with Google inside the Projects window to sync with Firebase Cloud.');
+      return;
+    }
+    setCloudSyncBusy(true);
+    try {
+      const snap = buildCurrentProjectSnapshot(activeProjectId || undefined);
+      const cloudId = await saveProjectToCloudFirestore(firebaseUser, snap);
+      await syncUserProfileToCloud(firebaseUser, cloudId);
+      setActiveProjectId(cloudId);
+      setStatusBanner(
+        `☁️ Synced Project "${snap.name}" (${snap.floorLayers.length} floors, ${snap.assets.length} objects) to Firebase Firestore!`
+      );
+    } catch (err) {
+      setStatusBanner(
+        `Cloud sync error: ${err instanceof Error ? err.message.slice(0, 120) : 'Check permissions'}`
+      );
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }, [
+    firebaseUser,
+    activeProjectId,
+    buildCurrentProjectSnapshot,
+    handleToggleOpenWindow,
+    handleFocusWindow
+  ]);
+
+  const handleLoadCloudProject = useCallback(
+    (record: CloudSyncedProjectRecord) => {
+      applyProjectSnapshotToWorkspace(record.snapshot, `Firebase Cloud (${record.name})`);
+    },
+    [applyProjectSnapshotToWorkspace]
+  );
+
+  const handleDeleteCloudProject = useCallback(async (projectId: string) => {
+    try {
+      await deleteProjectFromCloudFirestore(projectId);
+      setStatusBanner('Removed project from Firebase Cloud Firestore.');
+    } catch (err) {
+      setStatusBanner(
+        `Could not delete cloud project: ${err instanceof Error ? err.message.slice(0, 100) : ''}`
+      );
+    }
+  }, []);
 
   // Export complete Project (.json) file to disk
   const handleExportFullAssetPack = useCallback(
@@ -1813,7 +2373,7 @@ export default function App() {
         position: [0, h / 2, 0],
         dimensions: [w, h, d],
         rotationY: 0,
-        color: '#d4af37',
+        color: '#5e4c2e',
         textureId: 'aged_brass',
         collidable: true,
         compositeParts: spec.parts,
@@ -1854,7 +2414,7 @@ export default function App() {
         position: [0, h / 2, 0],
         dimensions: [w, h, d],
         rotationY: 0,
-        color: '#d4af37',
+        color: '#5e4c2e',
         textureId: 'aged_brass',
         collidable: true,
         compositeParts: fallback.parts
@@ -1923,11 +2483,185 @@ export default function App() {
     }
   };
 
+  // Deliverable 3: Batch Asset Image Descriptions Import -> gemini-3.1-flash-lite-image -> Meshy.ai 3D -> Game Catalog
+  const [batchImportBusy, setBatchImportBusy] = useState<boolean>(false);
+  const [lastBatchImportSummary, setLastBatchImportSummary] = useState<
+    BatchImportedAssetSummary[]
+  >([]);
+
+  const handleSaveDescriptionFile = useCallback(
+    async (filename: string, content: string) => {
+      const cleanName = filename.trim() || 'late70s_hotel_asset_descriptions.descriptions.txt';
+      try {
+        const res = await fetch('/api/local-fs/save-description-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: cleanName,
+            content
+          })
+        });
+        if (res.ok) {
+          const saved = await res.json();
+          setLastSavedFolderBanner(
+            `${saved.relativePath} (${(saved.sizeBytes / 1024).toFixed(1)} KB)`
+          );
+          await refreshLocalDiskFoldersStatus();
+          setStatusBanner(
+            `Saved asset description file "${saved.filename}" into ./ArchitectForge_Workspace/assets/image_descriptions_import/!`
+          );
+          return;
+        }
+      } catch {
+        // Offline fallback
+      }
+      await saveItemToDedicatedFolder('asset_descriptions', cleanName, content, 'queue', true);
+      setStatusBanner(
+        `Saved asset description file "${cleanName}" into ./ArchitectForge_Workspace/assets/image_descriptions_import/!`
+      );
+    },
+    [refreshLocalDiskFoldersStatus, saveItemToDedicatedFolder]
+  );
+
+  const handleRunBatchDescriptionImport = useCallback(
+    async (filename: string, rawContent?: string) => {
+      setBatchImportBusy(true);
+      setStatusBanner(
+        `⚡ Pipeline Running: Reading "${filename}" → Generating reference images (${AI_MODEL_REGISTRY.description_to_image.modelId}) → Meshy.ai Image-to-3D → Importing to Game Catalog...`
+      );
+      try {
+        const res = await fetch('/api/forge/batch-import-descriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename,
+            rawContent,
+            floor: currentFloor
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.items) && data.items.length > 0) {
+            const importedBlueprints: AssetBlueprint[] = data.items.map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (it: any) => it.catalogBlueprint as AssetBlueprint
+            );
+            const importedAssets: PlacedAsset[] = data.items.map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (it: any) => it.placedAsset as PlacedAsset
+            );
+            const summaryItems: BatchImportedAssetSummary[] = data.items.map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (it: any) => ({
+                name: it.name,
+                category: it.category,
+                enforcedImagePrompt: it.enforcedImagePrompt,
+                referenceImageUrl: it.referenceImageUrl,
+                mattedImageDataUrl: it.mattedImageDataUrl || it.referenceImageUrl,
+                alphaMatted: Boolean(it.alphaMatted ?? true),
+                imageModelUsed: it.imageModelUsed || AI_MODEL_REGISTRY.description_to_image.modelId,
+                meshyModelUsed: it.meshyModelUsed || AI_MODEL_REGISTRY.meshy_image_to_3d.modelId
+              })
+            );
+
+            recordUndoSnapshot(
+              `Batch Import ${importedAssets.length} assets from "${filename}"`
+            );
+            soundFX.playPlaceAsset();
+            setCatalogAssets((prev) => [...importedBlueprints, ...prev]);
+            setAssets((prev) => [...prev, ...importedAssets]);
+            if (importedBlueprints[0]?.referenceImageUrl) {
+              setCustomGeneratedTexUrl(importedBlueprints[0].referenceImageUrl);
+            }
+            setLastBatchImportSummary(summaryItems);
+            await refreshLocalDiskFoldersStatus();
+            setStatusBanner(
+              `✓ Imported ${importedBlueprints.length} assets from "${filename}" (${AI_MODEL_REGISTRY.description_to_image.modelId} → ${AI_MODEL_REGISTRY.meshy_image_to_3d.modelId}) into the Build Mode Catalog!`
+            );
+            return;
+          }
+        }
+      } catch {
+        // Fallback below if offline
+      } finally {
+        setBatchImportBusy(false);
+      }
+
+      // Offline deterministic fallback using the same pipeline functions
+      const textToParse = rawContent || DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT;
+      const entries = parseAssetDescriptionsFile(textToParse);
+      if (entries.length === 0) {
+        setStatusBanner(`No valid asset descriptions found in "${filename}".`);
+        return;
+      }
+      const fallbackBlueprints: AssetBlueprint[] = [];
+      const fallbackAssets: PlacedAsset[] = [];
+      const fallbackSummaries: BatchImportedAssetSummary[] = [];
+
+      entries.slice(0, 8).forEach((entry, idx) => {
+        const refImg = generateAssetConceptSvgDataUrl(entry.name, entry.descriptionPrompt);
+        const alphaMatte = applyAlphaMatteToConceptImageDataUrl(refImg);
+        const spec = buildProcedural3DSpecFromPrompt(`${entry.name} ${entry.descriptionPrompt}`);
+        const [w, h, d] = spec.dimensions || [1.1, 1.3, 0.9];
+        const placed = weatherAssetToLate70sStyle({
+          id: `desc3d_${Date.now()}_${idx}`,
+          name: entry.name || spec.name,
+          category: entry.categoryHint || spec.category || 'custom_ai',
+          subType: `meshy_desc_${idx}_${Date.now().toString(36)}`,
+          floor: currentFloor,
+          roomNumber: currentRoomLabel,
+          position: [-4 + idx * 2.0, h / 2, 0],
+          dimensions: [w, h, d],
+          rotationY: 0,
+          color: '#5e4c2e',
+          textureId: 'aged_brass',
+          collidable: true,
+          compositeParts: spec.parts,
+          inspectText: `${entry.descriptionPrompt} [Pipeline: ${AI_MODEL_REGISTRY.description_to_image.modelId} -> Alpha-Matte RGBA(0,0,0,0) -> ${AI_MODEL_REGISTRY.meshy_image_to_3d.modelId}]`
+        });
+        const bp: AssetBlueprint = {
+          ...createBlueprintFromAsset(placed),
+          description: `${entry.descriptionPrompt} (Image: ${AI_MODEL_REGISTRY.description_to_image.modelId} → Alpha-Matted → 3D: ${AI_MODEL_REGISTRY.meshy_image_to_3d.modelId})`,
+          referenceImageUrl: alphaMatte.mattedImageDataUrl,
+          isGenerated: true
+        };
+        fallbackBlueprints.push(bp);
+        fallbackAssets.push(placed);
+        fallbackSummaries.push({
+          name: bp.name,
+          category: bp.category,
+          enforcedImagePrompt: entry.enforcedImagePrompt,
+          referenceImageUrl: refImg,
+          mattedImageDataUrl: alphaMatte.mattedImageDataUrl,
+          alphaMatted: alphaMatte.alphaMatted,
+          imageModelUsed: AI_MODEL_REGISTRY.description_to_image.modelId,
+          meshyModelUsed: AI_MODEL_REGISTRY.meshy_image_to_3d.modelId
+        });
+      });
+
+      recordUndoSnapshot(`Batch Import ${fallbackAssets.length} assets from "${filename}"`);
+      soundFX.playPlaceAsset();
+      setCatalogAssets((prev) => [...fallbackBlueprints, ...prev]);
+      setAssets((prev) => [...prev, ...fallbackAssets]);
+      setLastBatchImportSummary(fallbackSummaries);
+      setStatusBanner(
+        `✓ Imported ${fallbackBlueprints.length} assets from "${filename}" into the Build Mode Catalog!`
+      );
+    },
+    [currentFloor, currentRoomLabel, recordUndoSnapshot, refreshLocalDiskFoldersStatus]
+  );
+
   // Quick-save or sync handlers for the Dedicated Local Folders window
   const handleQuickSaveCategorySample = useCallback(
     (category: LocalFolderCategory) => {
       soundFX.playPlaceAsset();
-      if (category === 'projects') {
+      if (category === 'asset_descriptions') {
+        handleSaveDescriptionFile(
+          'late70s_hotel_asset_descriptions.descriptions.txt',
+          DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT
+        );
+        return;
+      } else if (category === 'projects') {
         const snap = buildCurrentProjectSnapshot();
         saveItemToDedicatedFolder('projects', snap.name, snap, snap.id, true);
       } else if (category === 'environment_3d') {
@@ -2039,6 +2773,7 @@ export default function App() {
       );
     },
     [
+      handleSaveDescriptionFile,
       buildCurrentProjectSnapshot,
       saveItemToDedicatedFolder,
       assets,
@@ -2077,7 +2812,13 @@ export default function App() {
         const payload = parsed?.data ?? parsed?.asset ?? parsed?.blueprint ?? parsed?.character ?? parsed;
         soundFX.playPlaceAsset();
 
-        if (category === 'projects') {
+        if (category === 'asset_descriptions') {
+          await handleRunBatchDescriptionImport(
+            filename,
+            typeof parsed?.rawText === 'string' ? parsed.rawText : undefined
+          );
+          return;
+        } else if (category === 'projects') {
           const check = validateAndParseProjectSnapshot(payload);
           if (check.valid && check.project) {
             applyProjectSnapshotToWorkspace(check.project, `Local Folder (${filename})`);
@@ -2137,6 +2878,7 @@ export default function App() {
       }
     },
     [
+      handleRunBatchDescriptionImport,
       applyProjectSnapshotToWorkspace,
       currentFloor,
       recordUndoSnapshot,
@@ -2168,12 +2910,11 @@ export default function App() {
   const selectedAsset = assets.find((a) => a.id === selectedAssetId) || null;
   const floorAssets = assets.filter((a) => a.floor === currentFloor);
   const lastUndoLabel = undoStack.length > 0 ? undoStack[undoStack.length - 1].actionLabel : null;
-  const currentFloorMeta = getFloorMeta(currentFloor, floorLayers);
   const activeSelectionCount =
     selectedAssetIds.length > 0 ? selectedAssetIds.length : selectedAsset ? 1 : 0;
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden select-none font-['DM_Sans'] text-slate-800">
+    <main className="relative w-screen h-screen overflow-hidden select-none font-['DM_Sans'] text-slate-100">
       {/* Hidden File Input for Importing JSON Asset Packs */}
       <input
         ref={fileInputRef}
@@ -2213,10 +2954,30 @@ export default function App() {
           setCurrentRoomLabel(rm);
           setNearbyPrompt(prompt);
         }}
+        flashlightEnabled={flashlightEnabled}
+        onToggleFlashlight={() => {
+          setFlashlightEnabled((prev) => {
+            const next = !prev;
+            soundFX.playPlaceAsset();
+            setStatusBanner(
+              next
+                ? '🔦 [L] 1970s Chrome D-Cell / UV Inspection Flashlight ON — Aim at walls or furniture in Walk Mode to reveal hidden chalk tallies & mortar seams!'
+                : '🔦 [L] Inspection Flashlight OFF.'
+            );
+            return next;
+          });
+        }}
+        onFlashlightRevealChange={setFlashlightRevealText}
+        onWalkthroughSpeakToAgent={handleWalkthroughSpeakToAgent}
+        activeSpeakingAgentId={activeSpeakingAgentId}
+        gameTimeMinutes={gameTimeMinutes}
+        footstepsEnabled={footstepsEnabled}
+        keybindings={keybindings}
+        globalAnimationFps={globalAnimationFps}
       />
 
       {/* 2. FLOATING [F] QUICK EDIT WINDOW TO THE RIGHT OF THE SELECTED ASSET */}
-      {quickEditWindowOpen && selectedAsset && mode !== 'character' && (
+      {quickEditWindowOpen && selectedAsset && mode !== 'character' && mode !== 'soundboard' && (
         <QuickEditWindowF
           primaryAsset={selectedAsset}
           selectedCount={activeSelectionCount}
@@ -2240,225 +3001,142 @@ export default function App() {
         />
       )}
 
-      {/* 3. SIMS 3 / SIMS 4 FLOATING ROUNDED TOP BAR (Sleek Frosted Pill Bar) */}
+      {/* 3. SIMS 3 / SIMS 4 FLOATING ROUNDED TOP BAR (Dark Mode Frosted Pill Bar) */}
       <div className="fixed inset-0 z-10 pointer-events-none">
         <div className="fixed top-2.5 left-3 right-3 flex flex-col items-center gap-1 pointer-events-none">
-          <div className="w-full flex items-center justify-between gap-2">
-            {/* Top-Left Pill: Studio Identity & 128x128 Lot Telemetry */}
-            <div className="pointer-events-auto bg-white/92 backdrop-blur-md border border-[#cbd5e1] rounded-full px-3.5 py-1.5 shadow-md flex items-center gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#10b981] to-[#059669] flex items-center justify-center text-white font-['Outfit'] font-extrabold text-xs shadow-2xs">
-                  ◆
+          <div className="w-full relative flex items-center justify-center min-h-[36px]">
+            {/* Top-Left Pill: Studio Identity (Green Circle Left · ArchitectForge / Studio Centered · Eye First-Person Walk Button Right) */}
+            <div
+              data-testid="studio-title-pill"
+              className="absolute left-0 pointer-events-auto bg-slate-900/95 backdrop-blur-md border border-slate-700/90 rounded-full px-2.5 py-1 shadow-xl flex items-center justify-between gap-3 shrink-0"
+            >
+              <div
+                data-testid="studio-title-green-circle"
+                aria-hidden="true"
+                className="w-7 h-7 rounded-full bg-gradient-to-br from-[#10b981] to-[#059669] flex items-center justify-center text-white font-['Outfit'] font-extrabold text-xs shadow-2xs shrink-0"
+              >
+                ◆
+              </div>
+
+              <div className="flex flex-col items-center justify-center text-center leading-none px-1">
+                <div
+                  data-testid="studio-title-primary"
+                  className="text-xs font-['Outfit'] font-extrabold tracking-tight text-slate-100 leading-tight text-center"
+                >
+                  {STUDIO_HEADER_BRAND_SPEC.primaryTitle}
                 </div>
-                <div>
-                  <div className="text-xs font-['Outfit'] font-extrabold tracking-tight text-slate-800 leading-tight">
-                    ArchitectForge Studio
-                  </div>
-                  <div className="text-[10px] font-medium text-[#0284c7] leading-tight">
-                    {GRID_TILE_COUNT}×{GRID_TILE_COUNT} Tile Lot · {currentFloorMeta.shortCode} ({floorAssets.length} objs
-                    {activeSelectionCount > 1 ? ` · ${activeSelectionCount} sel` : ''})
-                  </div>
+                <div
+                  data-testid="studio-title-subtitle"
+                  className="text-[10px] font-['Outfit'] font-bold tracking-wider text-slate-400 leading-tight text-center"
+                >
+                  {STUDIO_HEADER_BRAND_SPEC.centeredSubtitleUnderneath}
                 </div>
               </div>
+
+              <button
+                type="button"
+                data-testid="title-walkthrough-eye-btn"
+                aria-label={
+                  mode === 'walkthrough'
+                    ? 'Exit First-Person Walk Mode'
+                    : 'First-Person Walk Mode'
+                }
+                title={
+                  mode === 'walkthrough'
+                    ? 'First-Person Walk Mode Active — Click to return to Build Mode'
+                    : 'Enter First-Person Walk Mode'
+                }
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  const nextMode = mode === 'walkthrough' ? 'architect' : 'walkthrough';
+                  setMode(nextMode);
+                  setStatusBanner(
+                    nextMode === 'walkthrough'
+                      ? '👁 First-Person Walk Mode Active — Use WASD to explore corridors, [C] Stealth Crouch, [L] Flashlight, or click the Eye icon to exit.'
+                      : 'Returned to 1 · Build Mode from First-Person Walk.'
+                  );
+                }}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-2xs shrink-0 ${
+                  mode === 'walkthrough'
+                    ? 'bg-gradient-to-br from-[#0ea5e9] to-[#0284c7] text-white ring-2 ring-[#38bdf8]'
+                    : 'bg-slate-800 hover:bg-slate-700 text-[#10b981] hover:text-[#34d399] border border-slate-700'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
             </div>
 
-            {/* Top-Center Floating Pill: Sims-Style Build / Character / Live Walkthrough Mode Switcher */}
-            <div className="pointer-events-auto flex items-center gap-1 bg-white/92 backdrop-blur-md border border-[#cbd5e1] p-1 rounded-full shadow-md shrink-0">
-              {(
-                [
-                  { id: 'architect', label: '1 · Build Mode' },
-                  { id: 'character', label: '2 · Create-A-Character' },
-                  { id: 'walkthrough', label: '3 · First-Person Walk' }
-                ] as const
-              ).map((tab) => (
+            {/* Top-Center Floating Pill: 1 · Build Mode / 2 · Create-A-Character / 3 · Sound Board (Top-Right Action Cluster Removed) */}
+            <div className="pointer-events-auto flex items-center gap-1 bg-slate-900/95 backdrop-blur-md border border-slate-700/90 p-1 rounded-full shadow-xl shrink-0 mx-auto">
+              {TOP_EDITOR_MODE_TABS.map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
+                  data-testid={`editor-mode-tab-${tab.id}`}
                   onClick={(e) => {
                     e.currentTarget.blur();
                     setMode(tab.id);
+                    if (tab.id === 'soundboard') {
+                      handleToggleOpenWindow('audio', true);
+                      handleFocusWindow('audio');
+                      setStatusBanner(
+                        '🎵 3 · Sound Board Active — Create new sounds or assign specific sounds to 3D assets and blueprints!'
+                      );
+                    }
                   }}
                   className={`px-3.5 py-1 rounded-full text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                     mode === tab.id
                       ? 'bg-gradient-to-r from-[#0ea5e9] to-[#0284c7] text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
                   }`}
                 >
                   {tab.label}
                 </button>
               ))}
             </div>
-
-            {/* Top-Right Pill Cluster: Undo, Load Sample Preset, Export/Import JSON & Audio Mute */}
-            <div className="pointer-events-auto flex items-center gap-1.5 bg-white/92 backdrop-blur-md border border-[#cbd5e1] px-2.5 py-1 rounded-full shadow-md shrink-0">
-              <button
-                type="button"
-                onClick={handleUndo}
-                disabled={undoStack.length === 0}
-                title={
-                  lastUndoLabel
-                    ? `Undo last action: ${lastUndoLabel} (Ctrl+Z)`
-                    : 'No asset actions to undo (Ctrl+Z)'
-                }
-                className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                  undoStack.length > 0
-                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
-                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                }`}
-              >
-                ↶ Undo ({undoStack.length})
-              </button>
-
-              {redoStack.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleRedo}
-                  title={`Redo undone action: ${redoStack[redoStack.length - 1].actionLabel} (Ctrl+Y)`}
-                  className="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 transition-all whitespace-nowrap"
-                >
-                  ↷ Redo ({redoStack.length})
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleLoadSamplePreset}
-                title="Populate the 128×128 canvas with the sample multi-floor hotel objects"
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-xs font-semibold text-slate-700 whitespace-nowrap"
-              >
-                Load Sample Lot
-              </button>
-
-              <button
-                type="button"
-                data-testid="open-local-folders-btn"
-                onClick={() => {
-                  handleToggleOpenWindow('local_fs', true);
-                  handleFocusWindow('local_fs');
-                  refreshLocalDiskFoldersStatus();
-                }}
-                title="Open the 100% Local Computer Workspace & Dedicated Asset Folders Manager (dedicated folders for projects, room blueprints, 3D assets, catalog blueprints, textures, character rigs, AI lore, and logs)"
-                className="px-3 py-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
-              >
-                📁 Local Folders ({localFoldersStatus.length || LOCAL_WORKSPACE_FOLDERS.length})
-              </button>
-
-              <button
-                type="button"
-                data-testid="open-project-manager-btn"
-                onClick={() => {
-                  handleToggleOpenWindow('projects', true);
-                  handleFocusWindow('projects');
-                }}
-                title="Open the Entire Project Save & Load Manager (Save/Load slots or export/import .json project files)"
-                className="px-3 py-1 bg-gradient-to-r from-[#0ea5e9] to-[#0284c7] hover:from-[#0284c7] hover:to-[#0369a1] rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
-              >
-                💾 Projects ({savedProjects.length})
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSaveNewProjectSlot}
-                title="Quick-save the entire current studio project into a browser slot"
-                className="px-2.5 py-1 bg-[#d1fae5] hover:bg-[#a7f3d0] rounded-full text-xs font-bold text-[#065f46] whitespace-nowrap"
-              >
-                Save Project
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExportFullAssetPack()}
-                title="Download complete Project (.architectforge.json)"
-                className="px-2.5 py-1 bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
-              >
-                Export (.json)
-              </button>
-
-              <button
-                type="button"
-                data-testid="download-standalone-html-btn"
-                disabled={standaloneBusy}
-                onClick={handleDownloadStandaloneHtmlApp}
-                title="Download a self-contained single-file Standalone HTML version of the app (runs offline in any browser)"
-                className="px-2.5 py-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 disabled:opacity-50 rounded-full text-xs font-bold text-white whitespace-nowrap shadow-2xs"
-              >
-                {standaloneBusy ? 'Packaging...' : '⬇ Standalone (.html)'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                title="Load an ArchitectForge Project (.json) from disk"
-                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-xs font-semibold text-slate-700 whitespace-nowrap"
-              >
-                Load (.json)
-              </button>
-
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-label={isMuted ? 'Unmute UI Audio [M]' : 'Mute UI Audio [M]'}
-                title="Mute / Unmute UI Audio [M]"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  setIsMuted((m) => {
-                    soundFX.muted = !m;
-                    return !m;
-                  });
-                }}
-                className="w-7 h-7 bg-slate-100 hover:bg-slate-200 rounded-full flex items-center justify-center text-slate-700"
-              >
-                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                  {isMuted ? (
-                    <path d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6" />
-                  ) : (
-                    <path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  )}
-                </svg>
-              </button>
-
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-label="Reset Blank 128x128 Canvas"
-                title="Reset to Blank 128×128 Square Tiles Canvas"
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  resetToBlankCanvas();
-                }}
-                className="w-7 h-7 bg-slate-100 hover:bg-rose-100 hover:text-rose-700 rounded-full flex items-center justify-center text-slate-700"
-              >
-                <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                </svg>
-              </button>
-            </div>
           </div>
 
-          {/* Window Manager Taskbar & Status Pill Banner */}
+          {/* Window Manager Taskbar (Small status bar underneath removed per user request) */}
           <div className="flex flex-wrap items-center justify-center gap-1.5 pointer-events-auto">
             <div
               aria-label="Studio Window Taskbar"
-              className="bg-white/92 backdrop-blur-md border border-[#cbd5e1] px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1 text-[11px]"
+              className="bg-slate-900/95 backdrop-blur-md border border-slate-700/90 px-2.5 py-0.5 rounded-full shadow-xl flex items-center gap-1 text-[11px]"
             >
-              <span className="font-extrabold text-slate-500 uppercase tracking-wider text-[10px] mr-1">
+              <span className="font-extrabold text-slate-400 uppercase tracking-wider text-[10px] mr-1">
                 Windows:
               </span>
-              {(mode === 'character'
-                ? (['local_fs', 'projects', 'audio', 'char_appearance', 'char_ai', 'layers'] as StudioWindowId[])
-                : (['local_fs', 'projects', 'audio', 'blueprints', 'tools', 'catalog', 'inspector', 'layers'] as StudioWindowId[])
-              ).map((winId) => {
+              {getTaskbarWindowIdsForMode(mode).map((winId) => {
                 const win = studioWindows[winId] || createDefaultStudioWindows()[winId];
                 const isVisible = Boolean(win && win.isOpen && !win.isMinimized);
+                const legacyTestId =
+                  winId === 'local_fs'
+                    ? 'open-local-folders-btn'
+                    : winId === 'keybindings'
+                    ? 'open-keybindings-btn'
+                    : winId === 'projects'
+                    ? 'open-project-manager-btn'
+                    : `taskbar-window-btn-${winId}`;
                 return (
                   <button
                     key={winId}
                     type="button"
+                    data-testid={legacyTestId}
                     onClick={() => {
                       if (!win || !win.isOpen) {
                         handleToggleOpenWindow(winId, true);
                         handleFocusWindow(winId);
+                        if (winId === 'local_fs') refreshLocalDiskFoldersStatus();
                       } else if (win.isMinimized) {
                         handleToggleMinimizeWindow(winId);
                         handleFocusWindow(winId);
@@ -2468,8 +3146,8 @@ export default function App() {
                     }}
                     className={`px-2 py-0.5 rounded-full font-bold transition-all ${
                       isVisible
-                        ? 'bg-[#e0f2fe] text-[#0369a1] border border-[#7dd3fc]'
-                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                        ? 'bg-sky-950/90 text-sky-300 border border-sky-600/80'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
                     }`}
                   >
                     {win ? win.shortTitle : winId}
@@ -2480,26 +3158,43 @@ export default function App() {
                 type="button"
                 onClick={handleResetWindowLayout}
                 title="Reset all windows to default positions & sizes [H]"
-                className="px-2 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-[10px] ml-1"
+                className="px-2 py-0.5 rounded-full bg-amber-950/90 hover:bg-amber-900 text-amber-200 border border-amber-700/70 font-bold text-[10px] ml-1"
               >
                 Reset Layout
               </button>
             </div>
-
-            <div className="bg-white/90 backdrop-blur-md border border-[#cbd5e1] px-3.5 py-0.5 rounded-full text-xs font-medium text-slate-700 shadow-xs max-w-xl truncate">
-              {nearbyPrompt || statusBanner}
-            </div>
           </div>
         </div>
 
-        {/* Center Crosshair in 1st-Person Scale Walkthrough Mode */}
+        {/* Center Crosshair & Proximity Inspection Prompt in 1st-Person Walk Mode */}
         {mode === 'walkthrough' && (
-          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center">
-            <svg viewBox="0 0 24 24" className="w-5 h-5 text-[#0284c7]">
-              <circle cx="12" cy="12" r="2" fill="currentColor" />
-              <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.4" />
-            </svg>
-          </div>
+          <>
+            <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center">
+              <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-900/90 drop-shadow">
+                <circle cx="12" cy="12" r="2" fill="currentColor" />
+                <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+            </div>
+
+            <div className="fixed bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 pointer-events-auto">
+              {nearbyPrompt && (
+                <div
+                  data-testid="walkthrough-nearby-prompt"
+                  className="px-3.5 py-1 rounded-full bg-slate-900/95 border border-slate-700 text-slate-200 text-xs font-medium shadow-lg max-w-xl truncate"
+                >
+                  {nearbyPrompt}
+                </div>
+              )}
+              {flashlightRevealText && flashlightEnabled && (
+                <div
+                  data-testid="flashlight-reveal-banner"
+                  className="px-4 py-1.5 rounded-full bg-amber-950/95 border border-amber-400/80 text-amber-200 text-xs font-mono font-bold shadow-lg max-w-xl text-center"
+                >
+                  {flashlightRevealText}
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* Character & Rig Asset Studio Windows when in Character Mode */}
@@ -2545,6 +3240,15 @@ export default function App() {
               );
             }}
             onExportCharacterRig={handleExportCharacterRig}
+            agents={agents}
+            onUpdateAgentSchedule={handleUpdateAgentSchedule}
+            globalAnimationFps={globalAnimationFps}
+            onChangeGlobalAnimationFps={(nextFps) => {
+              setGlobalAnimationFps(nextFps);
+              setStatusBanner(
+                `⚡ Global Character Animation Step Rate set to ${nextFps} FPS (Meshy.ai low-frame stepper + 60Hz facial rig overlay active).`
+              );
+            }}
           />
         )}
 
@@ -2569,6 +3273,10 @@ export default function App() {
           onRefreshStatus={refreshLocalDiskFoldersStatus}
           lastSavedBanner={lastSavedFolderBanner}
           onExportStandaloneHtml={handleDownloadStandaloneHtmlApp}
+          onSaveDescriptionFile={handleSaveDescriptionFile}
+          onRunBatchDescriptionImport={handleRunBatchDescriptionImport}
+          batchImportBusy={batchImportBusy}
+          lastBatchImportSummary={lastBatchImportSummary}
         />
 
         {/* Entire Project Save & Load Manager Floating Window */}
@@ -2599,9 +3307,19 @@ export default function App() {
           onDeleteProjectSlot={handleDeleteProjectSlot}
           onExportProjectFile={handleExportFullAssetPack}
           onImportProjectJsonText={handleImportProjectJsonText}
+          firebaseUserDisplayName={firebaseUser?.displayName || null}
+          firebaseUserEmail={firebaseUser?.email || null}
+          firebaseAuthReady={firebaseAuthReady}
+          cloudSyncBusy={cloudSyncBusy}
+          cloudProjects={cloudProjects}
+          onSignInFirebase={handleSignInFirebase}
+          onSignOutFirebase={handleSignOutFirebase}
+          onSyncCurrentProjectToCloud={handleSyncCurrentProjectToCloud}
+          onLoadCloudProject={handleLoadCloudProject}
+          onDeleteCloudProject={handleDeleteCloudProject}
         />
 
-        {/* Audio Synthesizer & Sound Studio Floating Window */}
+        {/* Audio Synthesizer & Sound Studio Floating Window + Sound Board Companion Tools */}
         {studioWindows.audio && (
           <AudioStudioWindow
             windowState={studioWindows.audio}
@@ -2616,6 +3334,31 @@ export default function App() {
             onToggleWalkthroughBgm={setWalkthroughBgmEnabled}
             footstepsEnabled={footstepsEnabled}
             onToggleFootsteps={setFootstepsEnabled}
+            isSoundBoardMode={mode === 'soundboard'}
+            assets={floorAssets}
+            catalogAssets={catalogAssets}
+            selectedAssetId={selectedAssetId}
+            activeBlueprintSubType={activeBlueprint?.subType || null}
+            onAssignSoundToAsset={handleAssignSoundToAsset}
+            onAssignSoundToBlueprint={handleAssignSoundToBlueprint}
+          />
+        )}
+
+        {/* User-Defined Keybindings & Control Selection Floating Window */}
+        {studioWindows.keybindings && (
+          <KeybindingsWindow
+            windowState={studioWindows.keybindings}
+            onFocus={handleFocusWindow}
+            onMove={handleMoveWindow}
+            onResize={handleResizeWindow}
+            onToggleMinimize={handleToggleMinimizeWindow}
+            onToggleMaximize={handleToggleMaximizeWindow}
+            onClose={(id) => handleToggleOpenWindow(id, false)}
+            keybindings={keybindings}
+            onChangeKeybindings={(next, msg) => {
+              setKeybindings(next);
+              if (msg) setStatusBanner(msg);
+            }}
           />
         )}
 
@@ -2712,6 +3455,13 @@ export default function App() {
           onSnapSelectedToSurfaceNow={handleSnapSelectedToSurfaceNow}
           roomBlueprints={roomBlueprints}
           onSaveRoomBlueprint={handleSaveRoomBlueprint}
+          onUpdateRoomBlueprint={handleUpdateRoomBlueprint}
+          onUpdateCatalogBlueprint={handleUpdateCatalogBlueprint}
+          onSwitchToSoundBoard={() => {
+            setMode('soundboard');
+            handleToggleOpenWindow('audio', true);
+            handleFocusWindow('audio');
+          }}
           onLoadRoomBlueprint={handleLoadRoomBlueprint}
           onDeleteRoomBlueprint={handleDeleteRoomBlueprint}
           onExportRoomBlueprint={handleExportRoomBlueprint}

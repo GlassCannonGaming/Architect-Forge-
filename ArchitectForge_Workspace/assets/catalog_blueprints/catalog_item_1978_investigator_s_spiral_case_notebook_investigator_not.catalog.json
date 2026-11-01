@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T15:45:38.546Z",
+  "category": "catalog_blueprints",
+  "folderPath": "ArchitectForge_Workspace/assets/catalog_blueprints",
+  "itemName": "1978 Investigator's Spiral Case Notebook",
+  "data": {
+    "subType": "investigator_notebook_prop",
+    "name": "1978 Investigator's Spiral Case Notebook",
+    "category": "clue_prop",
+    "defaultDimensions": [
+      0.45,
+      0.14,
+      0.55
+    ],
+    "defaultColor": "#4a181b",
+    "defaultTexture": "velvet_crimson",
+    "collidable": true,
+    "tags": [
+      "game-item",
+      "investigation",
+      "notebook",
+      "clue",
+      "animated",
+      "audio-linked",
+      "late-70s",
+      "case-folio"
+    ],
+    "animationSpec": "Low-frame spiral page-flip & brass pen scribble cycle (8 FPS)",
+    "soundPresetId": "sfx_clue_discover",
+    "compositeParts": [
+      {
+        "id": "oxblood_cover",
+        "shape": "box",
+        "offset": [
+          0,
+          0.03,
+          0
+        ],
+        "size": [
+          0.42,
+          0.04,
+          0.52
+        ],
+        "color": "#4a181b",
+        "roughness": 0.85,
+        "metalness": 0.08
+      },
+      {
+        "id": "ruled_paper_block",
+        "shape": "box",
+        "offset": [
+          0.01,
+          0.06,
+          0
+        ],
+        "size": [
+          0.39,
+          0.05,
+          0.49
+        ],
+        "color": "#8f8777",
+        "roughness": 0.92,
+        "metalness": 0.02
+      },
+      {
+        "id": "brass_spiral_binding",
+        "shape": "cylinder",
+        "offset": [
+          -0.19,
+          0.06,
+          0
+        ],
+        "size": [
+          0.025,
+          0.5,
+          0.025
+        ],
+        "rotation": [
+          1.5707963267948966,
+          0,
+          0
+        ],
+        "color": "#6e562f",
+        "roughness": 0.42,
+        "metalness": 0.78
+      },
+      {
+        "id": "crimson_bookmark_ribbon",
+        "shape": "box",
+        "offset": [
+          0.05,
+          0.04,
+          0.28
+        ],
+        "size": [
+          0.04,
+          0.01,
+          0.14
+        ],
+        "color": "#592820",
+        "roughness": 0.9,
+        "metalness": 0
+      },
+      {
+        "id": "tarnished_brass_pen",
+        "shape": "cylinder",
+        "offset": [
+          0.14,
+          0.095,
+          0.02
+        ],
+        "size": [
+          0.018,
+          0.36,
+          0.018
+        ],
+        "rotation": [
+          1.5707963267948966,
+          0,
+          0.22
+        ],
+        "color": "#5e4c2e",
+        "roughness": 0.35,
+        "metalness": 0.82
+      }
+    ],
+    "description": "In-game investigation prop asset: 1978 spiral-bound detective case folio with ruled pages and brass pen (for image, 3D model, animation & sound export)."
+  }
+}

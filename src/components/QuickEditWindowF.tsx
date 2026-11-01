@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PlacedAsset, TexturePresetId } from '../game/rules';
+import { HingeSwingMode, PlacedAsset, TexturePresetId } from '../game/rules';
 
 interface QuickEditWindowFProps {
   primaryAsset: PlacedAsset;
@@ -12,6 +12,8 @@ interface QuickEditWindowFProps {
     scaleMultiplier?: number;
     dimensions?: [number, number, number];
     rotationDeltaY?: number;
+    hingeSwingMode?: HingeSwingMode;
+    isSecretPassage?: boolean;
   }) => void;
   onInteractKeyE: (asset: PlacedAsset) => void;
   onDuplicate: (asset: PlacedAsset) => void;
@@ -20,25 +22,25 @@ interface QuickEditWindowFProps {
 }
 
 const SWATCH_COLORS = [
-  '#8c3b2b', // NYC Brick Red
-  '#d6d0c4', // Cream Plaster
-  '#5c3824', // Mahogany Wood
-  '#7f1d1d', // Parlor Crimson
-  '#10b981', // Sims Plumbob Emerald
-  '#0284c7', // Cerulean Blue
-  '#b48a3e', // Aged Brass
-  '#334155'  // Slate Iron
+  '#592820', // Soot-Stained Brick
+  '#8a8170', // Nicotine Plaster
+  '#3b2314', // Dark Walnut Trim
+  '#4a181b', // Dried Oxblood
+  '#4a5438', // 70s Faded Avocado
+  '#6e562f', // 70s Harvest Ochre
+  '#5e4c2e', // Tarnished Brass
+  '#242220'  // Corroded Cast Iron
 ];
 
 const TEXTURE_OPTIONS: { id: TexturePresetId; label: string }[] = [
-  { id: 'nyc_old_brick', label: 'NYC Old Brick' },
-  { id: 'plaster_cream', label: 'Wainscot Plaster' },
-  { id: 'oak_parquet', label: 'Mahogany / Oak' },
-  { id: 'checker_marble', label: 'Checker Marble' },
-  { id: 'wallpaper_damask', label: 'Damask Wallpaper' },
-  { id: 'velvet_crimson', label: 'Crimson Velvet' },
-  { id: 'aged_brass', label: 'Aged Brass' },
-  { id: 'industrial_concrete', label: 'Basement Concrete' }
+  { id: 'nyc_old_brick', label: 'Soot-Stained Brick' },
+  { id: 'plaster_cream', label: 'Nicotine Wainscot' },
+  { id: 'oak_parquet', label: 'Worn Dark Walnut' },
+  { id: 'checker_marble', label: '70s Cracked Linoleum' },
+  { id: 'wallpaper_damask', label: 'Peeling 70s Wallpaper' },
+  { id: 'velvet_crimson', label: 'Threadbare Oxblood' },
+  { id: 'aged_brass', label: 'Tarnished Bronze' },
+  { id: 'industrial_concrete', label: 'Damp Cellar Concrete' }
 ];
 
 export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
@@ -100,25 +102,25 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
       aria-label="Quick Asset Editor [F]"
       data-testid="quick-edit-window-f"
       style={{ left: `${left}px`, top: `${top}px` }}
-      className="fixed z-40 w-72 pointer-events-auto bg-white/95 backdrop-blur-md border-2 border-[#38bdf8] rounded-3xl shadow-2xl overflow-hidden text-slate-800 transition-shadow"
+      className="studio-dark-window fixed z-40 w-72 pointer-events-auto bg-slate-900/95 backdrop-blur-md border-2 border-[#38bdf8] rounded-3xl shadow-2xl overflow-hidden text-slate-100 transition-shadow"
     >
-      {/* Draggable Window Title Bar with Minimize & Close [F] */}
+      {/* Draggable Window Title Bar with Minimize & Close [F] (Dark Mode) */}
       <div
         onPointerDown={handleTitlePointerDown}
-        className="cursor-move select-none bg-gradient-to-r from-[#f0f9ff] to-[#ecfdf5] flex items-center justify-between gap-2 border-b border-slate-200 px-3.5 py-2"
+        className="cursor-move select-none bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 flex items-center justify-between gap-2 border-b border-slate-800 px-3.5 py-2"
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-slate-400 text-xs font-bold">⋮⋮</span>
+          <span className="text-slate-500 text-xs font-bold">⋮⋮</span>
           <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#10b981] to-[#059669] text-white text-[10px] font-extrabold flex items-center justify-center shrink-0">
             F
           </span>
           <div className="truncate">
-            <div className="text-xs font-extrabold text-slate-800 truncate">
+            <div className="text-xs font-extrabold text-slate-100 truncate">
               {selectedCount > 1
                 ? `${selectedCount} Assets Selected`
                 : primaryAsset.name}
             </div>
-            <div className="text-[10px] font-medium text-[#0284c7]">
+            <div className="text-[10px] font-medium text-[#38bdf8]">
               Quick Edit Window · Drag to Move
             </div>
           </div>
@@ -128,7 +130,7 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             type="button"
             onClick={() => setMinimized((m) => !m)}
             title={minimized ? 'Restore Quick Edit Window' : 'Minimize Quick Edit Window'}
-            className="w-5 h-5 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-bold flex items-center justify-center border border-amber-300"
+            className="w-5 h-5 rounded-full bg-amber-950/90 hover:bg-amber-900 text-amber-200 text-[10px] font-bold flex items-center justify-center border border-amber-700/70"
           >
             {minimized ? '▲' : '—'}
           </button>
@@ -136,7 +138,7 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             type="button"
             onClick={onClose}
             title="Close Quick Edit Window [F]"
-            className="px-2 py-0.5 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-bold shrink-0 border border-rose-300"
+            className="px-2 py-0.5 rounded-full bg-rose-950/90 hover:bg-rose-900 text-rose-200 text-[10px] font-bold shrink-0 border border-rose-700/70"
           >
             ✕ [F]
           </button>
@@ -285,6 +287,54 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             </select>
           </div>
 
+          {/* 2B. PROPOSAL 2: HINGE SWING MODE SELECTOR (500MS TRANSITION + FOLEY) */}
+          <div
+            data-testid="quick-edit-hinge-mode-panel"
+            className="bg-amber-50/85 border border-amber-200 rounded-2xl p-2 space-y-1.5"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-900">
+                🚪 500ms Hinge / Slide Mode
+              </span>
+              <label className="flex items-center gap-1 text-[10px] font-bold text-amber-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(primaryAsset.isSecretPassage || primaryAsset.category === 'secret_wall')}
+                  onChange={(e) => onBatchModify({ isSecretPassage: e.target.checked })}
+                  className="accent-amber-600 rounded"
+                />
+                <span>Secret Passage</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {(
+                [
+                  { id: 'right_hinge', label: 'Right Hinge' },
+                  { id: 'left_hinge', label: 'Left Hinge' },
+                  { id: 'pocket_slide', label: 'Pocket Slide' }
+                ] as { id: HingeSwingMode; label: string }[]
+              ).map((m) => {
+                const activeMode = primaryAsset.hingeSwingMode || 'right_hinge';
+                const isSelected = activeMode === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    data-testid={`hinge-mode-${m.id}`}
+                    onClick={() => onBatchModify({ hingeSwingMode: m.id })}
+                    className={`py-1 px-1.5 rounded-full text-[10px] font-bold transition-all ${
+                      isSelected
+                        ? 'bg-amber-600 text-white shadow-2xs'
+                        : 'bg-white text-amber-900 border border-amber-300 hover:bg-amber-100'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* 3. COMMON EDITING ACTIONS */}
           <div className="grid grid-cols-2 gap-1.5 pt-0.5">
             <button
@@ -296,10 +346,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             </button>
             <button
               type="button"
+              data-testid="quick-edit-interact-e-btn"
               onClick={() => onInteractKeyE(primaryAsset)}
               className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 rounded-full text-[11px] font-bold text-amber-900"
             >
-              Interact [E]
+              {primaryAsset.isSecretPassage || primaryAsset.category === 'door' || primaryAsset.category === 'secret_wall'
+                ? `${primaryAsset.isOpen ? 'Close' : 'Open'} 500ms [E]`
+                : 'Interact [E]'}
             </button>
             <button
               type="button"

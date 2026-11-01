@@ -1,0 +1,239 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public studio architect profile isolated from PII, storing display name and active project reference.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the studio owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Sanitized architect display name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "activeProjectId": {
+          "type": "string",
+          "description": "Currently active studio project ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "activeProjectId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudProject": {
+      "title": "CloudProject",
+      "description": "Cloud-persisted 1990s boutique hotel architectural studio project with multi-floor layers, 3D placements, room blueprints, AI character rigs, and cost-effective AI model audit telemetry.",
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "Unique project document identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this project.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable studio project title.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Project architectural summary and notes.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "currentFloor": {
+          "type": "string",
+          "description": "Active floor ID in the studio.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "gameTimeMinutes": {
+          "type": "integer",
+          "description": "In-game 24-hour clock minutes (0 to 1439)."
+        },
+        "floorsCount": {
+          "type": "integer",
+          "description": "Total number of floor layers in the project."
+        },
+        "assetsCount": {
+          "type": "integer",
+          "description": "Total number of placed 3D objects."
+        },
+        "blueprintsCount": {
+          "type": "integer",
+          "description": "Total number of saved room blueprints."
+        },
+        "charactersCount": {
+          "type": "integer",
+          "description": "Total number of resident AI character rigs."
+        },
+        "workspaceState": {
+          "type": "object",
+          "description": "Native Firestore Map containing bounded floorLayers, assets, roomBlueprints, characterRigs, globalInstructionSet, settings, and AI model compliance verification."
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle status of the project.",
+          "enum": [
+            "active",
+            "archived"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server modification timestamp."
+        }
+      },
+      "required": [
+        "projectId",
+        "ownerId",
+        "name",
+        "description",
+        "currentFloor",
+        "gameTimeMinutes",
+        "floorsCount",
+        "assetsCount",
+        "blueprintsCount",
+        "charactersCount",
+        "workspaceState",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CloudAudioPreset": {
+      "title": "CloudAudioPreset",
+      "description": "Cloud-saved SOTA multi-stage Web Audio SFX or polyphonic BGM track preset belonging to a parent CloudProject.",
+      "type": "object",
+      "properties": {
+        "presetId": {
+          "type": "string",
+          "description": "Unique audio preset identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "Parent CloudProject ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Owner UID matching parent project owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Preset display name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "description": "Audio preset category.",
+          "enum": [
+            "sfx",
+            "bgm"
+          ]
+        },
+        "modelUsed": {
+          "type": "string",
+          "description": "Cost-effective AI model used to synthesize parameters.",
+          "enum": [
+            "gemini-3.1-flash-lite"
+          ]
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Native Map containing parametric synthesis specification."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server modification timestamp."
+        }
+      },
+      "required": [
+        "presetId",
+        "projectId",
+        "ownerId",
+        "name",
+        "category",
+        "modelUsed",
+        "parameters",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Owner-only studio architect profile documents."
+    },
+    "/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/CloudProject"
+      },
+      "description": "Top-level cloud studio projects owned by authenticated architects."
+    },
+    "/projects/{projectId}/audioPresets/{presetId}": {
+      "schema": {
+        "$ref": "#/entities/CloudAudioPreset"
+      },
+      "description": "Subcollection of SOTA parametric SFX and BGM presets linked to a parent project."
+    }
+  }
+}

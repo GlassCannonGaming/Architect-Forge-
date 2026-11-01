@@ -7,7 +7,12 @@ import {
   BUILTIN_SOUND_EFFECTS,
   BUILTIN_BGM_TRACKS
 } from '../game/audioEngine';
-import { StudioWindowId, StudioWindowState } from '../game/rules';
+import {
+  PlacedAsset,
+  StudioWindowId,
+  StudioWindowState
+} from '../game/rules';
+import { AssetBlueprint } from '../game/hotelData';
 import { StudioWindowFrame } from './StudioWindowFrame';
 
 interface AudioStudioWindowProps {
@@ -24,10 +29,17 @@ interface AudioStudioWindowProps {
     payload: unknown,
     uniqueSuffix?: string
   ) => void;
-  walkthroughBgmEnabled: boolean;
-  onToggleWalkthroughBgm: (enabled: boolean) => void;
-  footstepsEnabled: boolean;
-  onToggleFootsteps: (enabled: boolean) => void;
+  walkthroughBgmEnabled?: boolean;
+  onToggleWalkthroughBgm?: (enabled: boolean) => void;
+  footstepsEnabled?: boolean;
+  onToggleFootsteps?: (enabled: boolean) => void;
+  isSoundBoardMode?: boolean;
+  assets?: PlacedAsset[];
+  catalogAssets?: AssetBlueprint[];
+  selectedAssetId?: string | null;
+  activeBlueprintSubType?: string | null;
+  onAssignSoundToAsset?: (assetId: string, soundPresetId: string, soundName: string) => void;
+  onAssignSoundToBlueprint?: (subType: string, soundPresetId: string, soundName: string) => void;
 }
 
 export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
@@ -39,10 +51,13 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
   onToggleMaximize,
   onClose,
   onSaveToLocalFolder,
-  walkthroughBgmEnabled,
-  onToggleWalkthroughBgm,
-  footstepsEnabled,
-  onToggleFootsteps
+  isSoundBoardMode = false,
+  assets = [],
+  catalogAssets = [],
+  selectedAssetId = null,
+  activeBlueprintSubType = null,
+  onAssignSoundToAsset,
+  onAssignSoundToBlueprint
 }) => {
   const [activeTab, setActiveTab] = useState<'sfx' | 'bgm' | 'settings'>('sfx');
 
@@ -54,6 +69,15 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
   const [aiSfxPrompt, setAiSfxPrompt] = useState('Heavy brass door lock latching shut');
   const [aiSfxBusy, setAiSfxBusy] = useState(false);
   const [sfxFeedback, setSfxFeedback] = useState<string | null>(null);
+  const [targetAssetIdForSound, setTargetAssetIdForSound] = useState<string>('');
+  const [targetBlueprintSubTypeForSound, setTargetBlueprintSubTypeForSound] = useState<string>('');
+
+  const effectiveTargetAssetId =
+    targetAssetIdForSound || selectedAssetId || (assets[0]?.id ?? '');
+  const effectiveTargetBlueprintSubType =
+    targetBlueprintSubTypeForSound ||
+    activeBlueprintSubType ||
+    (catalogAssets[0]?.subType ?? '');
 
   // BGM State
   const [activeBgmTrack, setActiveBgmTrack] = useState<MusicTrackSpec>(BUILTIN_BGM_TRACKS[0]);
@@ -273,6 +297,7 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
   };
 
   return (
+    <>
     <StudioWindowFrame
       windowState={windowState}
       badgeText="Web Audio Synth"
@@ -369,13 +394,13 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                           : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800'
                       }`}
                     >
-                      <div>
+                      <div className="min-w-0 pr-1.5">
                         <div className="font-bold text-[11px] truncate">{spec.name}</div>
-                        <div className="text-[9px] text-slate-400 font-mono">
+                        <div className="text-[9px] text-slate-400 font-mono truncate">
                           {spec.oscillatorType} · {spec.baseFrequency}Hz · {spec.durationSeconds}s
                         </div>
                       </div>
-                      <span className="text-xs">▶</span>
+                      <span className="text-xs shrink-0">▶</span>
                     </button>
                   );
                 })}
@@ -411,7 +436,7 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                 {[
                   'Distant radiator clank behind bedroom wall',
                   'Hollow brick pivot latch opening',
-                  'Thunderbolt over Manhattan street',
+                  'Thunderbolt over the courtyard skylight',
                   'Grandfather clock ticking'
                 ].map((qp) => (
                   <button
@@ -427,11 +452,11 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
 
             {/* Active Sound Parameter Tuning */}
             <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-1.5">
                 <span className="font-bold text-slate-300">
                   Active Preset: <span className="text-amber-300">{activeSfxSpec.name}</span>
                 </span>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     onClick={handlePlayActiveSfx}
                     className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs transition-colors"
@@ -439,11 +464,25 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                     ▶ Play Sound
                   </button>
                   <button
+                    onClick={() => audioEngine.playSpatialSoundAt(activeSfxSpec, [-4.5, 1.7, -2.0])}
+                    className="px-2 py-1 bg-indigo-900/70 hover:bg-indigo-800 text-indigo-200 rounded text-[10px] border border-indigo-700/60"
+                    title="Preview 3D HRTF Spatial Audio from Left Corridor"
+                  >
+                    🎧 3D Left
+                  </button>
+                  <button
+                    onClick={() => audioEngine.playSpatialSoundAt(activeSfxSpec, [4.5, 1.7, -2.0])}
+                    className="px-2 py-1 bg-indigo-900/70 hover:bg-indigo-800 text-indigo-200 rounded text-[10px] border border-indigo-700/60"
+                    title="Preview 3D HRTF Spatial Audio from Right Corridor"
+                  >
+                    🎧 3D Right
+                  </button>
+                  <button
                     onClick={handleDownloadSfxWav}
                     className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] border border-slate-700"
-                    title="Download 16-bit PCM WAV File"
+                    title="Download Stereo 16-bit PCM WAV File"
                   >
-                    💾 WAV
+                    💾 Stereo WAV
                   </button>
                   <button
                     onClick={handleSaveSfxToLocalFolder}
@@ -455,7 +494,7 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                 </div>
               </div>
 
-              {/* Sliders Grid */}
+              {/* Primary Sliders Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[10px]">
                 <div>
                   <div className="flex justify-between text-slate-400">
@@ -512,7 +551,7 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                 </div>
                 <div>
                   <div className="flex justify-between text-slate-400">
-                    <span>Reverb</span>
+                    <span>Convolution Reverb</span>
                     <span>{Math.round((activeSfxSpec.reverb || 0) * 100)}%</span>
                   </div>
                   <input
@@ -526,6 +565,83 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
                     }
                     className="w-full accent-amber-500"
                   />
+                </div>
+              </div>
+
+              {/* SOTA Multi-Stage DSP Controls (FM Depth, Saturation, Noise Color, Room Impulse) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1.5 border-t border-slate-800/80 text-[10px]">
+                <div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>FM Harmonic Depth</span>
+                    <span>{Math.round(activeSfxSpec.fmDepth || 0)} Hz</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="400"
+                    step="5"
+                    value={activeSfxSpec.fmDepth || 0}
+                    onChange={(e) =>
+                      setActiveSfxSpec({ ...activeSfxSpec, fmDepth: Number(e.target.value) })
+                    }
+                    className="w-full accent-amber-500"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Tube Saturation</span>
+                    <span>{Math.round((activeSfxSpec.distortion || 0) * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={activeSfxSpec.distortion || 0}
+                    onChange={(e) =>
+                      setActiveSfxSpec({ ...activeSfxSpec, distortion: Number(e.target.value) })
+                    }
+                    className="w-full accent-amber-500"
+                  />
+                </div>
+                <div>
+                  <div className="text-slate-400 mb-0.5">Foley Noise Color</div>
+                  <select
+                    value={activeSfxSpec.noiseColor || 'pink'}
+                    onChange={(e) =>
+                      setActiveSfxSpec({
+                        ...activeSfxSpec,
+                        noiseColor: e.target.value as 'white' | 'pink' | 'brown'
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-[10px] text-slate-200"
+                  >
+                    <option value="pink">Pink (1/f Natural Foley)</option>
+                    <option value="brown">Brown (1/f² Deep Rumble)</option>
+                    <option value="white">White (Crisp Hisser)</option>
+                  </select>
+                </div>
+                <div>
+                  <div className="text-slate-400 mb-0.5">Room Impulse Space</div>
+                  <select
+                    value={activeSfxSpec.reverbPreset || 'small_room'}
+                    onChange={(e) =>
+                      setActiveSfxSpec({
+                        ...activeSfxSpec,
+                        reverbPreset: e.target.value as
+                          | 'small_room'
+                          | 'tiled_bathroom'
+                          | 'grand_lobby'
+                          | 'sub_vault'
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-[10px] text-slate-200"
+                  >
+                    <option value="small_room">Guest Suite (Small Room)</option>
+                    <option value="tiled_bathroom">90s Tiled Bathroom</option>
+                    <option value="grand_lobby">Grand Hotel Lobby</option>
+                    <option value="sub_vault">Sub-Basement Vault</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -728,42 +844,20 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
 
               <hr className="border-slate-800 my-2" />
 
-              {/* Walkthrough Ambient Music Toggle */}
-              <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
-                <div>
-                  <div className="font-bold text-slate-200">First-Person Walkthrough BGM</div>
-                  <div className="text-[10px] text-slate-400">
-                    Plays atmospheric mystery lounge soundtrack while exploring 3D corridors
-                  </div>
+              {/* Studio Audio Policy Info Box */}
+              <div
+                data-testid="studio-silent-camera-policy-card"
+                className="p-2.5 rounded-xl bg-slate-900 border border-emerald-700/60 space-y-1"
+              >
+                <div className="font-bold text-emerald-300 flex items-center justify-between">
+                  <span>🔇 Silent Camera &amp; Editor Policy Active</span>
+                  <span className="text-[9px] font-mono bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-700/60">
+                    No Auto-Sounds
+                  </span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={walkthroughBgmEnabled}
-                    onChange={(e) => onToggleWalkthroughBgm(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
-                </label>
-              </div>
-
-              {/* First-Person Footsteps Toggle */}
-              <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
-                <div>
-                  <div className="font-bold text-slate-200">First-Person Footstep SFX</div>
-                  <div className="text-[10px] text-slate-400">
-                    Plays acoustic corridor footsteps when navigating with WASD
-                  </div>
+                <div className="text-[10px] text-slate-300 leading-relaxed">
+                  Sounds never play automatically while moving the camera or editing on the canvas. Use the Sound Board exclusively to create new sounds, preview presets on demand, and assign specific sounds to 3D assets or catalog blueprints.
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={footstepsEnabled}
-                    onChange={(e) => onToggleFootsteps(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
-                </label>
               </div>
             </div>
           </div>
@@ -781,5 +875,265 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
       </div>
     </div>
   </StudioWindowFrame>
+
+  {/* Companion Sound Board Trigger Deck & Spatial Foley Tools Panel when in 3 · Sound Board Mode */}
+  {isSoundBoardMode && (
+    <section
+      data-testid="soundboard-tools-panel"
+      aria-label="Sound Board Trigger Deck & Acoustic Foley Tools"
+      style={{
+        left: '642px',
+        top: '84px',
+        width: '490px',
+        height: '575px',
+        zIndex: 31
+      }}
+      className="fixed pointer-events-auto rounded-3xl overflow-hidden border border-slate-700 bg-slate-900/95 backdrop-blur-md shadow-2xl flex flex-col text-slate-100 text-xs select-none"
+    >
+      {/* Header */}
+      <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-extrabold text-amber-400">
+            🎛️ Sound Board Trigger Deck &amp; Foley Tools
+          </span>
+          <span className="text-[10px] bg-sky-500/20 text-sky-300 font-mono px-2 py-0.5 rounded-full border border-sky-500/40">
+            3 · Sound Board System
+          </span>
+        </div>
+        <span className="text-[10px] font-mono text-emerald-400">Live Pads Ready</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 space-y-3.5">
+        {/* 1. Interactive 10-Pad Sound Board Matrix */}
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider truncate">
+              1 · Live Sound Board Trigger Pads (Click to Fire &amp; Load in Synth)
+            </span>
+            <span className="text-[10px] font-mono text-amber-300 shrink-0">
+              Active: {activeSfxSpec.name}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {(Object.keys(BUILTIN_SOUND_EFFECTS) as SoundEffectType[]).map((type, idx) => {
+              const spec = BUILTIN_SOUND_EFFECTS[type];
+              const isSelected = selectedPresetType === type;
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  data-testid={`soundboard-pad-${type}`}
+                  onClick={() => handleSelectPreset(type)}
+                  className={`p-2 rounded-xl text-left border transition-all flex items-center justify-between min-w-0 ${
+                    isSelected
+                      ? 'bg-amber-500/20 border-amber-400 text-amber-200 shadow-xs'
+                      : 'bg-slate-800/90 border-slate-700 text-slate-200 hover:bg-slate-800 hover:border-slate-500'
+                  }`}
+                >
+                  <div className="min-w-0 pr-1">
+                    <div className="font-bold text-[11px] truncate">
+                      <span className="text-amber-400 font-mono mr-1">P{idx + 1}</span>
+                      {spec.name}
+                    </div>
+                    <div className="text-[9px] text-slate-400 font-mono truncate">
+                      {spec.oscillatorType} · {spec.baseFrequency}Hz · {spec.durationSeconds}s
+                    </div>
+                  </div>
+                  <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                    ▶
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 2. Assign Active Sound to Placed 3D Asset or Catalog Blueprint */}
+        <div
+          data-testid="soundboard-assign-asset-panel"
+          className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider truncate">
+              2 · Assign Active Sound to Asset or Blueprint
+            </span>
+            <span className="text-[10px] font-mono text-emerald-400 shrink-0">
+              Sound: {selectedPresetType}
+            </span>
+          </div>
+
+          {/* Assign to Placed 3D Object on Canvas */}
+          <div className="flex items-center gap-1.5 w-full min-w-0 overflow-hidden">
+            <select
+              aria-label="Select Placed Asset for Sound Assignment"
+              data-testid="soundboard-select-placed-asset"
+              value={effectiveTargetAssetId}
+              onChange={(e) => setTargetAssetIdForSound(e.target.value)}
+              className="w-0 flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1 text-[11px] text-slate-200 truncate"
+            >
+              {assets.length === 0 ? (
+                <option value="">-- No Placed Objects on Canvas --</option>
+              ) : (
+                assets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} {a.soundPresetId ? `[🔊 ${a.soundPresetId}]` : ''}
+                  </option>
+                ))
+              )}
+            </select>
+            <button
+              type="button"
+              data-testid="assign-sound-to-asset-btn"
+              disabled={!effectiveTargetAssetId || !onAssignSoundToAsset}
+              onClick={() => {
+                if (!effectiveTargetAssetId || !onAssignSoundToAsset) return;
+                onAssignSoundToAsset(
+                  effectiveTargetAssetId,
+                  selectedPresetType,
+                  activeSfxSpec.name
+                );
+                const found = assets.find((a) => a.id === effectiveTargetAssetId);
+                setSfxFeedback(
+                  `Assigned sound "${activeSfxSpec.name}" (${selectedPresetType}) to placed asset "${found?.name || effectiveTargetAssetId}"!`
+                );
+              }}
+              className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-[11px] shrink-0"
+            >
+              🔗 Assign to Object
+            </button>
+          </div>
+
+          {/* Assign to Catalog Blueprint */}
+          <div className="flex items-center gap-1.5 w-full min-w-0 overflow-hidden">
+            <select
+              aria-label="Select Catalog Blueprint for Sound Assignment"
+              data-testid="soundboard-select-blueprint"
+              value={effectiveTargetBlueprintSubType}
+              onChange={(e) => setTargetBlueprintSubTypeForSound(e.target.value)}
+              className="w-0 flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1 text-[11px] text-slate-200 truncate"
+            >
+              {catalogAssets.map((bp) => (
+                <option key={bp.subType} value={bp.subType}>
+                  {bp.name} {bp.soundPresetId ? `[🔊 ${bp.soundPresetId}]` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              data-testid="assign-sound-to-blueprint-btn"
+              disabled={!effectiveTargetBlueprintSubType || !onAssignSoundToBlueprint}
+              onClick={() => {
+                if (!effectiveTargetBlueprintSubType || !onAssignSoundToBlueprint) return;
+                onAssignSoundToBlueprint(
+                  effectiveTargetBlueprintSubType,
+                  selectedPresetType,
+                  activeSfxSpec.name
+                );
+                const found = catalogAssets.find(
+                  (b) => b.subType === effectiveTargetBlueprintSubType
+                );
+                setSfxFeedback(
+                  `Assigned sound "${activeSfxSpec.name}" (${selectedPresetType}) to blueprint "${found?.name || effectiveTargetBlueprintSubType}"!`
+                );
+              }}
+              className="px-2.5 py-1 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white font-bold text-[11px] shrink-0"
+            >
+              🔗 Assign to Blueprint
+            </button>
+          </div>
+        </div>
+
+        {/* 3. 3D Spatial HRTF Room Auditioning */}
+        <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+              3 · 3D HRTF Spatial Room Emitter
+            </span>
+            <span className="text-[10px] font-mono text-indigo-300">Binaural PannerNode</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              type="button"
+              onClick={() => audioEngine.playSpatialSoundAt(activeSfxSpec, [-5.5, 1.6, -2.0])}
+              className="py-1.5 px-2 rounded-xl bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-200 font-bold text-[11px]"
+            >
+              ↖ Left Corridor
+            </button>
+            <button
+              type="button"
+              onClick={() => audioEngine.playSpatialSoundAt(activeSfxSpec, [0, 1.6, -1.5])}
+              className="py-1.5 px-2 rounded-xl bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-200 font-bold text-[11px]"
+            >
+              ⬆ Center Lobby
+            </button>
+            <button
+              type="button"
+              onClick={() => audioEngine.playSpatialSoundAt(activeSfxSpec, [5.5, 1.6, -2.0])}
+              className="py-1.5 px-2 rounded-xl bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-200 font-bold text-[11px]"
+            >
+              ↗ Right Suite
+            </button>
+          </div>
+        </div>
+
+        {/* 4. Quick Export & Mode Tool Switcher */}
+        <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setActiveTab('sfx')}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                activeTab === 'sfx'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              🔊 SFX Synth
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bgm')}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                activeTab === 'bgm'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              🎶 BGM Composer
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                activeTab === 'settings'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              ⚙️ Bus Config
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleDownloadSfxWav}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px]"
+            >
+              💾 .WAV
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSfxToLocalFolder}
+              className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px]"
+            >
+              📁 Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )}
+  </>
   );
 };
+

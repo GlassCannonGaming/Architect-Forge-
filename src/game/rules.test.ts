@@ -664,13 +664,14 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(check.compliant, true);
   assert.equal(check.violations.length, 0);
   assert.equal(check.meshyModelCount, 1);
-  assert.equal(check.googleModelCount, 10);
+  assert.equal(check.googleModelCount, 11);
 
   // Confirm cheapest models are selected for each task
   assert.equal(AI_MODEL_REGISTRY.character_chat.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.persona_generator.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.composite_3d_spec.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.texture_synthesis.modelId, 'gemini-3.1-flash-lite-image');
+  assert.equal(AI_MODEL_REGISTRY.description_to_image.modelId, 'gemini-3.1-flash-lite-image');
   assert.equal(AI_MODEL_REGISTRY.architectural_research.modelId, 'gemini-3.8-flash');
   assert.equal(AI_MODEL_REGISTRY.sfx_generator.modelId, 'gemini-3.1-flash-lite');
   assert.equal(AI_MODEL_REGISTRY.music_composer.modelId, 'gemini-3.1-flash-lite');
@@ -680,7 +681,7 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(svgUrl.startsWith('data:image/svg+xml;utf8,'), true);
 });
 
-test('Local Computer Workspace defines dedicated folders for all data types including Blueprints, Audio, and newly added assets', async () => {
+test('Local Computer Workspace defines dedicated folders for all data types including Asset Descriptions Queue, Blueprints, Audio, and newly added assets', async () => {
   const {
     LOCAL_WORKSPACE_FOLDERS,
     buildLocalFolderItemFilename,
@@ -688,7 +689,13 @@ test('Local Computer Workspace defines dedicated folders for all data types incl
     createDefaultStudioWindows
   } = await import('./rules');
 
-  assert.equal(LOCAL_WORKSPACE_FOLDERS.length >= 12, true);
+  assert.equal(LOCAL_WORKSPACE_FOLDERS.length >= 13, true);
+
+  const descriptionsFolder = LOCAL_WORKSPACE_FOLDERS.find(
+    (f) => f.category === 'asset_descriptions'
+  );
+  assert.equal(!!descriptionsFolder, true);
+  assert.equal(descriptionsFolder?.relativePath, 'assets/image_descriptions_import');
 
   const blueprintsFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'blueprints');
   assert.equal(!!blueprintsFolder, true);
@@ -806,8 +813,1297 @@ test('first-person camera displacement and pan delta calculate correct motion ve
   assert.equal(pan.panY < 0, true);
 });
 
+test('SOTA procedural audio generators and chord voicing resolver produce rich DSP parameters', async () => {
+  const {
+    buildProceduralSfxSpecFromPrompt,
+    buildProceduralMusicSpecFromPrompt,
+    resolveChordVoicingFrequencies,
+    verifyAiModelCompliance
+  } = await import('./rules');
 
+  // 1. Verify low-cost model compliance remains strictly intact
+  const compliance = verifyAiModelCompliance();
+  assert.equal(compliance.compliant, true);
 
+  // 2. Verify SFX generator assigns SOTA FM, sub-oscillator, noiseColor, and reverbPreset
+  const vaultSfx = buildProceduralSfxSpecFromPrompt('Heavy iron vault door');
+  assert.equal(vaultSfx.noiseColor, 'brown');
+  assert.equal(vaultSfx.reverbPreset, 'sub_vault');
+  assert.equal((vaultSfx.fmDepth ?? 0) > 0, true);
+  assert.equal((vaultSfx.subOscMix ?? 0) > 0, true);
+
+  const showerSfx = buildProceduralSfxSpecFromPrompt('Hot shower steam');
+  assert.equal(showerSfx.noiseColor, 'pink');
+  assert.equal(showerSfx.reverbPreset, 'tiled_bathroom');
+
+  // 3. Verify polyphonic chord voicing resolver
+  const dm7 = resolveChordVoicingFrequencies('Dm7');
+  assert.equal(dm7.length, 4);
+  assert.equal(dm7[0] > 140 && dm7[0] < 150, true); // D3 ~ 146.83 Hz
+  assert.equal(dm7[3] > dm7[0], true);
+
+  const a7b9 = resolveChordVoicingFrequencies('A7b9');
+  assert.equal(a7b9.length, 5);
+
+  // 4. Verify BGM spec includes polyphonic chords, padInstrument, reverbPreset, and stereoWidth
+  const rainMusic = buildProceduralMusicSpecFromPrompt('Rainy casement waltz');
+  assert.equal(rainMusic.padInstrument, 'warm_epiano');
+  assert.equal(rainMusic.reverbPreset, 'grand_lobby');
+  assert.equal((rainMusic.stereoWidth ?? 0) > 0.5, true);
+  assert.equal(rainMusic.chords.length, 4);
+});
+
+test('Late-70s / early-80s thriller palette and weatherAssetToLate70sStyle convert bright legacy colors and labels', async () => {
+  const {
+    LATE_70S_THRILLER_PALETTE,
+    weatherAssetToLate70sStyle,
+    weatherAssetsListToLate70sStyle,
+    buildProcedural3DSpecFromPrompt
+  } = await import('./rules');
+  const { ASSET_CATALOG, INITIAL_PLACED_ASSETS } = await import('./hotelData');
+
+  // 1. Verify palette constants are dark, desaturated late-70s tones
+  assert.equal(LATE_70S_THRILLER_PALETTE.fadedAvocado, '#4a5438');
+  assert.equal(LATE_70S_THRILLER_PALETTE.harvestOchre, '#6e562f');
+  assert.equal(LATE_70S_THRILLER_PALETTE.sootBrick, '#592820');
+
+  // 2. Verify legacy bright colors and 90s labels are automatically weathered
+  const legacyAsset = {
+    id: 'legacy_1',
+    name: '90s CRT TV & VCR Combo',
+    category: 'appliance' as const,
+    subType: 'crt_tv_vhs_combo',
+    floor: 'lobby',
+    position: [0, 0.5, 0] as [number, number, number],
+    dimensions: [0.9, 1.1, 0.6] as [number, number, number],
+    rotationY: 0,
+    color: '#0d9488',
+    textureId: 'industrial_concrete' as const,
+    collidable: true
+  };
+  const weathered = weatherAssetToLate70sStyle(legacyAsset);
+  assert.equal(weathered.color, '#4a5438'); // bright teal -> faded 70s avocado
+  assert.equal(weathered.name.includes('Late-70s'), true);
+
+  const batchWeathered = weatherAssetsListToLate70sStyle([legacyAsset]);
+  assert.equal(batchWeathered.length, 1);
+  assert.equal(batchWeathered[0].color, '#4a5438');
+
+  // 3. Verify all catalog and starter hotel assets avoid bright saturated colors
+  const brightHexForbidden = new Set(['#0d9488', '#7e22ce', '#38bdf8', '#f8fafc', '#d4af37', '#dc2626']);
+  for (const item of ASSET_CATALOG) {
+    assert.equal(
+      brightHexForbidden.has(item.defaultColor.toLowerCase()),
+      false,
+      `Catalog item ${item.name} still had bright color ${item.defaultColor}`
+    );
+  }
+  for (const placed of INITIAL_PLACED_ASSETS) {
+    assert.equal(
+      brightHexForbidden.has(placed.color.toLowerCase()),
+      false,
+      `Initial placed asset ${placed.name} still had bright color ${placed.color}`
+    );
+  }
+
+  // 4. Verify procedural 3D specs generate late-70s / early-80s dark thriller multi-part meshes
+  const crtSpec = buildProcedural3DSpecFromPrompt('crt_tv_vhs_combo');
+  assert.equal(crtSpec.name.includes('Late-70s'), true);
+  assert.equal(crtSpec.parts.length >= 6, true);
+
+  const armchairSpec = buildProcedural3DSpecFromPrompt('retro_teal_armchair');
+  assert.equal(armchairSpec.name.includes('70s Faded Avocado'), true);
+  assert.equal(armchairSpec.parts.length >= 6, true);
+});
+
+test('Proposal 1 (Per-Room Mood Lighting), Proposal 2 (Flashlight Inspection Cone), and Deliverable 3 (Asset Import Agent Enforcer & Descriptions File Parser) work accurately', async () => {
+  const {
+    computePerRoomMoodLightState,
+    extractMoodLightEmittersFromAssets,
+    computeFlashlightInspectionState,
+    ASSET_IMPORT_AGENT_INSTRUCTION_SET,
+    buildEnforcedLowPolyImagePrompt,
+    parseAssetDescriptionsFile,
+    generateAssetConceptSvgDataUrl,
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT
+  } = await import('./rules');
+  const { INITIAL_PLACED_ASSETS } = await import('./hotelData');
+
+  // 1. Proposal 1: Per-room mood light emitters & 60Hz ballast flicker
+  const emitters = extractMoodLightEmittersFromAssets('lobby', INITIAL_PLACED_ASSETS);
+  assert.equal(emitters.length >= 2, true);
+  const fluorState = computePerRoomMoodLightState(1.4, 'corridor_fluor_lobby_north', 'fluorescent_60hz');
+  assert.equal(fluorState.distance, 9.5);
+  assert.equal(fluorState.intensity > 0, true);
+
+  const tungstenState = computePerRoomMoodLightState(1.4, 'mood_tungsten_1', 'tungsten_lamp');
+  assert.equal(tungstenState.colorHex, '#d4944e');
+  assert.equal(tungstenState.intensity > 0.5, true);
+
+  // 2. Proposal 2: 1970s Chrome D-Cell / UV Flashlight Inspection Cone in Walk Mode
+  const secretWall: PlacedAsset = {
+    id: 'sec_wall_1',
+    name: 'Hollow Brick Partition',
+    category: 'secret_wall',
+    subType: 'secret_bookshelf',
+    floor: 'lobby',
+    position: [0, 1.5, -3.5],
+    dimensions: [2.0, 3.0, 0.35],
+    rotationY: 0,
+    color: '#592820',
+    textureId: 'nyc_old_brick',
+    isSecretPassage: true,
+    isOpen: false,
+    collidable: true
+  };
+
+  // Player at [0, 1.62, 0] looking straight north (yaw = 0, pitch = 0 -> forward = (0, 0, -1))
+  const inspectionOn = computeFlashlightInspectionState(
+    [0, 1.62, 0],
+    0,
+    0,
+    true,
+    'lobby',
+    [secretWall]
+  );
+  assert.equal(inspectionOn.revealedAssetIds.length, 1);
+  assert.equal(inspectionOn.revealedAssetIds[0], 'sec_wall_1');
+  assert.equal(inspectionOn.hiddenChalkInscription?.includes('BEAM REVEAL'), true);
+  assert.equal(inspectionOn.activeRevealTitle, 'Hollow Brick Partition');
+
+  // Flashlight turned OFF -> no reveals
+  const inspectionOff = computeFlashlightInspectionState(
+    [0, 1.62, 0],
+    0,
+    0,
+    false,
+    'lobby',
+    [secretWall]
+  );
+  assert.equal(inspectionOff.revealedAssetIds.length, 0);
+  assert.equal(inspectionOff.activeRevealTitle, null);
+
+  // 3. Deliverable 3: Asset Import Agent Instruction Set & Mandatory Low-Poly Enforcer
+  assert.equal(
+    ASSET_IMPORT_AGENT_INSTRUCTION_SET.includes('CORE PIPELINE STRUCTURE (Mandatory Enforcer)'),
+    true
+  );
+  assert.equal(
+    ASSET_IMPORT_AGENT_INSTRUCTION_SET.includes('LATE 70s / EARLY 80s THRILLER MYSTERY'),
+    true
+  );
+
+  const enforcedPrompt = buildEnforcedLowPolyImagePrompt(
+    '1978 Tarnished Brass Room Service Cart',
+    'Rolling two-tier hotel cart with stained linen cloth'
+  );
+  assert.equal(
+    enforcedPrompt.startsWith(
+      '1978 Tarnished Brass Room Service Cart, low-poly game asset, isolated 3D asset style, low-polygon mesh topology silhouette, faceted planar surfaces, full view, centered, orthographic projection, no perspective distortion. Neutral flat lighting, diffuse white studio background, clean drop shadow omission. Stylized color-block texture details, weathered surface shading accents.'
+    ),
+    true
+  );
+  assert.equal(
+    enforcedPrompt.endsWith('Flat texture maps, optimized for low-poly 3D reconstruction.'),
+    true
+  );
+
+  // 4. Asset Image Descriptions File Parser (.txt, .md, .json) & Diffuse-White Orthographic Concept SVG
+  const defaultEntries = parseAssetDescriptionsFile(
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT
+  );
+  assert.equal(defaultEntries.length >= 4, true);
+  assert.equal(defaultEntries[0].name.includes('Rotary Wall Payphone'), true);
+  assert.equal(
+    defaultEntries[0].enforcedImagePrompt.includes('diffuse white studio background, clean drop shadow omission'),
+    true
+  );
+
+  const jsonEntries = parseAssetDescriptionsFile(
+    JSON.stringify([
+      {
+        name: '1978 Tarnished Brass Room Service Cart',
+        category: 'furniture',
+        description:
+          'Weathered late-1970s hotel room service rolling cart with stained linen cloth and tarnished brass dome cover'
+      }
+    ])
+  );
+  assert.equal(jsonEntries.length, 1);
+  assert.equal(jsonEntries[0].name, '1978 Tarnished Brass Room Service Cart');
+  assert.equal(jsonEntries[0].categoryHint, 'furniture');
+
+  const conceptSvg = generateAssetConceptSvgDataUrl(
+    jsonEntries[0].name,
+    jsonEntries[0].descriptionPrompt
+  );
+  assert.equal(conceptSvg.startsWith('data:image/svg+xml;utf8,'), true);
+  assert.equal(decodeURIComponent(conceptSvg).includes('#f8fafc'), true);
+});
+
+test('Proposal A (Studio Background Alpha Matting Pre-Pass) and Smooth 500ms Hinge Rotation Animation work accurately', async () => {
+  const {
+    applyStudioBackgroundAlphaMatteToRgbaBuffer,
+    applyAlphaMatteToConceptImageDataUrl,
+    generateAssetConceptSvgDataUrl,
+    HINGE_TRANSITION_DURATION_MS,
+    computeHingeSwingTransform,
+    computeAssetHingeAnimationState,
+    initiateAssetHingeToggle
+  } = await import('./rules');
+
+  // 1. Proposal A: Verify RGBA pixel buffer chroma-distance alpha matting
+  // Pixel 0: #f8fafc studio white (248, 250, 252, 255) -> keyed to alpha 0
+  // Pixel 1: #ffffff pure white (255, 255, 255, 255) -> keyed to alpha 0
+  // Pixel 2: Feather boundary pixel (230, 232, 234, 255) -> dist ~31.17 in (24..40) -> feathered alpha (1..254)
+  // Pixel 3: Late-70s avocado green (74, 84, 56, 255) -> stays 100% opaque (alpha 255)
+  const sampleRgba = new Uint8ClampedArray([
+    248, 250, 252, 255,
+    255, 255, 255, 255,
+    230, 232, 234, 255,
+    74, 84, 56, 255
+  ]);
+  const matteStats = applyStudioBackgroundAlphaMatteToRgbaBuffer(sampleRgba, 2, 2);
+  assert.equal(matteStats.transparentPixelCount, 2);
+  assert.equal(matteStats.featheredPixelCount, 1);
+  assert.equal(matteStats.opaquePixelCount, 1);
+  assert.equal(matteStats.mattedBuffer[3], 0); // Pixel 0 alpha
+  assert.equal(matteStats.mattedBuffer[7], 0); // Pixel 1 alpha
+  assert.equal(matteStats.mattedBuffer[11] > 0 && matteStats.mattedBuffer[11] < 255, true); // Feathered
+  assert.equal(matteStats.mattedBuffer[15], 255); // Opaque late-70s prop pixel
+
+  // Verify SVG concept image data URI alpha matting removes #f8fafc background rect before Meshy.ai
+  const rawSvgUrl = generateAssetConceptSvgDataUrl('1978 Rotary Payphone', 'Walnut hood');
+  const mattedSvgRes = applyAlphaMatteToConceptImageDataUrl(rawSvgUrl);
+  assert.equal(mattedSvgRes.alphaMatted, true);
+  assert.equal(
+    decodeURIComponent(mattedSvgRes.mattedImageDataUrl).includes('fill-opacity="0" data-alpha-matted="true"'),
+    true
+  );
+
+  // 2. Smooth 500ms Hinge Transition Animation for Doors & Secret Passages
+  assert.equal(HINGE_TRANSITION_DURATION_MS, 500);
+
+  const secretBookcase: PlacedAsset = {
+    id: 'secret_wall_hinge_test',
+    name: 'Secret Parlor Bookshelf Door',
+    category: 'secret_wall',
+    subType: 'secret_bookshelf',
+    floor: 'lobby',
+    position: [0, 1.5, -4],
+    dimensions: [2.0, 3.0, 0.35],
+    rotationY: 0,
+    color: '#3b2314',
+    textureId: 'oak_parquet',
+    isSecretPassage: true,
+    isOpen: false,
+    collidable: true
+  };
+
+  // Closed initial state (t = 1000ms, before toggle)
+  const closedState = computeAssetHingeAnimationState(secretBookcase, 1000);
+  assert.equal(closedState.progress, 0);
+  assert.equal(closedState.angleRad, 0);
+  assert.equal(closedState.isAnimating, false);
+
+  // Toggle open at t = 1000ms -> initiates 500ms hinge swing from 0 -> 1
+  const toggledOpenAsset = initiateAssetHingeToggle(secretBookcase, 1000, 500);
+  assert.equal(toggledOpenAsset.isOpen, true);
+  assert.equal(toggledOpenAsset.hingeTransitionStartMs, 1000);
+  assert.equal(toggledOpenAsset.hingeTransitionFrom, 0);
+  assert.equal(toggledOpenAsset.hingeTransitionTo, 1);
+  assert.equal(toggledOpenAsset.hingeDurationMs, 500);
+
+  // At t = 1000ms (0ms elapsed): does NOT snap! Starts smoothly at 0 rad
+  const stateAtStart = computeAssetHingeAnimationState(toggledOpenAsset, 1000);
+  assert.equal(stateAtStart.angleRad, 0);
+  assert.equal(stateAtStart.isAnimating, true);
+
+  // At t = 1250ms (250ms elapsed = 50% through 500ms transition): halfway rotated on its hinge
+  const stateAtMid = computeAssetHingeAnimationState(toggledOpenAsset, 1250);
+  assert.equal(stateAtMid.progress, 0.5);
+  assert.equal(stateAtMid.easedProgress, 0.5);
+  assert.equal(stateAtMid.angleRad > 0.6 && stateAtMid.angleRad < 0.7, true);
+  assert.equal(stateAtMid.isAnimating, true);
+
+  // At t = 1500ms (500ms elapsed = 100% complete): reaches full open angle (Math.PI / 2.4)
+  const stateAtEnd = computeAssetHingeAnimationState(toggledOpenAsset, 1500);
+  assert.equal(stateAtEnd.progress, 1);
+  assert.equal(stateAtEnd.easedProgress, 1);
+  assert.equal(Math.abs(stateAtEnd.angleRad - Math.PI / 2.4) < 0.001, true);
+  assert.equal(stateAtEnd.isAnimating, false);
+
+  // Verify computeHingeSwingTransform directly
+  const quarterSwing = computeHingeSwingTransform(2.0, 0.25);
+  assert.equal(quarterSwing.hingeEdgeX, 0.92);
+  assert.equal(quarterSwing.angleRad > 0 && quarterSwing.angleRad < stateAtMid.angleRad, true);
+});
+
+test('Proposal 1: computeSynchronizedHingeFoleySpec produces synchronized 500ms Foley envelope (0-460ms sweep + 480ms latch click)', async () => {
+  const { computeSynchronizedHingeFoleySpec } = await import('./rules');
+
+  // Standard door right-hinge opening
+  const doorFoley = computeSynchronizedHingeFoleySpec({
+    swingMode: 'right_hinge',
+    isOpening: true,
+    isSecretPassage: false,
+    durationMs: 500
+  });
+  assert.equal(doorFoley.durationMs, 500);
+  assert.equal(doorFoley.swingPhaseEndSec, 0.46);
+  assert.equal(doorFoley.latchClickTimeSec, 0.48);
+  assert.equal(doorFoley.oscillatorType, 'sawtooth');
+  assert.equal(doorFoley.sweepStartHz, 142);
+  assert.equal(doorFoley.sweepEndHz, 90);
+  assert.equal(doorFoley.latchClickFreqHz, 1420);
+  assert.equal(doorFoley.descriptionLabel.includes('500ms Aged Timber Hinge Creak'), true);
+
+  // Secret passage masonry scrape
+  const secretFoley = computeSynchronizedHingeFoleySpec({
+    swingMode: 'right_hinge',
+    isOpening: true,
+    isSecretPassage: true,
+    durationMs: 500
+  });
+  assert.equal(secretFoley.swingPhaseEndSec, 0.46);
+  assert.equal(secretFoley.latchClickTimeSec, 0.48);
+  assert.equal(secretFoley.filterType, 'lowpass');
+  assert.equal(secretFoley.descriptionLabel.includes('Secret Masonry Scrape'), true);
+
+  // Pocket slide rail glide
+  const pocketFoley = computeSynchronizedHingeFoleySpec({
+    swingMode: 'pocket_slide',
+    isOpening: true,
+    isSecretPassage: false,
+    durationMs: 500
+  });
+  assert.equal(pocketFoley.oscillatorType, 'triangle');
+  assert.equal(pocketFoley.swingPhaseEndSec, 0.46);
+  assert.equal(pocketFoley.latchClickTimeSec, 0.48);
+  assert.equal(pocketFoley.latchClickFreqHz, 1260);
+  assert.equal(pocketFoley.descriptionLabel.includes('Pocket-Rail Glide'), true);
+});
+
+test('Proposal 2: computeHingeSwingTransform & batchModifySelectedAssets support right_hinge, left_hinge, and pocket_slide modes', async () => {
+  const {
+    computeHingeSwingTransform,
+    computeAssetHingeAnimationState,
+    batchModifySelectedAssets
+  } = await import('./rules');
+
+  const width = 2.0;
+
+  // 1. Right Hinge: pivots on +width * 0.46, positive angleRad
+  const rightHinge = computeHingeSwingTransform(width, 1.0, Math.PI / 2.4, false, 'right_hinge');
+  assert.equal(rightHinge.swingMode, 'right_hinge');
+  assert.equal(rightHinge.hingeEdgeX > 0, true);
+  assert.equal(rightHinge.angleRad > 0, true);
+  assert.equal(rightHinge.slideOffsetX, 0);
+
+  // 2. Left Hinge: pivots on -width * 0.46, negative angleRad
+  const leftHinge = computeHingeSwingTransform(width, 1.0, Math.PI / 2.4, false, 'left_hinge');
+  assert.equal(leftHinge.swingMode, 'left_hinge');
+  assert.equal(leftHinge.hingeEdgeX < 0, true);
+  assert.equal(leftHinge.angleRad < 0, true);
+  assert.equal(leftHinge.slideOffsetX, 0);
+
+  // 3. Pocket Slide: zero angleRad, slides laterally by width * 0.86
+  const pocketSlide = computeHingeSwingTransform(width, 1.0, Math.PI / 2.4, false, 'pocket_slide');
+  assert.equal(pocketSlide.swingMode, 'pocket_slide');
+  assert.equal(pocketSlide.angleRad, 0);
+  assert.equal(pocketSlide.slideOffsetX > 1.5, true);
+
+  // Verify batchModifySelectedAssets updates hingeSwingMode and isSecretPassage
+  const sampleDoor: PlacedAsset = {
+    id: 'door_test_1',
+    name: 'Transom Door',
+    category: 'door',
+    subType: 'transom_door',
+    floor: 'lobby',
+    position: [0, 1.5, 0],
+    dimensions: [1.4, 2.6, 0.25],
+    rotationY: 0,
+    color: '#3b2314',
+    textureId: 'oak_parquet',
+    collidable: true
+  };
+
+  const modified = batchModifySelectedAssets([sampleDoor], ['door_test_1'], {
+    hingeSwingMode: 'pocket_slide',
+    isSecretPassage: true
+  });
+  assert.equal(modified[0].hingeSwingMode, 'pocket_slide');
+  assert.equal(modified[0].isSecretPassage, true);
+
+  const pocketAnimState = computeAssetHingeAnimationState(modified[0], Date.now());
+  assert.equal(pocketAnimState.swingMode, 'pocket_slide');
+});
+
+test('AI Episodic & Relational Memory Engine: disposition shifts, multi-day unanswered question tracking, and clue rewards', async () => {
+  const {
+    resolveTenantDisposition,
+    evaluateCharacterInteractionMemory,
+    posePendingQuestionFromAgent,
+    buildSandboxedCharacterSystemPrompt
+  } = await import('./rules');
+
+  // 1. Disposition resolver thresholds
+  assert.equal(resolveTenantDisposition(20, 30), 'hostile');
+  assert.equal(resolveTenantDisposition(38, 40), 'cold');
+  assert.equal(resolveTenantDisposition(50, 30), 'wary');
+  assert.equal(resolveTenantDisposition(65, 30), 'cordial');
+  assert.equal(resolveTenantDisposition(82, 20), 'confidant');
+
+  // Base test agent
+  const testTenant: HotelAgentProfile = {
+    id: 'agent_eleanor',
+    name: 'Eleanor Vance',
+    role: 'tenant',
+    roomNumber: 'Room 101',
+    floor: 'floor1',
+    position: [-3.5, 0, -2.5],
+    status: 'present',
+    occupation: 'Recluse Tenant',
+    personality: 'Guarded, aristocratic, paranoid about hollow knocking',
+    voiceStyle: 'Whispered cadence with sudden pauses',
+    demeanor: 'Suspicious of hallway sounds',
+    likes: ['classical music', 'polished brass keys', 'chamomile tea'],
+    dislikes: ['nosy questions', 'drafty brickwork', 'missing room keys'],
+    secretTruth: 'Behind the Room 101 wardrobe is a pivoted brick partition into Room 102.',
+    knownFacts: ['Heard footsteps behind Room 101 wall at 11:45 PM.'],
+    memories: [],
+    suspicionLevel: 30,
+    trustLevel: 50,
+    appearance: {
+      archetype: ' eccentric Socialite',
+      headShape: 'tall_noir',
+      skinColor: '#f3d9c4',
+      eyeStyle: 'narrow_suspicious',
+      hairStyle: 'bob_cut',
+      hairColor: '#1f2937',
+      outfitColor: '#1e3a8a',
+      accentColor: '#581c87',
+      mouthStyle: 'nervous_frown',
+      heightScale: 1.0,
+      widthScale: 1.0,
+      headScale: 1.0
+    },
+    stats: { physic: 2, agility: 2, mind: 4, endurance: 3, pointsRemaining: 0 },
+    assignedTraits: []
+  };
+
+  // 2. Tenant dislikes the user when hostility or dislikes are triggered
+  const hostileEval = evaluateCharacterInteractionMemory(
+    testTenant,
+    'You are a liar and a suspect! Stop asking nosy questions!',
+    19 * 60 + 30,
+    1
+  );
+  assert.equal(hostileEval.trustDelta < 0, true);
+  assert.equal(hostileEval.resultingTrust < 50, true);
+  assert.equal(
+    hostileEval.resultingDisposition === 'hostile' || hostileEval.resultingDisposition === 'cold',
+    true
+  );
+  assert.equal(hostileEval.unlockedClueId, null);
+  assert.equal(hostileEval.memoryDirectiveForPrompt.includes('DISLIKE / LOW TRUST'), true);
+
+  // 3. Multi-day unanswered question waiting (waiting for answer asked days ago)
+  const tenantWithPendingQ = posePendingQuestionFromAgent(
+    testTenant,
+    19 * 60 + 30,
+    1,
+    'Did you check behind the Room 101 wardrobe for the loose mortar?'
+  ).updatedAgent;
+
+  // On Day 3 (2 days later), player talks to tenant without answering the question
+  const waitingEval = evaluateCharacterInteractionMemory(
+    tenantWithPendingQ,
+    'Hello Eleanor, what is the weather like?',
+    19 * 60 + 30,
+    3
+  );
+  assert.equal(waitingEval.unansweredDaysWaiting, 2);
+  assert.equal(waitingEval.oldestUnansweredQuestion !== null, true);
+  assert.equal(waitingEval.memoryDirectiveForPrompt.includes('2 DAY(S)'), true);
+
+  // 4. Player finally answers the question asked 2 days ago!
+  const answerEval = evaluateCharacterInteractionMemory(
+    tenantWithPendingQ,
+    'About your question from Day 1: Yes, I checked behind the Room 101 wardrobe and found the loose mortar and brass latch.',
+    19 * 60 + 30,
+    3
+  );
+  assert.equal(answerEval.answeredQuestion !== null, true);
+  assert.equal(answerEval.daysWaitedForAnswer, 2);
+  assert.equal(answerEval.trustDelta >= 20, true); // Big bonus for answering delayed question
+  assert.equal(answerEval.unlockedClueId, 'clue_hollow_brick_101');
+  assert.equal(answerEval.memoryDirectiveForPrompt.includes('MULTI-DAY QUESTION RESOLVED'), true);
+
+  // 5. Build sandboxed system prompt reflects disposition and unresolved question
+  const promptText = buildSandboxedCharacterSystemPrompt(
+    answerEval.updatedAgent,
+    'STRICT OFFLINE SANDBOX',
+    19 * 60 + 30,
+    3,
+    answerEval
+  );
+  assert.equal(promptText.includes('Day 3'), true);
+  assert.equal(promptText.includes('MULTI-DAY QUESTION RESOLVED'), true);
+});
+
+test('Skeleton-Based Motion & Posture Engine: upright vs bent spine kyphosis, walking stride, and cane grip', async () => {
+  const { computeSkeletonPose, getArchetypeDefaults } = await import('./rules');
+
+  // 1. Upright posture at 0 degrees curvature
+  const uprightPose = computeSkeletonPose(0, false, 0, false, false);
+  assert.equal(Math.abs(uprightPose.spineLumbarX) < 0.05, true);
+  assert.equal(Math.abs(uprightPose.spineThoracicX) < 0.05, true);
+  assert.equal(Math.abs(uprightPose.neckX) < 0.05, true);
+  assert.equal(uprightPose.caneGripActive, false);
+
+  // 2. Elderly Matron with 34 degrees bent spine (kyphosis)
+  const matronDefaults = getArchetypeDefaults('Elderly Matron');
+  assert.equal(matronDefaults.spineCurvature, 34);
+  assert.equal(matronDefaults.hasWalkingCane, true);
+  assert.equal(matronDefaults.hasSpectacles, true);
+  assert.equal(matronDefaults.facialExpression, 'weary');
+
+  const bentPose = computeSkeletonPose(0, false, matronDefaults.spineCurvature || 34, true, false);
+  assert.equal(Math.abs(bentPose.spineThoracicX + bentPose.spineLowerThoracicX) > 0.35, true); // pronounced multi-vertebrae thoracic stoop
+  assert.equal(bentPose.neckX > 0.35, true); // compensatory cervical lift so head looks forward
+  assert.equal(bentPose.caneGripActive, true);
+  assert.equal(bentPose.rightUpperArmX > 0.2, true); // right arm poised to grip walking cane
+
+  // 3. Walking stride kinematics (anti-phase leg and arm swings)
+  const walkingPose = computeSkeletonPose(1.0, true, 0, false, false);
+  assert.equal(Math.sign(walkingPose.leftThighX) !== Math.sign(walkingPose.rightThighX), true);
+  assert.equal(walkingPose.pelvisY !== 0, true);
+
+  // 4. Scheduled Activity Gestures (wall_listen, inspect_ledger, sleepwalk_trance)
+  const wallListenPose = computeSkeletonPose(1.0, false, 10, false, false, 'wall_listen');
+  assert.equal(wallListenPose.headY > 0.25, true); // head turned to press ear against wall
+  assert.equal(wallListenPose.leftForearmX < -0.5, true); // left hand cupped near ear/wall
+
+  const sleepwalkPose = computeSkeletonPose(1.0, false, 0, false, false, 'sleepwalk_trance');
+  assert.equal(sleepwalkPose.leftUpperArmX > 0.9, true); // arms outstretched in 33Hz trance
+  assert.equal(sleepwalkPose.rightUpperArmX > 0.9, true);
+});
+
+test('3D Facial Rig & Dynamic AI Disposition Binding: eyebrow furrow, eye aperture, uncanny expressions, and speech jaw cadence', async () => {
+  const { computeFacialRigParams } = await import('./rules');
+
+  // 1. Neutral expression
+  const neutralRig = computeFacialRigParams('neutral', undefined, false, 0);
+  assert.equal(neutralRig.browFurrow, 0);
+  assert.equal(neutralRig.eyeAperture, 1.0);
+  assert.equal(neutralRig.jawDrop, 0);
+
+  // 2. Weary expression (Eleanor Vance / Elderly Matron)
+  const wearyRig = computeFacialRigParams('weary', undefined, false, 0);
+  assert.equal(wearyRig.underEyeBags, true);
+  assert.equal(wearyRig.eyeAperture < 0.8, true); // narrowed weary eyelids
+  assert.equal(wearyRig.mouthCornerAngle < 0, true); // downturned weary mouth
+
+  // 3. Uncanny Noir Expressions: hollow_stare, side_eye_glare, paranoid_twitch, cryptic_whisper
+  const hollowStare = computeFacialRigParams('hollow_stare', undefined, false, 0);
+  assert.equal(hollowStare.eyeAperture > 1.25, true); // unblinking wide aperture
+  assert.equal(hollowStare.pupilDilation < 0.7, true); // pinpoint constricted pupils
+  assert.equal(hollowStare.cheekHollow >= 0.7, true); // gaunt sunken cheeks
+
+  const sideEye = computeFacialRigParams('side_eye_glare', undefined, false, 0);
+  assert.equal(Math.abs(sideEye.eyeGazeX) >= 0.01, true); // sideways darting iris gaze
+  assert.equal(Math.abs(sideEye.browAsymmetry) > 0, true); // cocked skeptical eyebrow
+
+  const crypticWhisper = computeFacialRigParams('cryptic_whisper', undefined, false, 1.5);
+  assert.equal(crypticWhisper.mouthAsymmetry !== 0, true); // crooked side-mouth whisper
+  assert.equal(crypticWhisper.jawDrop > 0, true);
+
+  // 4. Hostile disposition dynamic binding increases furrow
+  const hostileRig = computeFacialRigParams('neutral', 'hostile', false, 0);
+  assert.equal(hostileRig.browFurrow >= 0.35, true); // automatically furrowed brows
+  assert.equal(hostileRig.mouthCornerAngle < 0, true); // downturned frown
+
+  // 5. Live speaking cadence adds jaw drop
+  const speakingRig = computeFacialRigParams('neutral', undefined, true, 1.2);
+  assert.equal(speakingRig.jawDrop >= 0, true);
+  assert.equal(speakingRig.mouthAperture > 0.15, true);
+});
+
+test('Daily Schedule Manager relocates AI tenants based on gameTimeMinutes and supports random AI-triggered events', async () => {
+  const { computeScheduledAgentsForTime, resolveDailyLocationCoords } = await import('./rules');
+  const { INITIAL_AGENTS } = await import('./hotelData');
+
+  const tenants = INITIAL_AGENTS.filter((a) => a.role !== 'helper_entity');
+
+  // 1. Evening Social Hour (19:30 = 1170 mins): Eleanor Vance & Dr. Barnaby Finch gather in the Lobby West Parlor
+  const eveningAgents = computeScheduledAgentsForTime(tenants, 19 * 60 + 30, false);
+  const eleanorEvening = eveningAgents.find((a) => a.id === 'agent_eleanor')!;
+  const barnabyEvening = eveningAgents.find((a) => a.id === 'agent_barnaby')!;
+  assert.equal(eleanorEvening.floor, 'lobby');
+  assert.equal(barnabyEvening.floor, 'lobby');
+  assert.equal(eleanorEvening.appearance.spineCurvature, 38);
+  assert.equal(eleanorEvening.appearance.hasWalkingCane, true);
+
+  // 2. Late Night (23:45 = 1425 mins): Tenants return to their respective suites on Floor 1, Floor 2, Floor 3
+  const nightAgents = computeScheduledAgentsForTime(tenants, 23 * 60 + 45, false);
+  const eleanorNight = nightAgents.find((a) => a.id === 'agent_eleanor')!;
+  const claraNight = nightAgents.find((a) => a.id === 'agent_julian')!;
+  const marcusNight = nightAgents.find((a) => a.id === 'agent_marcus')!;
+  assert.equal(eleanorNight.floor, 'floor1');
+  assert.equal(claraNight.floor, 'floor2');
+  assert.equal(marcusNight.floor, 'floor3');
+
+  // 3. Random AI-Triggered Anomaly Event overrides schedule and logs memory
+  const anomalyAgents = computeScheduledAgentsForTime(tenants, 23 * 60 + 45, true, 3);
+  const eleanorAnomaly = anomalyAgents.find((a) => a.id === 'agent_eleanor')!;
+  assert.equal(
+    eleanorAnomaly.memories.some((m) => m.includes('Random AI Event')),
+    true
+  );
+
+  // 4. Location string resolver maps room names to 3D floor & coordinates
+  const resolvedBoiler = resolveDailyLocationCoords('Basement Boiler Sub-Vault', 'lobby', [0, 0, 0]);
+  assert.equal(resolvedBoiler.floor, 'basement');
+});
+
+test('1978 Detective Notebook & Dictaphone Memo System: creation, filtering, and tag classification', async () => {
+  const { createNotebookMemo, searchAndFilterNotebookMemos } = await import('./rules');
+
+  const memo1 = createNotebookMemo({
+    title: 'Dumbwaiter Scratch Marks',
+    content: 'Observed deep gouges in the oak shaft behind Room 202. Sounds like brass keys jangling.',
+    category: 'clue',
+    roomLocation: 'Room 202 Corridor',
+    tapeRecorded: true,
+    audioDurationSec: 18,
+    tags: ['Passkey Code', 'Secret Passage']
+  });
+
+  const memo2 = createNotebookMemo({
+    title: 'Interrogation: Eleanor Vance',
+    content: 'Eleanor claims she never left Suite 204 after 8:00 PM. Yet the front desk ledger has fresh ink.',
+    category: 'transcript',
+    agentId: 'agent_eleanor',
+    agentName: 'Eleanor Vance',
+    roomLocation: 'Suite 204',
+    tags: ['Contradiction', 'Suspect Motive']
+  });
+
+  const memos = [memo1, memo2];
+
+  // Filter by search query
+  const queryResults = searchAndFilterNotebookMemos(memos, 'gouges');
+  assert.equal(queryResults.length, 1);
+  assert.equal(queryResults[0].title, 'Dumbwaiter Scratch Marks');
+
+  // Filter by tag
+  const tagResults = searchAndFilterNotebookMemos(memos, '', 'Contradiction');
+  assert.equal(tagResults.length, 1);
+  assert.equal(tagResults[0].agentName, 'Eleanor Vance');
+
+  // Filter by category
+  const catResults = searchAndFilterNotebookMemos(memos, '', 'All', 'transcript');
+  assert.equal(catResults.length, 1);
+  assert.equal(catResults[0].category, 'transcript');
+});
+
+test('Surface-Specific Footsteps & Stealth Crouch Silence: resolveFloorSurfaceMaterialAtPosition, computeSurfaceFootstepSpec, didCrossStrideFootstepPhase, and audioEngine.playSurfaceFootstep', async () => {
+  const {
+    resolveFloorSurfaceMaterialAtPosition,
+    computeSurfaceFootstepSpec,
+    didCrossStrideFootstepPhase
+  } = await import('./rules');
+  const { INITIAL_PLACED_ASSETS } = await import('./hotelData');
+  const { audioEngine } = await import('./audioEngine');
+
+  // 1. Spatial surface resolution across carpet, wood, and linoleum
+  // Central Lobby runner -> carpet
+  const lobbyRunnerSurface = resolveFloorSurfaceMaterialAtPosition(0, 2.0, 'lobby', INITIAL_PLACED_ASSETS);
+  assert.equal(lobbyRunnerSurface, 'carpet');
+
+  // Floor 1 suite living area (away from central corridor and wet-wall corners) -> wood
+  const suiteWoodSurface = resolveFloorSurfaceMaterialAtPosition(-3.8, -1.5, 'floor1', INITIAL_PLACED_ASSETS);
+  assert.equal(suiteWoodSurface, 'wood');
+
+  // Basement boiler room -> linoleum
+  const basementSurface = resolveFloorSurfaceMaterialAtPosition(0, 0, 'basement', INITIAL_PLACED_ASSETS);
+  assert.equal(basementSurface, 'linoleum');
+
+  // Explicit placed floor_tile asset override
+  const customLinoleumTile: PlacedAsset = {
+    id: 'tile_lino_test',
+    name: '1978 Checkerboard Vinyl Linoleum Tile',
+    category: 'floor_tile',
+    subType: 'checker_floor_tile',
+    floor: 'floor1',
+    position: [-3.8, 0.02, -1.5],
+    dimensions: [2.0, 0.05, 2.0],
+    rotationY: 0,
+    color: '#d6d3d1',
+    textureId: 'checker_marble',
+    collidable: false
+  };
+  const overriddenSurface = resolveFloorSurfaceMaterialAtPosition(
+    -3.8,
+    -1.5,
+    'floor1',
+    [...INITIAL_PLACED_ASSETS, customLinoleumTile]
+  );
+  assert.equal(overriddenSurface, 'linoleum');
+
+  // 2. Acoustic distinctness & per-step randomization across carpet, wood, and linoleum
+  const carpetStepA = computeSurfaceFootstepSpec('carpet', 0, 0.2);
+  const carpetStepB = computeSurfaceFootstepSpec('carpet', 1, 0.85);
+  const woodStep = computeSurfaceFootstepSpec('wood', 0, 0.5);
+  const linoleumStep = computeSurfaceFootstepSpec('linoleum', 0, 0.5);
+  const caneTapSpec = computeSurfaceFootstepSpec('wood', 1, 0.5, { isCaneTap: true, isNpc: true });
+
+  assert.equal(carpetStepA.surface, 'carpet');
+  assert.equal(carpetStepA.filterType, 'lowpass');
+  assert.equal(carpetStepA.noiseColor, 'brown');
+  assert.equal(carpetStepA.reverbPreset, 'carpeted_corridor');
+  // Randomized jitter + L/R alternation shifts frequency and filter cutoff between steps
+  assert.equal(carpetStepA.baseFrequency !== carpetStepB.baseFrequency, true);
+  assert.equal(carpetStepA.filterCutoff !== carpetStepB.filterCutoff, true);
+
+  assert.equal(woodStep.surface, 'wood');
+  assert.equal(woodStep.reverbPreset, 'wooden_parlor');
+  assert.equal(woodStep.baseFrequency > carpetStepA.baseFrequency, true);
+
+  assert.equal(linoleumStep.surface, 'linoleum');
+  assert.equal(linoleumStep.reverbPreset, 'tiled_bathroom');
+  assert.equal(linoleumStep.baseFrequency > woodStep.baseFrequency, true);
+  assert.equal((linoleumStep.filterCutoff ?? 0) > (woodStep.filterCutoff ?? 0), true);
+
+  assert.equal(caneTapSpec.isCaneTap, true);
+  assert.equal(caneTapSpec.baseFrequency > 200, true);
+
+  // 3. Stride heel-strike phase crossing detector
+  const noCross = didCrossStrideFootstepPhase(1.2, 2.9, Math.PI);
+  assert.equal(noCross.triggered, false);
+
+  const crossed = didCrossStrideFootstepPhase(2.9, 3.3, Math.PI);
+  assert.equal(crossed.triggered, true);
+  assert.equal(crossed.stepIndex, 1);
+
+  // 4. audioEngine.playSurfaceFootstep triggers when standing and is completely silent when crouching
+  const standingPlay = audioEngine.playSurfaceFootstep('wood', {
+    stepIndex: 2,
+    jitterSeed: 0.42,
+    isCrouching: false,
+    footstepsEnabled: true
+  });
+  assert.equal(standingPlay !== null, true);
+  assert.equal(standingPlay?.type, 'footstep');
+
+  const crouchingPlay = audioEngine.playSurfaceFootstep('wood', {
+    stepIndex: 3,
+    jitterSeed: 0.42,
+    isCrouching: true,
+    footstepsEnabled: true
+  });
+  assert.equal(crouchingPlay, null);
+
+  const disabledPlay = audioEngine.playSurfaceFootstep('carpet', {
+    stepIndex: 4,
+    isCrouching: false,
+    footstepsEnabled: false
+  });
+  assert.equal(disabledPlay, null);
+
+  // 5. Spatial NPC footstep with cane tap option
+  const npcSpatialPlay = audioEngine.playSurfaceFootstep('carpet', {
+    stepIndex: 1,
+    jitterSeed: 0.6,
+    emitterPos: [-3.5, 0.05, 1.5],
+    listenerPos: [0, 1.62, 4.0],
+    includeCaneTap: true
+  });
+  assert.equal(npcSpatialPlay !== null, true);
+  assert.equal(npcSpatialPlay?.reverbPreset, 'carpeted_corridor');
+});
+
+test('User-Defined Keybinding System: preserves all already-assigned keys, supports slot rebinding, alt keys, conflict detection, and live action matchers', async () => {
+  const {
+    DEFAULT_KEYBINDINGS,
+    DEFAULT_KEYBIND_SPECS,
+    formatKeyCodeLabel,
+    formatActionKeysSummary,
+    normalizeAndMergeKeybindings,
+    updateActionKeybinding,
+    removeActionKeyCode,
+    resetActionKeybinding,
+    detectKeybindingConflicts,
+    isActionKeyPressed,
+    isActionKeyHeld,
+    createDefaultStudioWindows
+  } = await import('./rules');
+
+  // 1. Verify keybindings studio window is registered
+  const defaultWins = createDefaultStudioWindows();
+  assert.equal(Boolean(defaultWins.keybindings), true);
+  assert.equal(defaultWins.keybindings.id, 'keybindings');
+
+  // 2. Verify all already-assigned default keys remain bound
+  assert.deepEqual(DEFAULT_KEYBINDINGS.move_forward, ['KeyW', 'ArrowUp']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.move_backward, ['KeyS', 'ArrowDown']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.move_left, ['KeyA', 'ArrowLeft']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.move_right, ['KeyD', 'ArrowRight']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.turn_left, ['KeyQ', 'ArrowLeft']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.turn_right, ['ArrowRight']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.stealth_crouch, ['KeyC', 'ControlLeft', 'ControlRight']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.camera_up, ['Space', 'PageUp']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.camera_down, ['KeyC', 'PageDown']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.sprint_camera, ['ShiftLeft', 'ShiftRight']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.interact, ['KeyE']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.toggle_flashlight, ['KeyL']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.push_to_talk, ['KeyV']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.toggle_notebook, ['KeyJ']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.quick_edit, ['KeyF']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.rotate_asset, ['KeyR']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.delete_asset, ['Delete', 'Backspace']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.wall_tool, ['KeyB']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.clear_selection, ['Escape']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.toggle_keybindings, ['KeyK']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.reset_windows, ['KeyH']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.toggle_mute, ['KeyM']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.mode_build, ['Digit1']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.mode_character, ['Digit2']);
+  assert.deepEqual(DEFAULT_KEYBINDINGS.mode_walkthrough, ['Digit3']);
+  assert.equal(DEFAULT_KEYBIND_SPECS.length >= 21, true);
+
+  // 3. Default keybindings have zero unintended conflicts
+  const initialConflicts = detectKeybindingConflicts(DEFAULT_KEYBINDINGS);
+  assert.equal(initialConflicts.length, 0);
+
+  // 4. Appending a secondary key keeps existing keys bound
+  const withAltInteract = updateActionKeybinding(DEFAULT_KEYBINDINGS, 'interact', 'Enter');
+  assert.deepEqual(withAltInteract.interact, ['KeyE', 'Enter']);
+  assert.equal(isActionKeyPressed('interact', 'KeyE', withAltInteract), true);
+  assert.equal(isActionKeyPressed('interact', 'Enter', withAltInteract), true);
+
+  // 5. Rebinding a specific slot updates that slot
+  const replacedPrimary = updateActionKeybinding(withAltInteract, 'interact', 'KeyG', 0);
+  assert.deepEqual(replacedPrimary.interact, ['KeyG', 'Enter']);
+
+  // 6. Removing an extra key preserves remaining keys, and removing the last key falls back to default
+  const afterRemoveOne = removeActionKeyCode(replacedPrimary, 'interact', 'KeyG');
+  assert.deepEqual(afterRemoveOne.interact, ['Enter']);
+  const afterRemoveLast = removeActionKeyCode(afterRemoveOne, 'interact', 'Enter');
+  assert.deepEqual(afterRemoveLast.interact, ['KeyE']);
+
+  // 7. Resetting an action restores its default keys
+  const resetMap = resetActionKeybinding(replacedPrimary, 'interact');
+  assert.deepEqual(resetMap.interact, ['KeyE']);
+
+  // 8. Conflict detection catches overlapping bindings
+  const conflictingMap = updateActionKeybinding(DEFAULT_KEYBINDINGS, 'toggle_flashlight', 'KeyE', 0);
+  const conflicts = detectKeybindingConflicts(conflictingMap);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].keyCode, 'KeyE');
+  assert.equal(conflicts[0].actions.includes('interact'), true);
+  assert.equal(conflicts[0].actions.includes('toggle_flashlight'), true);
+
+  // 9. Held key set matching and human-readable key labels
+  const heldSet = new Set(['ArrowUp', 'ControlLeft']);
+  assert.equal(isActionKeyHeld('move_forward', heldSet, DEFAULT_KEYBINDINGS), true);
+  assert.equal(isActionKeyHeld('stealth_crouch', heldSet, DEFAULT_KEYBINDINGS), true);
+  assert.equal(isActionKeyHeld('move_backward', heldSet, DEFAULT_KEYBINDINGS), false);
+  assert.equal(formatKeyCodeLabel('KeyW'), 'W');
+  assert.equal(formatKeyCodeLabel('ArrowUp'), '↑ Up');
+  assert.equal(formatActionKeysSummary('move_forward', DEFAULT_KEYBINDINGS), 'W / ↑ Up');
+
+  // 10. normalizeAndMergeKeybindings preserves defaults for missing or invalid entries
+  const normalized = normalizeAndMergeKeybindings({
+    interact: ['KeyE', 'KeyT'],
+    move_forward: []
+  });
+  assert.deepEqual(normalized.interact, ['KeyE', 'KeyT']);
+  assert.deepEqual(normalized.move_forward, ['KeyW', 'ArrowUp']);
+});
+
+test('Meshy.ai Auto-Rigging & Low-Frame Character Animation Engine (Alterations 1, 2 & 3 with Global FPS Stepper)', async () => {
+  const {
+    DEFAULT_GLOBAL_ANIMATION_FPS,
+    ALLOWED_GLOBAL_ANIMATION_FPS,
+    MESHY_ANIMATION_PRESETS,
+    normalizeGlobalAnimationFps,
+    buildMeshyRiggingRequestPayload,
+    buildMeshyAnimateRequestPayload,
+    quantizeAnimationTimeToStep,
+    decimateAnimationKeyframes,
+    sampleDecimatedClipPose,
+    computeCharacterAnimationLodState,
+    evaluateHybridLowFrameRigState
+  } = await import('./rules');
+  const { INITIAL_AGENTS } = await import('./hotelData');
+
+  const sampleAppearance = INITIAL_AGENTS[0].appearance;
+
+  // 1. Global FPS normalization (6, 8, 12, 24 FPS)
+  assert.equal(DEFAULT_GLOBAL_ANIMATION_FPS, 8);
+  assert.deepEqual(ALLOWED_GLOBAL_ANIMATION_FPS, [6, 8, 12, 24]);
+  assert.equal(normalizeGlobalAnimationFps(6), 6);
+  assert.equal(normalizeGlobalAnimationFps(8), 8);
+  assert.equal(normalizeGlobalAnimationFps(12), 12);
+  assert.equal(normalizeGlobalAnimationFps(24), 24);
+  assert.equal(normalizeGlobalAnimationFps(undefined), 8);
+
+  // 2. Meshy.ai /openapi/v1/rigging and /openapi/v1/animations payload builders
+  const rigPayload = buildMeshyRiggingRequestPayload(
+    'https://assets.meshy.ai/alderney/eleanor.glb',
+    sampleAppearance
+  );
+  assert.equal(rigPayload.model_url, 'https://assets.meshy.ai/alderney/eleanor.glb');
+  assert.equal(rigPayload.height_meters >= 1.2 && rigPayload.height_meters <= 2.2, true);
+
+  const animPayload = buildMeshyAnimateRequestPayload('meshy_rig_01', 'wall_listen', 8);
+  assert.equal(animPayload.rig_task_id, 'meshy_rig_01');
+  assert.equal(animPayload.action_id, MESHY_ANIMATION_PRESETS.wall_listen.actionId);
+  assert.deepEqual(animPayload.post_process, {
+    operation_type: 'change_fps',
+    fps: 8
+  });
+
+  // 3. Alteration 1: Stepped time quantization & keyframe decimation
+  const stepA = quantizeAnimationTimeToStep(0.04, 8); // < 0.125s -> step 0
+  const stepB = quantizeAnimationTimeToStep(0.11, 8); // < 0.125s -> step 0
+  const stepC = quantizeAnimationTimeToStep(0.13, 8); // >= 0.125s -> step 1
+  assert.equal(stepA.stepIndex, 0);
+  assert.equal(stepB.stepIndex, 0);
+  assert.equal(stepA.steppedTimeSec, stepB.steppedTimeSec);
+  assert.equal(stepC.stepIndex, 1);
+  assert.equal(stepC.steppedTimeSec, 0.125);
+
+  const decimatedClip = decimateAnimationKeyframes(
+    sampleAppearance,
+    'idle_observe',
+    8,
+    'meshy_rig_test',
+    'meshy_anim_test',
+    60
+  );
+  assert.equal(decimatedClip.bakedFps, 8);
+  assert.equal(decimatedClip.postProcessOperation, 'change_fps');
+  assert.equal(decimatedClip.decimatedFrameCount < decimatedClip.originalFrameCount, true);
+  assert.equal(decimatedClip.keyframeReductionPct >= 80, true);
+  assert.equal(decimatedClip.decimatedKeyframes.length, decimatedClip.decimatedFrameCount);
+
+  const appearanceWithClip = {
+    ...sampleAppearance,
+    meshyRigTaskId: 'meshy_rig_test',
+    meshyAnimations: {
+      idle_observe: decimatedClip
+    }
+  };
+  const sampledPose = sampleDecimatedClipPose(appearanceWithClip, 'idle_observe', 0.25, false, false);
+  assert.equal(typeof sampledPose.pelvisY, 'number');
+
+  // 4. Alteration 2: Hybrid low-frame body pose + full-rate 3D facial expression rig overlay
+  const frame1 = evaluateHybridLowFrameRigState({
+    appearance: appearanceWithClip,
+    gesture: 'idle_observe',
+    isMoving: false,
+    isSpeaking: true,
+    continuousTimeSec: 0.02,
+    effectiveFps: 8
+  });
+  assert.equal(frame1.bodyPoseRecomputed, true);
+
+  // Within the same 8 FPS step window (0.06s < 0.125s): body pose is cached/not recomputed, while speech jaw cadence updates continuously
+  const frame2 = evaluateHybridLowFrameRigState({
+    appearance: appearanceWithClip,
+    gesture: 'idle_observe',
+    isMoving: false,
+    isSpeaking: true,
+    continuousTimeSec: 0.06,
+    effectiveFps: 8,
+    cachedBodyPose: frame1.bodyPose,
+    lastStepIndex: frame1.stepIndex
+  });
+  assert.equal(frame2.bodyPoseRecomputed, false);
+  assert.equal(frame2.bodyPose, frame1.bodyPose);
+  assert.notEqual(frame2.facialRig.jawDrop, frame1.facialRig.jawDrop);
+
+  // 5. Alteration 3: Distance & off-floor animation LOD throttling
+  const nearLod = computeCharacterAnimationLodState({
+    characterFloor: 'lobby',
+    activeFloor: 'lobby',
+    distanceMeters: 6.5,
+    continuousTimeSec: 1.0,
+    globalFps: 8
+  });
+  assert.equal(nearLod.tier, 'full_stepped');
+  assert.equal(nearLod.effectiveBodyFps, 8);
+  assert.equal(nearLod.shouldUpdateFace, true);
+
+  const midLod = computeCharacterAnimationLodState({
+    characterFloor: 'lobby',
+    activeFloor: 'lobby',
+    distanceMeters: 18.0,
+    continuousTimeSec: 1.0,
+    globalFps: 12
+  });
+  assert.equal(midLod.tier, 'half_stepped');
+  assert.equal(midLod.effectiveBodyFps, 6);
+  assert.equal(midLod.shouldUpdateFace, true);
+
+  const farLod = computeCharacterAnimationLodState({
+    characterFloor: 'lobby',
+    activeFloor: 'lobby',
+    distanceMeters: 29.0,
+    continuousTimeSec: 1.0,
+    globalFps: 8
+  });
+  assert.equal(farLod.tier, 'minimal_stepped');
+  assert.equal(farLod.effectiveBodyFps, 2);
+  assert.equal(farLod.shouldUpdateFace, false);
+
+  const offFloorLod = computeCharacterAnimationLodState({
+    characterFloor: 'floor2',
+    activeFloor: 'lobby',
+    distanceMeters: 5.0,
+    continuousTimeSec: 1.0,
+    globalFps: 8
+  });
+  assert.equal(offFloorLod.tier, 'culled');
+  assert.equal(offFloorLod.effectiveBodyFps, 0);
+  assert.equal(offFloorLod.shouldUpdateBody, false);
+  assert.equal(offFloorLod.shouldUpdateFace, false);
+  assert.equal(offFloorLod.cpuSavingsEstimatePct, 100);
+});
+
+test('Top Editor Navigation & Title Section Spec: Sound Board as 3rd option, centered Studio subtitle, no canvas size telemetry, and right Eye First-Person Walk toggle', async () => {
+  const {
+    TOP_EDITOR_MODE_TABS,
+    STUDIO_HEADER_BRAND_SPEC,
+    getTaskbarWindowIdsForMode,
+    createDefaultStudioWindows
+  } = await import('./rules');
+
+  // 1. Top 3 editor options: 1 · Build Mode, 2 · Create-A-Character, 3 · Sound Board
+  assert.equal(TOP_EDITOR_MODE_TABS.length, 3);
+  assert.deepEqual(TOP_EDITOR_MODE_TABS[0], { id: 'architect', label: '1 · Build Mode' });
+  assert.deepEqual(TOP_EDITOR_MODE_TABS[1], { id: 'character', label: '2 · Create-A-Character' });
+  assert.deepEqual(TOP_EDITOR_MODE_TABS[2], { id: 'soundboard', label: '3 · Sound Board' });
+
+  // 2. Title section spec: green circle left, ArchitectForge with Studio centered underneath, no canvas size reference, right Eye button for walkthrough
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.leftBadgeType, 'green_circle_emblem');
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.primaryTitle, 'ArchitectForge');
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.centeredSubtitleUnderneath, 'Studio');
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.showCanvasSizeReference, false);
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.rightBadgeType, 'walkthrough_eye_button');
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.rightBadgeTargetMode, 'walkthrough');
+
+  // 3. Sound Board mode taskbar and window layout
+  const sbWindows = getTaskbarWindowIdsForMode('soundboard');
+  assert.equal(sbWindows[0], 'audio');
+  assert.equal(sbWindows.includes('blueprints'), false);
+  const defaultWins = createDefaultStudioWindows();
+  assert.equal(defaultWins.audio.shortTitle, '🎵 Sound Board');
+});
+
+test('Studio Dark Mode UI & White 3D Canvas Spec: status bar under WINDOWS bar removed, 3D canvas white, UI dark theme', async () => {
+  const { STUDIO_DARK_UI_WHITE_CANVAS_SPEC } = await import('./rules');
+
+  assert.equal(STUDIO_DARK_UI_WHITE_CANVAS_SPEC.showStatusBarUnderWindowsBar, false);
+  assert.equal(STUDIO_DARK_UI_WHITE_CANVAS_SPEC.uiTheme, 'dark');
+  assert.equal(STUDIO_DARK_UI_WHITE_CANVAS_SPEC.canvasTheme, 'white');
+  assert.equal(STUDIO_DARK_UI_WHITE_CANVAS_SPEC.canvasColors.tileBasePlaneHex, 0xffffff);
+  assert.equal(STUDIO_DARK_UI_WHITE_CANVAS_SPEC.canvasColors.sceneBackgroundHex, 0xf8fafc);
+  assert.equal(
+    STUDIO_DARK_UI_WHITE_CANVAS_SPEC.uiColors.windowBgClass.includes('bg-slate-900'),
+    true
+  );
+});
+
+test('In-Game Feature Items are represented as Studio Asset Creation Templates (Images, 3D Models, Animations, Sounds) and not embedded gameplay taskbar windows', async () => {
+  const {
+    IN_GAME_FEATURE_ASSET_TEMPLATES,
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT,
+    buildProcedural3DSpecFromPrompt,
+    getTaskbarWindowIdsForMode
+  } = await import('./rules');
+  const { ASSET_CATALOG } = await import('./hotelData');
+
+  // 1. All 5 in-game feature items exist with descriptions, 3D composite parts, animation specs, sound presets, and tags
+  assert.equal(IN_GAME_FEATURE_ASSET_TEMPLATES.length, 5);
+  const subTypes = IN_GAME_FEATURE_ASSET_TEMPLATES.map((t) => t.subType);
+  assert.deepEqual(subTypes, [
+    'investigator_notebook_prop',
+    'microcassette_player_prop',
+    'chrome_dcell_flashlight_prop',
+    'evidence_corkboard_prop',
+    'master_skeleton_keyring_prop'
+  ]);
+
+  for (const tpl of IN_GAME_FEATURE_ASSET_TEMPLATES) {
+    assert.equal(tpl.imagePromptDescription.length > 20, true);
+    assert.equal(tpl.animationSpec.length > 10, true);
+    assert.equal(tpl.soundPresetId.length > 3, true);
+    assert.equal(tpl.tags.includes('game-item'), true);
+    // Present in ASSET_CATALOG with multi-part 3D geometry
+    const catalogEntry = ASSET_CATALOG.find((b) => b.subType === tpl.subType);
+    assert.equal(Boolean(catalogEntry), true);
+    assert.equal(Array.isArray(catalogEntry?.compositeParts), true);
+    assert.equal((catalogEntry?.compositeParts?.length || 0) >= 3, true);
+  }
+
+  // 2. Procedural 3D generator builds distinct multi-part meshes for notebook and microcassette player
+  const notebookSpec = buildProcedural3DSpecFromPrompt('Investigator Leather Notebook');
+  assert.equal(notebookSpec.parts.length >= 5, true);
+  const cassetteSpec = buildProcedural3DSpecFromPrompt('1978 Microcassette Dictaphone Player');
+  assert.equal(cassetteSpec.parts.length >= 6, true);
+
+  // 3. Batch description import queue includes the notebook and microcassette player descriptions
+  assert.equal(
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT.includes('Notebook'),
+    true
+  );
+  assert.equal(
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT.includes('Microcassette Dictaphone'),
+    true
+  );
+
+  // 4. Embedded 'notebook' window is removed from the Studio taskbar modes
+  assert.equal(getTaskbarWindowIdsForMode('architect').includes('notebook'), false);
+  assert.equal(getTaskbarWindowIdsForMode('character').includes('notebook'), false);
+  assert.equal(getTaskbarWindowIdsForMode('soundboard').includes('notebook'), false);
+  assert.equal(getTaskbarWindowIdsForMode('walkthrough').includes('notebook'), false);
+});
+
+test('Blueprint Tagging & Multi-Faceted Asset Search support tag normalization, tag CRUD, relevance scoring, capability filters, and sorting', async () => {
+  const {
+    normalizeBlueprintTag,
+    parseBlueprintTagsInput,
+    addTagToBlueprint,
+    removeTagFromBlueprint,
+    collectBlueprintTagCounts,
+    searchAndFilterCatalogBlueprints,
+    searchAndFilterRoomBlueprints,
+    INITIAL_ROOM_BLUEPRINTS
+  } = await import('./rules');
+  const { ASSET_CATALOG } = await import('./hotelData');
+
+  // 1. Tag normalization & comma-separated parsing
+  assert.equal(normalizeBlueprintTag('  #Late 70s Prop!! '), 'late-70s-prop');
+  assert.deepEqual(
+    parseBlueprintTagsInput('#Detective, Cassette Player, #detective, audio'),
+    ['detective', 'cassette-player', 'audio']
+  );
+
+  // 2. Add and remove tags on any blueprint or asset
+  const sampleBp = ASSET_CATALOG[0];
+  const withAdded = addTagToBlueprint(sampleBp, 'Featured Evidence');
+  assert.equal((withAdded.tags || []).includes('featured-evidence'), true);
+  const withRemoved = removeTagFromBlueprint(withAdded, 'featured-evidence');
+  assert.equal((withRemoved.tags || []).includes('featured-evidence'), false);
+
+  // 3. Tag counts aggregation across ASSET_CATALOG
+  const tagCounts = collectBlueprintTagCounts(ASSET_CATALOG);
+  assert.equal(tagCounts.length > 5, true);
+  assert.equal(tagCounts.some((tc) => tc.tag === 'game-item' && tc.count >= 5), true);
+
+  // 4. Multi-token & #tag search on catalog blueprints
+  const cassetteMatches = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    query: 'microcassette dictaphone'
+  });
+  assert.equal(cassetteMatches.length >= 1, true);
+  assert.equal(cassetteMatches[0].subType, 'microcassette_player_prop');
+
+  const hashTagMatches = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    query: '#notebook'
+  });
+  assert.equal(hashTagMatches.length >= 1, true);
+  assert.equal(hashTagMatches[0].subType, 'investigator_notebook_prop');
+
+  // 5. Capability filter ('game_item', 'interactive_hinged', 'animated') and activeTags filter
+  const gamePropsOnly = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    capabilityFilter: 'game_item'
+  });
+  assert.equal(gamePropsOnly.length >= 5, true);
+  assert.equal(
+    gamePropsOnly.every(
+      (bp) => (bp.tags || []).includes('game-item') || bp.category === 'clue_prop'
+    ),
+    true
+  );
+
+  const animatedOnly = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    capabilityFilter: 'animated'
+  });
+  assert.equal(animatedOnly.length >= 5, true);
+
+  // 6. Sorting modes ('name_asc', 'size_desc', 'size_asc')
+  const sortedAsc = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    sortBy: 'name_asc'
+  });
+  assert.equal(sortedAsc[0].name.localeCompare(sortedAsc[1].name) <= 0, true);
+
+  const sortedLargest = searchAndFilterCatalogBlueprints(ASSET_CATALOG, {
+    sortBy: 'size_desc'
+  });
+  const volFirst =
+    sortedLargest[0].defaultDimensions[0] *
+    sortedLargest[0].defaultDimensions[1] *
+    sortedLargest[0].defaultDimensions[2];
+  const volLast =
+    sortedLargest[sortedLargest.length - 1].defaultDimensions[0] *
+    sortedLargest[sortedLargest.length - 1].defaultDimensions[1] *
+    sortedLargest[sortedLargest.length - 1].defaultDimensions[2];
+  assert.equal(volFirst >= volLast, true);
+
+  // 7. Room Blueprint search & tag filtering
+  const lobbyRoomBps = searchAndFilterRoomBlueprints(INITIAL_ROOM_BLUEPRINTS, 'concierge', ['lobby']);
+  assert.equal(lobbyRoomBps.length, 1);
+  assert.equal(lobbyRoomBps[0].id, 'bp_room_lobby_registry');
+});
+
+test('Top-Right Undo Action Cluster Removal & Silent Studio Audio Policy: no auto-sounds on camera movement, sound section assigns sounds to assets', async () => {
+  const {
+    STUDIO_HEADER_BRAND_SPEC,
+    STUDIO_AUDIO_POLICY_SPEC,
+    assignSoundToAssetOrBlueprint
+  } = await import('./rules');
+  const { ASSET_CATALOG, INITIAL_PLACED_ASSETS, createBlueprintFromAsset } = await import('./hotelData');
+  const { soundFX } = await import('./soundEffects');
+
+  // 1. Top-right action cluster ("Undo (33)", etc.) is removed from the upper-right header
+  assert.equal(STUDIO_HEADER_BRAND_SPEC.showTopRightActionCluster, false);
+
+  // 2. Studio Audio Policy disables automatic studio sounds & camera footstep sounds
+  assert.equal(STUDIO_AUDIO_POLICY_SPEC.autoPlaySoundsInStudio, false);
+  assert.equal(STUDIO_AUDIO_POLICY_SPEC.cameraMovementPlaysFootsteps, false);
+  assert.equal(STUDIO_AUDIO_POLICY_SPEC.npcIdlePlaysFootsteps, false);
+  assert.equal(STUDIO_AUDIO_POLICY_SPEC.walkthroughAutoPlaysBgm, false);
+  assert.equal(
+    STUDIO_AUDIO_POLICY_SPEC.soundSectionPurpose,
+    'assign_sounds_to_assets_and_create_new_sounds'
+  );
+  assert.equal(soundFX.muted, true);
+
+  // 3. Assign specific sounds to placed assets and catalog blueprints
+  const samplePlaced = INITIAL_PLACED_ASSETS[0];
+  const withSound = assignSoundToAssetOrBlueprint(samplePlaced, 'brass_bell');
+  assert.equal(withSound.soundPresetId, 'brass_bell');
+  assert.equal((withSound.tags || []).includes('audio-linked'), true);
+
+  // Preserved when converted to a catalog blueprint
+  const bpFromPlaced = createBlueprintFromAsset(withSound);
+  assert.equal(bpFromPlaced.soundPresetId, 'brass_bell');
+  assert.equal((bpFromPlaced.tags || []).includes('audio-linked'), true);
+
+  // Clearing assigned sound removes soundPresetId and audio-linked tag
+  const clearedSound = assignSoundToAssetOrBlueprint(withSound, '');
+  assert.equal(clearedSound.soundPresetId, undefined);
+  assert.equal((clearedSound.tags || []).includes('audio-linked'), false);
+
+  // Assigning sound to a catalog blueprint directly
+  const catalogWithSound = assignSoundToAssetOrBlueprint(ASSET_CATALOG[0], 'door_latch');
+  assert.equal(catalogWithSound.soundPresetId, 'door_latch');
+  assert.equal((catalogWithSound.tags || []).includes('audio-linked'), true);
+});
 
 
 

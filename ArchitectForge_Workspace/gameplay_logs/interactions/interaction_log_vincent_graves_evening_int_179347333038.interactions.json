@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-10-31T19:02:10.453Z",
+  "category": "interactions",
+  "folderPath": "ArchitectForge_Workspace/gameplay_logs/interactions",
+  "itemName": "Vincent Graves_Evening",
+  "data": {
+    "id": "int_1793473330383",
+    "timestamp": "2026-10-31T19:02:10.383Z",
+    "gameTimeFormatted": "07:30 PM",
+    "phase": "Evening",
+    "timeOfDayEvent": "Lobby Lights Dimming & Parlor Social Hour (Wall sconces flickering)",
+    "dailyActionAtTime": "Listening to the cassette tape player and watching who enters the service stairwell. (West Parlor Lounge)",
+    "characterName": "Vincent Graves",
+    "userMessage": "About your question from Day 1: Yes, I checked behind the Suite 202 fireplace wall and verified the brass latch is unbolted.",
+    "agentReply": "*Vincent Graves (Polite, meticulous, quietly unnerved by noises behind the brickwork) pauses while listening to the cassette tape player and watching who enters the service stairwell. at 07:30 PM.* \"Speaking in my usual crisp mid-atlantic concierge cadence, Clerk — all I know for certain is this: Assigned to Suite 202 on the 2nd Floor of The Alderney Arms Hotel.\"",
+    "gameDay": 2,
+    "trustDelta": 10,
+    "suspicionDelta": -6,
+    "resultingTrust": 100,
+    "resultingSuspicion": 0,
+    "resultingDisposition": "confidant",
+    "triggeredLikes": [
+      "Polished brass keys"
+    ],
+    "triggeredDislikes": [],
+    "answeredQuestionId": null,
+    "answeredQuestionFromDay": null,
+    "pendingQuestionAsked": null,
+    "unansweredQuestionDaysWaiting": 0,
+    "gameplayInfluenceSummary": "Mentioned liked topic (Polished brass keys) → Tenant warmed up to CONFIDANT (Trust 100/100) | Gameplay Effect: Vincent Graves trusts you enough to reveal clue [clue_hollow_brick_101]!",
+    "unlockedClueId": "clue_hollow_brick_101"
+  }
+}

@@ -23,6 +23,17 @@ export type SoundEffectType =
   | 'clock_tick'
   | 'custom';
 
+import {
+  resolveChordVoicingFrequencies,
+  computeSurfaceFootstepSpec,
+  type AcousticReverbPreset,
+  type FloorSurfaceMaterial,
+  type MusicPadInstrument,
+  type SfxNoiseColor
+} from './rules';
+
+export type { AcousticReverbPreset, FloorSurfaceMaterial, MusicPadInstrument, SfxNoiseColor };
+
 export interface SoundEffectSpec {
   id: string;
   name: string;
@@ -39,8 +50,13 @@ export interface SoundEffectSpec {
   filterCutoff?: number;
   filterResonance?: number;
   noiseMix?: number;
+  noiseColor?: SfxNoiseColor;
+  fmRatio?: number;
+  fmDepth?: number;
+  subOscMix?: number;
   distortion?: number;
   reverb?: number;
+  reverbPreset?: AcousticReverbPreset;
 }
 
 export interface MusicNote {
@@ -63,6 +79,9 @@ export interface MusicTrackSpec {
   bass: MusicNote[];
   droneFreq: number;
   reverbAmount: number;
+  reverbPreset?: AcousticReverbPreset;
+  padInstrument?: MusicPadInstrument;
+  stereoWidth?: number;
   filterCutoff: number;
 }
 
@@ -482,9 +501,11 @@ export const BUILTIN_BGM_TRACKS: MusicTrackSpec[] = [
 class AudioEngineSingleton {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private masterCompressor: DynamicsCompressorNode | null = null;
   private sfxGain: GainNode | null = null;
   private bgmGain: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
+  private impulseCache: Map<AcousticReverbPreset, AudioBuffer> = new Map();
 
   // BGM state
   private activeBgmTrack: MusicTrackSpec | null = null;
@@ -505,6 +526,13 @@ class AudioEngineSingleton {
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 256;
 
+      this.masterCompressor = this.ctx.createDynamicsCompressor();
+      this.masterCompressor.threshold.setValueAtTime(-16, this.ctx.currentTime);
+      this.masterCompressor.knee.setValueAtTime(18, this.ctx.currentTime);
+      this.masterCompressor.ratio.setValueAtTime(4, this.ctx.currentTime);
+      this.masterCompressor.attack.setValueAtTime(0.005, this.ctx.currentTime);
+      this.masterCompressor.release.setValueAtTime(0.2, this.ctx.currentTime);
+
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.masterVol, this.ctx.currentTime);
 
@@ -514,8 +542,9 @@ class AudioEngineSingleton {
       this.bgmGain = this.ctx.createGain();
       this.bgmGain.gain.setValueAtTime(this.bgmVol, this.ctx.currentTime);
 
-      this.sfxGain.connect(this.masterGain);
-      this.bgmGain.connect(this.masterGain);
+      this.sfxGain.connect(this.masterCompressor);
+      this.bgmGain.connect(this.masterCompressor);
+      this.masterCompressor.connect(this.masterGain);
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
     }
@@ -523,6 +552,104 @@ class AudioEngineSingleton {
       this.ctx.resume();
     }
     return this.ctx;
+  }
+
+  /**
+   * Generates and caches an algorithmic stereo impulse response buffer for realistic room acoustics.
+   */
+  private getImpulseBuffer(ctx: BaseAudioContext, preset: AcousticReverbPreset = 'grand_lobby'): AudioBuffer {
+    if (ctx === this.ctx && this.impulseCache.has(preset)) {
+      return this.impulseCache.get(preset)!;
+    }
+
+    const presetConfig: Record<AcousticReverbPreset, { duration: number; decay: number; damping: number; earlyReflections: number }> = {
+      small_room: { duration: 0.75, decay: 3.8, damping: 0.35, earlyReflections: 0.018 },
+      tiled_bathroom: { duration: 1.35, decay: 2.4, damping: 0.12, earlyReflections: 0.008 },
+      grand_lobby: { duration: 2.1, decay: 2.2, damping: 0.28, earlyReflections: 0.028 },
+      sub_vault: { duration: 2.8, decay: 1.6, damping: 0.55, earlyReflections: 0.042 },
+      carpeted_corridor: { duration: 0.55, decay: 4.4, damping: 0.62, earlyReflections: 0.022 },
+      wooden_parlor: { duration: 0.95, decay: 3.1, damping: 0.32, earlyReflections: 0.014 }
+    };
+
+    const cfg = presetConfig[preset] || presetConfig.grand_lobby;
+    const sampleRate = ctx.sampleRate;
+    const length = Math.max(1, Math.floor(sampleRate * cfg.duration));
+    const impulse = ctx.createBuffer(2, length, sampleRate);
+
+    for (let ch = 0; ch < 2; ch++) {
+      const data = impulse.getChannelData(ch);
+      let lp = 0;
+      const earlyStep = Math.max(1, Math.floor(sampleRate * cfg.earlyReflections));
+      for (let i = 0; i < length; i++) {
+        const norm = i / length;
+        const envelope = Math.pow(1 - norm, cfg.decay);
+        const rawNoise = Math.random() * 2 - 1;
+        // One-pole lowpass damping for natural high-frequency absorption
+        lp = lp * cfg.damping + rawNoise * (1 - cfg.damping);
+        // Early reflection comb spikes in the first 90ms
+        const isEarlySpike = i < sampleRate * 0.09 && i % earlyStep < 4 ? 1.65 : 1.0;
+        data[i] = lp * envelope * isEarlySpike * 0.55;
+      }
+    }
+
+    if (ctx === this.ctx) {
+      this.impulseCache.set(preset, impulse);
+    }
+    return impulse;
+  }
+
+  /**
+   * Builds a warm analog-style hyperbolic tangent distortion curve for WaveShaperNode.
+   */
+  private createDistortionCurve(amount: number): Float32Array<ArrayBuffer> {
+    const k = Math.max(0, amount) * 65;
+    const samples = 1024;
+    const curve = new Float32Array(new ArrayBuffer(samples * 4));
+    for (let i = 0; i < samples; i++) {
+      const x = (i * 2) / samples - 1;
+      curve[i] = k === 0 ? x : Math.tanh(x * (1 + k * 0.12));
+    }
+    return curve;
+  }
+
+  /**
+   * Generates shaped physical Foley noise (White, Pink 1/f, or Brown 1/f^2).
+   */
+  private createShapedNoiseBuffer(ctx: BaseAudioContext, duration: number, color: SfxNoiseColor = 'pink', amplitude = 1.0): AudioBuffer {
+    const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = buffer.getChannelData(0);
+
+    if (color === 'white') {
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = (Math.random() * 2 - 1) * amplitude;
+      }
+    } else if (color === 'pink') {
+      // Paul Kellet's refined Pink Noise filter
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.15;
+        b6 = white * 0.115926;
+        output[i] = Math.max(-1, Math.min(1, pink * amplitude));
+      }
+    } else {
+      // Brown (1/f^2) low-frequency rumble noise
+      let lastOut = 0.0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        lastOut = (lastOut + 0.04 * white) / 1.04;
+        output[i] = Math.max(-1, Math.min(1, lastOut * 2.8 * amplitude));
+      }
+    }
+
+    return buffer;
   }
 
   public setMasterVolume(v: number): void {
@@ -555,84 +682,189 @@ class AudioEngineSingleton {
   }
 
   /**
-   * Synthesizes and plays a SoundEffectSpec immediately via Web Audio API.
+   * Internal SOTA Multi-Stage DSP graph builder for SFX (supports live AudioContext + spatial destination).
+   */
+  private triggerSfxGraph(ctx: AudioContext, spec: SoundEffectSpec, destination: AudioNode): void {
+    const now = ctx.currentTime;
+    const duration = Math.max(0.05, spec.durationSeconds);
+
+    // 1. Primary Carrier Oscillator
+    const osc = ctx.createOscillator();
+    osc.type = spec.oscillatorType;
+    osc.frequency.setValueAtTime(spec.baseFrequency, now);
+    if (spec.pitchBend) {
+      osc.frequency.exponentialRampToValueAtTime(
+        Math.max(20, spec.baseFrequency + spec.pitchBend),
+        now + duration
+      );
+    }
+
+    // 2. FM Modulator Operator (for metallic bells, brass chimes, and wood creaks)
+    const fmRatio = spec.fmRatio ?? (spec.type === 'brass_bell' || spec.type === 'elevator_chime' ? 2.756 : 1.5);
+    const fmDepth = spec.fmDepth ?? (spec.type === 'brass_bell' ? 180 : spec.type === 'door_creak' ? 65 : 0);
+    if (fmDepth > 1) {
+      const fmOsc = ctx.createOscillator();
+      fmOsc.type = 'sine';
+      fmOsc.frequency.setValueAtTime(spec.baseFrequency * fmRatio, now);
+      const fmGain = ctx.createGain();
+      fmGain.gain.setValueAtTime(fmDepth, now);
+      fmGain.gain.exponentialRampToValueAtTime(0.5, now + duration);
+      fmOsc.connect(fmGain);
+      fmGain.connect(osc.frequency);
+      fmOsc.start(now);
+      fmOsc.stop(now + duration + 0.05);
+    }
+
+    // 3. Sub-Oscillator Operator (-1 octave harmonic body)
+    const voiceMixBus = ctx.createGain();
+    osc.connect(voiceMixBus);
+
+    const subMix = spec.subOscMix ?? 0.22;
+    if (subMix > 0.01) {
+      const subOsc = ctx.createOscillator();
+      subOsc.type = 'triangle';
+      subOsc.frequency.setValueAtTime(Math.max(20, spec.baseFrequency * 0.5), now);
+      const subGain = ctx.createGain();
+      subGain.gain.setValueAtTime(subMix, now);
+      subOsc.connect(subGain);
+      subGain.connect(voiceMixBus);
+      subOsc.start(now);
+      subOsc.stop(now + duration + 0.05);
+    }
+
+    // 4. Shaped Physical Foley Noise Layer (White / Pink / Brown) cleanly routed BEFORE filter
+    if (spec.noiseMix && spec.noiseMix > 0.02) {
+      const noiseColor: SfxNoiseColor =
+        spec.noiseColor ||
+        (spec.type === 'thunder' || spec.type === 'footstep'
+          ? 'brown'
+          : spec.type === 'steam_pipe'
+            ? 'pink'
+            : 'pink');
+      const noiseBuffer = this.createShapedNoiseBuffer(ctx, duration, noiseColor, spec.noiseMix);
+      const noiseSource = ctx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(spec.noiseMix, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+      noiseSource.connect(noiseGain);
+      noiseGain.connect(voiceMixBus);
+      noiseSource.start(now);
+      noiseSource.stop(now + duration);
+    }
+
+    // 5. Dynamic Resonant BiquadFilter with cutoff envelope sweep
+    let stageNode: AudioNode = voiceMixBus;
+    if (spec.filterType && spec.filterCutoff) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = spec.filterType;
+      const startCutoff = Math.min(12000, spec.filterCutoff * 1.35);
+      filter.frequency.setValueAtTime(startCutoff, now);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(40, spec.filterCutoff * 0.7), now + duration);
+      if (spec.filterResonance) {
+        filter.Q.setValueAtTime(spec.filterResonance, now);
+      }
+      stageNode.connect(filter);
+      stageNode = filter;
+    }
+
+    // 6. Warm Analog Saturation (WaveShaperNode)
+    if (spec.distortion && spec.distortion > 0.02) {
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = this.createDistortionCurve(spec.distortion);
+      shaper.oversample = '2x';
+      stageNode.connect(shaper);
+      stageNode = shaper;
+    }
+
+    // 7. ADSR Amplitude Envelope
+    const envGain = ctx.createGain();
+    envGain.gain.setValueAtTime(0.0001, now);
+    const attackEnd = now + Math.max(0.002, spec.attack);
+    envGain.gain.linearRampToValueAtTime(1.0, attackEnd);
+    const decayEnd = attackEnd + Math.max(0.01, spec.decay);
+    const sustainLevel = Math.max(0.02, spec.sustain);
+    envGain.gain.linearRampToValueAtTime(sustainLevel, decayEnd);
+    const releaseStart = now + duration - Math.max(0.01, spec.release);
+    if (releaseStart > decayEnd) {
+      envGain.gain.setValueAtTime(sustainLevel, releaseStart);
+    }
+    envGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    stageNode.connect(envGain);
+
+    // 8. Wet/Dry Convolution Reverb Routing
+    const reverbAmount = Math.max(0, Math.min(1, spec.reverb ?? 0.25));
+    const dryGain = ctx.createGain();
+    dryGain.gain.setValueAtTime(1 - reverbAmount * 0.45, now);
+    envGain.connect(dryGain);
+    dryGain.connect(destination);
+
+    if (reverbAmount > 0.03) {
+      const convolver = ctx.createConvolver();
+      convolver.buffer = this.getImpulseBuffer(ctx, spec.reverbPreset || 'small_room');
+      const wetGain = ctx.createGain();
+      wetGain.gain.setValueAtTime(reverbAmount * 0.85, now);
+      envGain.connect(convolver);
+      convolver.connect(wetGain);
+      wetGain.connect(destination);
+    }
+
+    osc.start(now);
+    osc.stop(now + duration + 0.05);
+  }
+
+  /**
+   * Synthesizes and plays a SoundEffectSpec immediately via SOTA Multi-Stage Web Audio DSP.
    */
   public playSoundEffect(spec: SoundEffectSpec): void {
     try {
       const ctx = this.initContext();
-      const now = ctx.currentTime;
-      const duration = Math.max(0.05, spec.durationSeconds);
-
-      // Main Oscillator
-      const osc = ctx.createOscillator();
-      osc.type = spec.oscillatorType;
-      osc.frequency.setValueAtTime(spec.baseFrequency, now);
-      if (spec.pitchBend) {
-        osc.frequency.exponentialRampToValueAtTime(
-          Math.max(20, spec.baseFrequency + spec.pitchBend),
-          now + duration
-        );
-      }
-
-      // Gain Envelope (ADSR)
-      const gainNode = ctx.createGain();
-      gainNode.gain.setValueAtTime(0.0001, now);
-      const attackEnd = now + Math.max(0.002, spec.attack);
-      gainNode.gain.linearRampToValueAtTime(1.0, attackEnd);
-      const decayEnd = attackEnd + Math.max(0.01, spec.decay);
-      gainNode.gain.linearRampToValueAtTime(Math.max(0.05, spec.sustain), decayEnd);
-      const releaseStart = now + duration - Math.max(0.01, spec.release);
-      if (releaseStart > decayEnd) {
-        gainNode.gain.setValueAtTime(spec.sustain, releaseStart);
-      }
-      gainNode.gain.linearRampToValueAtTime(0.0001, now + duration);
-
-      // Filter
-      let lastNode: AudioNode = osc;
-      if (spec.filterType && spec.filterCutoff) {
-        const filter = ctx.createBiquadFilter();
-        filter.type = spec.filterType;
-        filter.frequency.setValueAtTime(spec.filterCutoff, now);
-        if (spec.filterResonance) {
-          filter.Q.setValueAtTime(spec.filterResonance, now);
-        }
-        lastNode.connect(filter);
-        lastNode = filter;
-      }
-
-      lastNode.connect(gainNode);
-
-      // Noise source if noiseMix > 0
-      if (spec.noiseMix && spec.noiseMix > 0.02) {
-        const bufferSize = ctx.sampleRate * duration;
-        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-        const output = noiseBuffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          output[i] = (Math.random() * 2 - 1) * spec.noiseMix;
-        }
-        const whiteNoise = ctx.createBufferSource();
-        whiteNoise.buffer = noiseBuffer;
-
-        const noiseGain = ctx.createGain();
-        noiseGain.gain.setValueAtTime(spec.noiseMix, now);
-        noiseGain.gain.linearRampToValueAtTime(0.001, now + duration);
-
-        whiteNoise.connect(noiseGain);
-        if (this.sfxGain) {
-          noiseGain.connect(this.sfxGain);
-        }
-        whiteNoise.start(now);
-        whiteNoise.stop(now + duration);
-      }
-
-      if (this.sfxGain) {
-        gainNode.connect(this.sfxGain);
-      }
-
-      osc.start(now);
-      osc.stop(now + duration + 0.05);
+      if (!this.sfxGain) return;
+      this.triggerSfxGraph(ctx, spec, this.sfxGain);
     } catch (err) {
       console.warn('AudioEngine playSoundEffect error:', err);
+    }
+  }
+
+  /**
+   * Synthesizes and plays a 3D Spatial HRTF SoundEffectSpec positioned in 3D hotel coordinates.
+   */
+  public playSpatialSoundAt(
+    spec: SoundEffectSpec,
+    emitterPos: [number, number, number],
+    listenerPos: [number, number, number] = [0, 1.7, 0]
+  ): void {
+    try {
+      const ctx = this.initContext();
+      if (!this.sfxGain) return;
+      const now = ctx.currentTime;
+
+      const listener = ctx.listener;
+      if (listener.positionX) {
+        listener.positionX.setValueAtTime(listenerPos[0], now);
+        listener.positionY.setValueAtTime(listenerPos[1], now);
+        listener.positionZ.setValueAtTime(listenerPos[2], now);
+      } else {
+        listener.setPosition(listenerPos[0], listenerPos[1], listenerPos[2]);
+      }
+
+      const panner = ctx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 1.5;
+      panner.maxDistance = 35;
+      panner.rolloffFactor = 1.2;
+      panner.positionX.setValueAtTime(emitterPos[0], now);
+      panner.positionY.setValueAtTime(emitterPos[1], now);
+      panner.positionZ.setValueAtTime(emitterPos[2], now);
+
+      panner.connect(this.sfxGain);
+      this.triggerSfxGraph(ctx, spec, panner);
+    } catch (err) {
+      console.warn('AudioEngine playSpatialSoundAt error:', err);
     }
   }
 
@@ -645,7 +877,68 @@ class AudioEngineSingleton {
   }
 
   /**
-   * Starts playing a looping background music track.
+   * Synthesizes and plays a randomized floor-surface-specific footstep ('carpet' | 'wood' | 'linoleum')
+   * for either the first-person player or a 3D spatialized AI character, remaining completely silent when crouching.
+   */
+  public playSurfaceFootstep(
+    surface: FloorSurfaceMaterial,
+    options?: {
+      stepIndex?: number;
+      jitterSeed?: number;
+      isCrouching?: boolean;
+      footstepsEnabled?: boolean;
+      emitterPos?: [number, number, number];
+      listenerPos?: [number, number, number];
+      includeCaneTap?: boolean;
+    }
+  ): SoundEffectSpec | null {
+    if (options?.isCrouching || options?.footstepsEnabled === false) {
+      return null;
+    }
+
+    const stepIdx = options?.stepIndex ?? 0;
+    const seed = options?.jitterSeed ?? Math.random();
+    const isNpc = Boolean(options?.emitterPos);
+    const computed = computeSurfaceFootstepSpec(surface, stepIdx, seed, { isNpc });
+    const spec: SoundEffectSpec = {
+      ...computed,
+      id: `sfx_footstep_${surface}_${stepIdx}_${Math.round(seed * 1000)}`,
+      type: 'footstep'
+    };
+
+    if (typeof window !== 'undefined') {
+      if (options?.emitterPos) {
+        this.playSpatialSoundAt(spec, options.emitterPos, options.listenerPos || [0, 1.62, 0]);
+      } else {
+        this.playSoundEffect(spec);
+      }
+
+      // Layer synchronized wooden cane ferrule tap on alternate strides for bent-spine characters (e.g. Mrs. Eleanor Vance)
+      if (options?.includeCaneTap && stepIdx % 2 === 1) {
+        const caneComputed = computeSurfaceFootstepSpec(surface, stepIdx, (seed + 0.37) % 1, {
+          isCaneTap: true,
+          isNpc
+        });
+        const caneSpec: SoundEffectSpec = {
+          ...caneComputed,
+          id: `sfx_canetap_${surface}_${stepIdx}`,
+          type: 'footstep'
+        };
+        window.setTimeout(() => {
+          if (options?.emitterPos) {
+            this.playSpatialSoundAt(caneSpec, options.emitterPos, options.listenerPos || [0, 1.62, 0]);
+          } else {
+            this.playSoundEffect(caneSpec);
+          }
+        }, 65);
+      }
+    }
+
+    return spec;
+  }
+
+  /**
+   * Starts playing a looping polyphonic background music track with chord voicings, stereo width, and reverb.
    */
   public playBgm(track: MusicTrackSpec): void {
     this.stopBgm();
@@ -656,80 +949,190 @@ class AudioEngineSingleton {
     const beatSeconds = 60 / Math.max(30, track.bpm);
     const loopLengthSeconds = beatSeconds * 8; // 8 beats per measure cycle
 
+    // Create shared stereo reverb bus for this BGM track
+    const bgmDryBus = ctx.createGain();
+    const reverbMix = Math.max(0.05, Math.min(0.9, track.reverbAmount ?? 0.45));
+    bgmDryBus.gain.setValueAtTime(1.0 - reverbMix * 0.35, ctx.currentTime);
+    if (this.bgmGain) bgmDryBus.connect(this.bgmGain);
+
+    const bgmConvolver = ctx.createConvolver();
+    bgmConvolver.buffer = this.getImpulseBuffer(ctx, track.reverbPreset || 'grand_lobby');
+    const bgmWetBus = ctx.createGain();
+    bgmWetBus.gain.setValueAtTime(reverbMix * 0.75, ctx.currentTime);
+    bgmConvolver.connect(bgmWetBus);
+    if (this.bgmGain) bgmWetBus.connect(this.bgmGain);
+
     const scheduleLoopCycle = (startTime: number) => {
       if (!this.isBgmPlaying || this.activeBgmTrack?.id !== track.id) return;
 
-      // 1. Ambient Drone Pad
-      const droneOsc = ctx.createOscillator();
-      droneOsc.type = 'triangle';
-      droneOsc.frequency.setValueAtTime(track.droneFreq, startTime);
+      // 1. Stereo Detuned Ambient Drone Pad
+      [-6, 6].forEach((detuneCents, idx) => {
+        const droneOsc = ctx.createOscillator();
+        droneOsc.type = 'triangle';
+        droneOsc.frequency.setValueAtTime(track.droneFreq, startTime);
+        droneOsc.detune.setValueAtTime(detuneCents, startTime);
 
-      const droneGain = ctx.createGain();
-      droneGain.gain.setValueAtTime(0.001, startTime);
-      droneGain.gain.linearRampToValueAtTime(0.2, startTime + 1.0);
-      droneGain.gain.setValueAtTime(0.2, startTime + loopLengthSeconds - 1.0);
-      droneGain.gain.linearRampToValueAtTime(0.001, startTime + loopLengthSeconds);
+        const dronePanner = ctx.createStereoPanner();
+        dronePanner.pan.setValueAtTime(idx === 0 ? -0.35 : 0.35, startTime);
 
-      const droneFilter = ctx.createBiquadFilter();
-      droneFilter.type = 'lowpass';
-      droneFilter.frequency.setValueAtTime(track.filterCutoff, startTime);
+        const droneGain = ctx.createGain();
+        droneGain.gain.setValueAtTime(0.001, startTime);
+        droneGain.gain.linearRampToValueAtTime(0.09, startTime + 0.9);
+        droneGain.gain.setValueAtTime(0.09, startTime + loopLengthSeconds - 0.9);
+        droneGain.gain.linearRampToValueAtTime(0.001, startTime + loopLengthSeconds);
 
-      droneOsc.connect(droneFilter);
-      droneFilter.connect(droneGain);
-      if (this.bgmGain) droneGain.connect(this.bgmGain);
+        const droneFilter = ctx.createBiquadFilter();
+        droneFilter.type = 'lowpass';
+        droneFilter.frequency.setValueAtTime(track.filterCutoff, startTime);
 
-      droneOsc.start(startTime);
-      droneOsc.stop(startTime + loopLengthSeconds);
-      this.scheduledVoices.push({ stop: () => { try { droneOsc.stop(); } catch {} } });
+        droneOsc.connect(droneFilter);
+        droneFilter.connect(dronePanner);
+        dronePanner.connect(droneGain);
+        droneGain.connect(bgmDryBus);
+        droneGain.connect(bgmConvolver);
 
-      // 2. Schedule Bass Notes
+        droneOsc.start(startTime);
+        droneOsc.stop(startTime + loopLengthSeconds + 0.05);
+        this.scheduledVoices.push({ stop: () => { try { droneOsc.stop(); } catch {} } });
+      });
+
+      // 2. Polyphonic Chord Progression Voicings (4 chords across 8 beats = 2 beats each)
+      const chords = track.chords && track.chords.length > 0 ? track.chords : ['Dm7', 'G7', 'Bbmaj7', 'A7'];
+      const beatsPerChord = 8 / chords.length;
+      const chordDuration = beatsPerChord * beatSeconds;
+
+      chords.forEach((chordSymbol, chordIdx) => {
+        const chordStart = startTime + chordIdx * chordDuration;
+        const freqs = resolveChordVoicingFrequencies(chordSymbol);
+
+        freqs.forEach((freq, noteIdx) => {
+          const padOsc = ctx.createOscillator();
+          padOsc.type = track.padInstrument === 'noir_organ' ? 'sawtooth' : 'sine';
+          padOsc.frequency.setValueAtTime(freq, chordStart);
+          padOsc.detune.setValueAtTime((noteIdx - 1.5) * 4, chordStart);
+
+          // Subtle electric-piano / Rhodes FM tine harmonic
+          const tineOsc = ctx.createOscillator();
+          tineOsc.type = 'triangle';
+          tineOsc.frequency.setValueAtTime(freq * 2, chordStart);
+          const tineGain = ctx.createGain();
+          tineGain.gain.setValueAtTime(0.025, chordStart);
+          tineGain.gain.exponentialRampToValueAtTime(0.001, chordStart + chordDuration * 0.6);
+
+          const padFilter = ctx.createBiquadFilter();
+          padFilter.type = 'lowpass';
+          padFilter.frequency.setValueAtTime(Math.min(2200, track.filterCutoff * 1.3), chordStart);
+
+          const panner = ctx.createStereoPanner();
+          const panSpread = ((noteIdx / Math.max(1, freqs.length - 1)) * 2 - 1) * (track.stereoWidth ?? 0.65);
+          panner.pan.setValueAtTime(Math.max(-0.9, Math.min(0.9, panSpread)), chordStart);
+
+          const padGain = ctx.createGain();
+          padGain.gain.setValueAtTime(0.001, chordStart);
+          padGain.gain.linearRampToValueAtTime(0.065, chordStart + 0.12);
+          padGain.gain.setValueAtTime(0.05, chordStart + chordDuration * 0.7);
+          padGain.gain.linearRampToValueAtTime(0.0008, chordStart + chordDuration);
+
+          padOsc.connect(padFilter);
+          tineOsc.connect(tineGain);
+          tineGain.connect(padFilter);
+          padFilter.connect(panner);
+          panner.connect(padGain);
+          padGain.connect(bgmDryBus);
+          padGain.connect(bgmConvolver);
+
+          padOsc.start(chordStart);
+          padOsc.stop(chordStart + chordDuration + 0.05);
+          tineOsc.start(chordStart);
+          tineOsc.stop(chordStart + chordDuration + 0.05);
+          this.scheduledVoices.push({
+            stop: () => {
+              try {
+                padOsc.stop();
+                tineOsc.stop();
+              } catch {}
+            }
+          });
+        });
+      });
+
+      // 3. Schedule Acoustic Upright / Sub Bass Notes
       track.bass.forEach((bn) => {
         const noteStart = startTime + bn.timeOffset * beatSeconds;
         const noteDuration = bn.duration * beatSeconds;
 
         const bOsc = ctx.createOscillator();
-        bOsc.type = 'sine';
+        bOsc.type = 'triangle';
         bOsc.frequency.setValueAtTime(bn.freq, noteStart);
+
+        const bFilter = ctx.createBiquadFilter();
+        bFilter.type = 'lowpass';
+        bFilter.frequency.setValueAtTime(320, noteStart);
 
         const bGain = ctx.createGain();
         bGain.gain.setValueAtTime(0.001, noteStart);
-        bGain.gain.linearRampToValueAtTime(0.35 * bn.velocity, noteStart + 0.04);
-        bGain.gain.linearRampToValueAtTime(0.001, noteStart + noteDuration);
+        bGain.gain.linearRampToValueAtTime(0.32 * bn.velocity, noteStart + 0.03);
+        bGain.gain.exponentialRampToValueAtTime(0.002, noteStart + noteDuration);
 
-        bOsc.connect(bGain);
-        if (this.bgmGain) bGain.connect(this.bgmGain);
+        bOsc.connect(bFilter);
+        bFilter.connect(bGain);
+        bGain.connect(bgmDryBus);
 
         bOsc.start(noteStart);
         bOsc.stop(noteStart + noteDuration + 0.05);
         this.scheduledVoices.push({ stop: () => { try { bOsc.stop(); } catch {} } });
       });
 
-      // 3. Schedule Melody Notes
-      track.melody.forEach((mn) => {
+      // 4. Schedule Expressive Lead Melody Notes (Warm FM Bell / Rhodes Lead)
+      track.melody.forEach((mn, idx) => {
         const noteStart = startTime + mn.timeOffset * beatSeconds;
         const noteDuration = mn.duration * beatSeconds;
 
         const mOsc = ctx.createOscillator();
-        mOsc.type = 'sawtooth';
+        mOsc.type = 'triangle';
         mOsc.frequency.setValueAtTime(mn.freq, noteStart);
+
+        // Harmonic overtone modulator for expressive bell/epiano attack
+        const modOsc = ctx.createOscillator();
+        modOsc.type = 'sine';
+        modOsc.frequency.setValueAtTime(mn.freq * 2, noteStart);
+        const modGain = ctx.createGain();
+        modGain.gain.setValueAtTime(mn.freq * 0.45, noteStart);
+        modGain.gain.exponentialRampToValueAtTime(1.0, noteStart + Math.min(0.35, noteDuration * 0.6));
+        modOsc.connect(modGain);
+        modGain.connect(mOsc.frequency);
 
         const mFilter = ctx.createBiquadFilter();
         mFilter.type = 'lowpass';
-        mFilter.frequency.setValueAtTime(Math.min(1800, track.filterCutoff * 1.5), noteStart);
+        mFilter.frequency.setValueAtTime(Math.min(2400, track.filterCutoff * 1.8), noteStart);
+
+        const mPan = ctx.createStereoPanner();
+        mPan.pan.setValueAtTime(idx % 2 === 0 ? -0.2 : 0.2, noteStart);
 
         const mGain = ctx.createGain();
         mGain.gain.setValueAtTime(0.001, noteStart);
-        mGain.gain.linearRampToValueAtTime(0.25 * mn.velocity, noteStart + 0.02);
-        mGain.gain.linearRampToValueAtTime(0.15 * mn.velocity, noteStart + noteDuration * 0.5);
-        mGain.gain.linearRampToValueAtTime(0.001, noteStart + noteDuration);
+        mGain.gain.linearRampToValueAtTime(0.22 * mn.velocity, noteStart + 0.02);
+        mGain.gain.linearRampToValueAtTime(0.12 * mn.velocity, noteStart + noteDuration * 0.45);
+        mGain.gain.exponentialRampToValueAtTime(0.001, noteStart + noteDuration);
 
         mOsc.connect(mFilter);
-        mFilter.connect(mGain);
-        if (this.bgmGain) mGain.connect(this.bgmGain);
+        mFilter.connect(mPan);
+        mPan.connect(mGain);
+        mGain.connect(bgmDryBus);
+        mGain.connect(bgmConvolver);
 
         mOsc.start(noteStart);
         mOsc.stop(noteStart + noteDuration + 0.05);
-        this.scheduledVoices.push({ stop: () => { try { mOsc.stop(); } catch {} } });
+        modOsc.start(noteStart);
+        modOsc.stop(noteStart + noteDuration + 0.05);
+        this.scheduledVoices.push({
+          stop: () => {
+            try {
+              mOsc.stop();
+              modOsc.stop();
+            } catch {}
+          }
+        });
       });
     };
 
@@ -767,48 +1170,94 @@ class AudioEngineSingleton {
   }
 
   /**
-   * Offline renders a SoundEffectSpec to a 16-bit PCM WAV Blob for download / export.
+   * Offline renders a SoundEffectSpec to a 16-bit Stereo PCM WAV Blob with FM, shaped noise, state-variable filter, and stereo Schroeder reverb.
    */
   public exportSfxToWavBlob(spec: SoundEffectSpec): Blob {
     const sampleRate = 44100;
     const duration = Math.max(0.1, spec.durationSeconds);
-    const numSamples = Math.floor(sampleRate * duration);
-    const buffer = new Float32Array(numSamples);
+    const tailSeconds = (spec.reverb ?? 0.25) > 0.05 ? 0.35 : 0.05;
+    const totalSeconds = duration + tailSeconds;
+    const numSamples = Math.floor(sampleRate * totalSeconds);
+    const leftChannel = new Float32Array(numSamples);
+    const rightChannel = new Float32Array(numSamples);
+
+    const fmRatio = spec.fmRatio ?? 1.5;
+    const fmDepth = spec.fmDepth ?? 0;
+    const subMix = spec.subOscMix ?? 0.2;
+    const noiseMix = spec.noiseMix ?? 0;
+    const noiseColor: SfxNoiseColor = spec.noiseColor || 'pink';
+
+    // Pink/Brown noise state
+    let pinkB0 = 0, pinkB1 = 0, pinkB2 = 0;
+    let brownLast = 0;
+    // State-variable filter state
+    let lpState = 0, bpState = 0;
+    let phase = 0;
+    let subPhase = 0;
 
     for (let i = 0; i < numSamples; i++) {
       const t = i / sampleRate;
+      if (t >= duration) break;
       const progress = t / duration;
 
-      // Frequency calculation
-      let freq = spec.baseFrequency;
-      if (spec.pitchBend) {
-        freq = spec.baseFrequency + spec.pitchBend * progress;
-      }
+      // Base frequency + pitchBend + FM operator
+      let baseFreq = spec.baseFrequency + (spec.pitchBend || 0) * progress;
+      baseFreq = Math.max(20, baseFreq);
+      const fmMod = fmDepth > 0 ? Math.sin(2 * Math.PI * baseFreq * fmRatio * t) * fmDepth * (1 - progress * 0.7) : 0;
+      const instFreq = Math.max(20, baseFreq + fmMod);
 
-      // Waveform
+      phase += (2 * Math.PI * instFreq) / sampleRate;
+      subPhase += (2 * Math.PI * (baseFreq * 0.5)) / sampleRate;
+
       let sample = 0;
-      const phase = 2 * Math.PI * freq * t;
       if (spec.oscillatorType === 'sine') {
         sample = Math.sin(phase);
       } else if (spec.oscillatorType === 'square') {
         sample = Math.sin(phase) >= 0 ? 0.8 : -0.8;
       } else if (spec.oscillatorType === 'sawtooth') {
-        sample = 2 * ((freq * t) % 1) - 1;
-      } else if (spec.oscillatorType === 'triangle') {
-        sample = 2 * Math.abs(2 * ((freq * t) % 1) - 1) - 1;
+        sample = 2 * ((phase / (2 * Math.PI)) % 1) - 1;
+      } else {
+        sample = (2 / Math.PI) * Math.asin(Math.sin(phase));
       }
 
-      // Noise mix
-      if (spec.noiseMix && spec.noiseMix > 0.02) {
-        sample = sample * (1 - spec.noiseMix) + (Math.random() * 2 - 1) * spec.noiseMix;
+      // Add Sub-oscillator body
+      sample = sample * (1 - subMix * 0.5) + Math.sin(subPhase) * subMix;
+
+      // Add Shaped Noise (White / Pink / Brown)
+      if (noiseMix > 0.01) {
+        const white = Math.random() * 2 - 1;
+        let shapedNoise = white;
+        if (noiseColor === 'pink') {
+          pinkB0 = 0.997 * pinkB0 + white * 0.09;
+          pinkB1 = 0.96 * pinkB1 + white * 0.22;
+          pinkB2 = 0.65 * pinkB2 + white * 0.45;
+          shapedNoise = (pinkB0 + pinkB1 + pinkB2) * 0.45;
+        } else if (noiseColor === 'brown') {
+          brownLast = (brownLast + 0.04 * white) / 1.04;
+          shapedNoise = brownLast * 2.6;
+        }
+        sample = sample * (1 - noiseMix * 0.65) + shapedNoise * noiseMix;
       }
 
-      // Distortion
-      if (spec.distortion && spec.distortion > 0.05) {
-        sample = Math.tanh(sample * (1 + spec.distortion * 3));
+      // Chamberlin State-Variable Biquad Filter (Lowpass / Bandpass / Highpass)
+      if (spec.filterCutoff) {
+        const cutoff = Math.max(40, Math.min(12000, spec.filterCutoff * (1.2 - 0.4 * progress)));
+        const f = Math.min(0.85, 2 * Math.sin((Math.PI * cutoff) / sampleRate));
+        const q = Math.max(0.25, 1 / Math.max(0.5, spec.filterResonance || 1.5));
+        lpState += f * bpState;
+        const hpState = sample - lpState - q * bpState;
+        bpState += f * hpState;
+        if (spec.filterType === 'highpass') sample = hpState;
+        else if (spec.filterType === 'bandpass') sample = bpState;
+        else sample = lpState;
       }
 
-      // Envelope
+      // Warm Tanh Saturation
+      if (spec.distortion && spec.distortion > 0.02) {
+        sample = Math.tanh(sample * (1 + spec.distortion * 3.5));
+      }
+
+      // ADSR Envelope
       let env = 0;
       if (t < spec.attack) {
         env = t / Math.max(0.001, spec.attack);
@@ -819,71 +1268,130 @@ class AudioEngineSingleton {
         env = spec.sustain;
       } else {
         const releaseProgress = (t - (duration - spec.release)) / Math.max(0.001, spec.release);
-        env = spec.sustain * (1.0 - releaseProgress);
+        env = Math.max(0, spec.sustain * (1.0 - releaseProgress));
       }
 
-      buffer[i] = Math.max(-1, Math.min(1, sample * env));
+      const drySample = Math.max(-1, Math.min(1, sample * env));
+      leftChannel[i] = drySample;
+      rightChannel[i] = drySample;
     }
 
-    return encodeWav(buffer, sampleRate);
+    // Apply Stereo Feedback Comb Reverb Tail
+    const rev = Math.max(0, Math.min(0.9, spec.reverb ?? 0.25));
+    if (rev > 0.03) {
+      applyStereoReverbTail(leftChannel, rightChannel, sampleRate, rev);
+    }
+
+    return encodeStereoWav(leftChannel, rightChannel, sampleRate);
   }
 
   /**
-   * Offline renders a MusicTrackSpec loop to a 16-bit PCM WAV Blob.
+   * Offline renders a MusicTrackSpec loop to a 16-bit Stereo PCM WAV Blob with full polyphonic chord voicings and stereo reverb.
    */
   public exportBgmToWavBlob(track: MusicTrackSpec): Blob {
     const sampleRate = 44100;
     const beatSeconds = 60 / Math.max(30, track.bpm);
     const loopDuration = beatSeconds * 8;
     const numSamples = Math.floor(sampleRate * loopDuration);
-    const buffer = new Float32Array(numSamples);
+    const leftChannel = new Float32Array(numSamples);
+    const rightChannel = new Float32Array(numSamples);
+
+    const chords = track.chords && track.chords.length > 0 ? track.chords : ['Dm7', 'G7', 'Bbmaj7', 'A7'];
+    const chordVoicings = chords.map((c) => resolveChordVoicingFrequencies(c));
+    const chordDuration = loopDuration / chords.length;
 
     for (let i = 0; i < numSamples; i++) {
       const t = i / sampleRate;
 
-      // Drone
-      let s = Math.sin(2 * Math.PI * track.droneFreq * t) * 0.18;
+      // 1. Stereo Detuned Drone
+      let sL = Math.sin(2 * Math.PI * (track.droneFreq * 0.998) * t) * 0.12;
+      let sR = Math.sin(2 * Math.PI * (track.droneFreq * 1.002) * t) * 0.12;
 
-      // Bass notes
-      track.bass.forEach((bn) => {
+      // 2. Polyphonic Chord Voicing Pad
+      const chordIdx = Math.min(chordVoicings.length - 1, Math.floor(t / chordDuration));
+      const localChordT = t - chordIdx * chordDuration;
+      const chordEnv = Math.sin((localChordT / chordDuration) * Math.PI);
+      const freqs = chordVoicings[chordIdx];
+      for (let n = 0; n < freqs.length; n++) {
+        const f = freqs[n];
+        const voice = (Math.sin(2 * Math.PI * f * t) + 0.25 * Math.sin(4 * Math.PI * f * t)) * 0.055 * chordEnv;
+        const pan = n / Math.max(1, freqs.length - 1); // 0 (left) to 1 (right)
+        sL += voice * (1 - pan * 0.6);
+        sR += voice * (0.4 + pan * 0.6);
+      }
+
+      // 3. Bass notes (centered)
+      for (let b = 0; b < track.bass.length; b++) {
+        const bn = track.bass[b];
         const nStart = bn.timeOffset * beatSeconds;
         const nDur = bn.duration * beatSeconds;
         if (t >= nStart && t < nStart + nDur) {
           const localT = t - nStart;
           const env = Math.sin((localT / nDur) * Math.PI);
-          s += Math.sin(2 * Math.PI * bn.freq * localT) * 0.3 * bn.velocity * env;
+          const bassSig = Math.sin(2 * Math.PI * bn.freq * localT) * 0.26 * bn.velocity * env;
+          sL += bassSig;
+          sR += bassSig;
         }
-      });
+      }
 
-      // Melody notes
-      track.melody.forEach((mn) => {
+      // 4. Expressive FM Melody notes
+      for (let m = 0; m < track.melody.length; m++) {
+        const mn = track.melody[m];
         const nStart = mn.timeOffset * beatSeconds;
         const nDur = mn.duration * beatSeconds;
         if (t >= nStart && t < nStart + nDur) {
           const localT = t - nStart;
           const env = Math.sin((localT / nDur) * Math.PI);
-          // Soft triangle/sine blend
-          const voice = Math.sin(2 * Math.PI * mn.freq * localT) * 0.22 * mn.velocity * env;
-          s += voice;
+          const fmBell = Math.sin(2 * Math.PI * mn.freq * 2 * localT) * 0.35 * Math.exp(-localT * 4);
+          const voice = Math.sin(2 * Math.PI * mn.freq * localT + fmBell) * 0.2 * mn.velocity * env;
+          if (m % 2 === 0) {
+            sL += voice * 1.15;
+            sR += voice * 0.85;
+          } else {
+            sL += voice * 0.85;
+            sR += voice * 1.15;
+          }
         }
-      });
+      }
 
-      buffer[i] = Math.max(-1, Math.min(1, s));
+      leftChannel[i] = Math.max(-1, Math.min(1, sL));
+      rightChannel[i] = Math.max(-1, Math.min(1, sR));
     }
 
-    return encodeWav(buffer, sampleRate);
+    applyStereoReverbTail(leftChannel, rightChannel, sampleRate, Math.max(0.1, Math.min(0.85, track.reverbAmount ?? 0.45)));
+    return encodeStereoWav(leftChannel, rightChannel, sampleRate);
   }
 }
 
 /**
- * Encodes Float32 mono samples into a RIFF 16-bit PCM WAV container Blob.
+ * Applies a stereo Schroeder multi-tap feedback reverb network in-place.
  */
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
-  const numChannels = 1;
+function applyStereoReverbTail(left: Float32Array, right: Float32Array, sampleRate: number, wetAmount: number): void {
+  const delaySamplesL = Math.floor(sampleRate * 0.029);
+  const delaySamplesR = Math.floor(sampleRate * 0.037);
+  const feedback = Math.min(0.72, 0.35 + wetAmount * 0.38);
+  const wet = wetAmount * 0.42;
+
+  for (let i = delaySamplesR; i < left.length; i++) {
+    const revL = left[i - delaySamplesL] + right[i - delaySamplesR] * 0.35;
+    const revR = right[i - delaySamplesR] + left[i - delaySamplesL] * 0.35;
+    left[i] = Math.max(-1, Math.min(1, left[i] + revL * wet));
+    right[i] = Math.max(-1, Math.min(1, right[i] + revR * wet));
+    left[i - delaySamplesL] *= feedback;
+    right[i - delaySamplesR] *= feedback;
+  }
+}
+
+/**
+ * Encodes Float32 stereo samples into a RIFF 16-bit 2-channel PCM WAV container Blob.
+ */
+function encodeStereoWav(left: Float32Array, right: Float32Array, sampleRate: number): Blob {
+  const numChannels = 2;
   const bytesPerSample = 2; // 16-bit
   const blockAlign = numChannels * bytesPerSample;
   const byteRate = sampleRate * blockAlign;
-  const dataSize = samples.length * bytesPerSample;
+  const numFrames = Math.min(left.length, right.length);
+  const dataSize = numFrames * blockAlign;
   const headerSize = 44;
   const totalSize = headerSize + dataSize;
 
@@ -909,12 +1417,14 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   writeString(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
-  // PCM sample data
+  // Interleaved L/R 16-bit PCM sample data
   let offset = 44;
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    const int16 = s < 0 ? s * 0x8000 : s * 0x7fff;
-    view.setInt16(offset, int16, true);
+  for (let i = 0; i < numFrames; i++) {
+    const sL = Math.max(-1, Math.min(1, left[i]));
+    const sR = Math.max(-1, Math.min(1, right[i]));
+    view.setInt16(offset, sL < 0 ? sL * 0x8000 : sL * 0x7fff, true);
+    view.setInt16(offset + 2, sR < 0 ? sR * 0x8000 : sR * 0x7fff, true);
+    offset += 4;
   }
 
   return new Blob([arrayBuffer], { type: 'audio/wav' });

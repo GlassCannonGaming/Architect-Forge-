@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-10-31T19:02:21.980Z",
+  "category": "interactions",
+  "folderPath": "ArchitectForge_Workspace/gameplay_logs/interactions",
+  "itemName": "Vincent Graves_Evening",
+  "data": {
+    "id": "int_1793473341971",
+    "timestamp": "2026-10-31T19:02:21.971Z",
+    "gameTimeFormatted": "07:30 PM",
+    "phase": "Evening",
+    "timeOfDayEvent": "Lobby Lights Dimming & Parlor Social Hour (Wall sconces flickering)",
+    "dailyActionAtTime": "Listening to the cassette tape player and watching who enters the service stairwell. (West Parlor Lounge)",
+    "characterName": "Vincent Graves",
+    "userMessage": "You're a liar and a suspect! I know about the missing ledger pages and drafty airshafts!",
+    "agentReply": "*Vincent Graves steps back coldly in Suite 202 (Disposition: CORDIAL, Trust 72/100).* \"I can't stand Drafty airshafts, Clerk. Until you show some respect around Suite 202, I have nothing more to say to you.\"",
+    "gameDay": 2,
+    "trustDelta": -28,
+    "suspicionDelta": 24,
+    "resultingTrust": 72,
+    "resultingSuspicion": 24,
+    "resultingDisposition": "cordial",
+    "triggeredLikes": [],
+    "triggeredDislikes": [
+      "Drafty airshafts",
+      "Missing ledger pages",
+      "hostile tone (\"liar\")",
+      "hostile tone (\"suspect\")"
+    ],
+    "answeredQuestionId": null,
+    "answeredQuestionFromDay": null,
+    "pendingQuestionAsked": null,
+    "unansweredQuestionDaysWaiting": 0,
+    "gameplayInfluenceSummary": "Triggered dislike (Drafty airshafts, Missing ledger pages, hostile tone (\"liar\"), hostile tone (\"suspect\")) → Tenant attitude shifted to CORDIAL (Trust 72/100)",
+    "unlockedClueId": null
+  }
+}

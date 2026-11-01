@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   LOCAL_WORKSPACE_FOLDERS,
   LOCAL_WORKSPACE_ROOT_NAME,
@@ -6,7 +6,10 @@ import {
   LocalFolderSpec,
   StudioWindowId,
   StudioWindowState,
-  buildLocalSetupScripts
+  buildLocalSetupScripts,
+  DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT,
+  ASSET_IMPORT_AGENT_INSTRUCTION_SET,
+  AI_MODEL_REGISTRY
 } from '../game/rules';
 import { StudioWindowFrame } from './StudioWindowFrame';
 
@@ -22,6 +25,17 @@ export interface LocalDiskFolderStatus extends LocalFolderSpec {
   workspacePath: string;
   fileCount: number;
   files: LocalDiskFileEntry[];
+}
+
+export interface BatchImportedAssetSummary {
+  name: string;
+  category: string;
+  enforcedImagePrompt?: string;
+  referenceImageUrl: string;
+  mattedImageDataUrl?: string;
+  alphaMatted?: boolean;
+  imageModelUsed: string;
+  meshyModelUsed: string;
 }
 
 interface LocalDiskFoldersWindowProps {
@@ -44,6 +58,10 @@ interface LocalDiskFoldersWindowProps {
   onRefreshStatus: () => void;
   lastSavedBanner: string | null;
   onExportStandaloneHtml: () => void;
+  onSaveDescriptionFile?: (filename: string, content: string) => Promise<void>;
+  onRunBatchDescriptionImport?: (filename: string, rawContent?: string) => Promise<void>;
+  batchImportBusy?: boolean;
+  lastBatchImportSummary?: BatchImportedAssetSummary[];
 }
 
 export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
@@ -65,9 +83,22 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
   onLoadFileFromFolder,
   onRefreshStatus,
   lastSavedBanner,
-  onExportStandaloneHtml
+  onExportStandaloneHtml,
+  onSaveDescriptionFile,
+  onRunBatchDescriptionImport,
+  batchImportBusy = false,
+  lastBatchImportSummary = []
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<LocalFolderCategory>('blueprints');
+  const [selectedCategory, setSelectedCategory] =
+    useState<LocalFolderCategory>('asset_descriptions');
+  const [descriptionFilename, setDescriptionFilename] = useState<string>(
+    'late70s_hotel_asset_descriptions.descriptions.txt'
+  );
+  const [descriptionContent, setDescriptionContent] = useState<string>(
+    DEFAULT_ASSET_DESCRIPTIONS_IMPORT_FILE_CONTENT
+  );
+  const [showInstructionSetModal, setShowInstructionSetModal] = useState<boolean>(false);
+  const descriptionUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const displayFolders: LocalDiskFolderStatus[] =
     foldersStatus.length > 0
@@ -105,6 +136,22 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleUploadDescriptionFileFromDisk = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const text = String(reader.result || '');
+      setDescriptionFilename(file.name);
+      setDescriptionContent(text);
+      if (onSaveDescriptionFile) {
+        await onSaveDescriptionFile(file.name, text);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   return (
     <StudioWindowFrame
       windowState={windowState}
@@ -117,6 +164,14 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
       onClose={onClose}
     >
       <div className="flex flex-col h-full text-xs text-stone-200 select-none bg-stone-950">
+        <input
+          ref={descriptionUploadInputRef}
+          type="file"
+          accept=".txt,.md,.json,text/plain,application/json"
+          onChange={handleUploadDescriptionFileFromDisk}
+          className="hidden"
+        />
+
         {/* Top Status Header */}
         <div className="p-2.5 bg-stone-900/95 border-b border-amber-500/30 flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -226,20 +281,24 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
             </div>
             {displayFolders.map((folder) => {
               const isSelected = folder.category === activeFolder.category;
+              const isDescriptionQueue = folder.category === 'asset_descriptions';
               return (
                 <button
                   type="button"
                   key={folder.category}
+                  data-testid={`folder-tab-${folder.category}`}
                   onClick={() => setSelectedCategory(folder.category)}
                   className={`w-full text-left p-2 rounded border transition flex items-start justify-between gap-1.5 ${
                     isSelected
                       ? 'bg-amber-500/20 border-amber-400 text-amber-100 shadow-sm'
-                      : 'bg-stone-900/80 hover:bg-stone-800/80 border-stone-800 text-stone-300'
+                      : isDescriptionQueue
+                        ? 'bg-emerald-950/35 hover:bg-emerald-900/40 border-emerald-600/40 text-emerald-200'
+                        : 'bg-stone-900/80 hover:bg-stone-800/80 border-stone-800 text-stone-300'
                   }`}
                 >
                   <div className="min-w-0">
                     <div className="font-bold text-[11px] truncate flex items-center gap-1">
-                      <span>📁</span>
+                      <span>{isDescriptionQueue ? '🖼️' : '📁'}</span>
                       <span>{folder.relativePath}/</span>
                     </div>
                     <div className="text-[10px] text-stone-400 truncate mt-0.5">{folder.label}</div>
@@ -259,14 +318,14 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
           </div>
 
           {/* Right Column: Active Dedicated Folder Details & Saved Files */}
-          <div className="col-span-7 flex flex-col min-h-0 bg-stone-900/40">
-            <div className="p-2.5 border-b border-stone-800 bg-stone-900/80">
+          <div className="col-span-7 min-w-0 flex flex-col min-h-0 overflow-y-auto bg-stone-900/40">
+            <div className="p-2.5 border-b border-stone-800 bg-stone-900/80 shrink-0">
               <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-xs font-bold text-amber-300 font-mono">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-amber-300 font-mono truncate">
                     ./{LOCAL_WORKSPACE_ROOT_NAME}/{activeFolder.relativePath}/
                   </div>
-                  <div className="text-[11px] font-semibold text-stone-200 mt-0.5">
+                  <div className="text-[11px] font-semibold text-stone-200 mt-0.5 truncate">
                     {activeFolder.label} ({activeFolder.dataTypeLabel})
                   </div>
                 </div>
@@ -282,10 +341,162 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
               </div>
               <div className="text-[10px] text-stone-400 mt-1">{activeFolder.description}</div>
               <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-sky-300 bg-sky-950/40 border border-sky-500/30 rounded px-2 py-0.5">
-                <span>Auto-Saves On: {activeFolder.autoSavesOn}</span>
-                <span>*{activeFolder.extension}</span>
+                <span className="truncate">Auto-Saves On: {activeFolder.autoSavesOn}</span>
+                <span className="shrink-0 ml-2">*{activeFolder.extension}</span>
               </div>
             </div>
+
+            {/* Dedicated Workbench when viewing assets/image_descriptions_import/ */}
+            {activeFolder.category === 'asset_descriptions' && (
+              <div className="p-2.5 border-b border-amber-500/30 bg-stone-950/90 space-y-2 shrink-0 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-200 font-mono text-[9px] font-bold">
+                      1. {AI_MODEL_REGISTRY.description_to_image.modelId}
+                    </span>
+                    <span className="text-stone-500">→</span>
+                    <span className="px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-400/50 text-purple-200 font-mono text-[9px] font-bold">
+                      2. Alpha-Matte RGBA(0,0,0,0)
+                    </span>
+                    <span className="text-stone-500">→</span>
+                    <span className="px-1.5 py-0.5 rounded bg-sky-500/20 border border-sky-400/50 text-sky-200 font-mono text-[9px] font-bold">
+                      3. {AI_MODEL_REGISTRY.meshy_image_to_3d.modelId}
+                    </span>
+                    <span className="text-stone-500">→</span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/50 text-emerald-200 font-mono text-[9px] font-bold">
+                      4. Game Catalog
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid="toggle-asset-import-instructions-btn"
+                      onClick={() => setShowInstructionSetModal((v) => !v)}
+                      className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-200 text-[10px] font-bold"
+                      title="Inspect the active Asset Import Agent System Instruction Set (Mandatory Low-Poly Enforcer + Late 70s / Early 80s Thriller Mystery)"
+                    >
+                      {showInstructionSetModal ? '▾ Hide Agent Instructions' : '📜 Agent Instruction Set'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => descriptionUploadInputRef.current?.click()}
+                      className="px-2 py-0.5 rounded bg-stone-800 hover:bg-stone-700 border border-stone-600 text-amber-200 text-[10px] font-semibold"
+                      title="Upload a .txt, .md, or .json file containing detailed image descriptions of assets from your computer"
+                    >
+                      📂 Upload (.txt/.md/.json)
+                    </button>
+                  </div>
+                </div>
+
+                {showInstructionSetModal && (
+                  <div
+                    data-testid="asset-import-instruction-set-panel"
+                    className="p-2 rounded bg-stone-900 border border-amber-500/50 space-y-1 min-w-0"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[10px] font-bold text-amber-300">
+                      <span>ACTIVE ASSET IMPORT AGENT INSTRUCTION SET</span>
+                      <span className="font-mono text-[9px] text-emerald-300">
+                        Diffuse White BG • Orthographic • Late-70s Thriller
+                      </span>
+                    </div>
+                    <pre className="max-h-28 overflow-y-auto overflow-x-hidden break-words whitespace-pre-wrap font-mono text-[9px] text-stone-300 bg-stone-950 p-1.5 rounded border border-stone-800">
+                      {ASSET_IMPORT_AGENT_INSTRUCTION_SET}
+                    </pre>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-stone-400 font-mono shrink-0">File in Folder:</span>
+                  <input
+                    type="text"
+                    value={descriptionFilename}
+                    onChange={(e) => setDescriptionFilename(e.target.value)}
+                    className="flex-1 bg-stone-900 border border-stone-700 rounded px-2 py-0.5 text-[10px] font-mono text-amber-200"
+                    placeholder="my_hotel_assets.descriptions.txt"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSaveDescriptionFile &&
+                      onSaveDescriptionFile(descriptionFilename, descriptionContent)
+                    }
+                    className="px-2 py-0.5 rounded bg-stone-800 hover:bg-stone-700 border border-stone-600 text-stone-200 text-[10px] font-semibold shrink-0"
+                  >
+                    💾 Save File to Folder
+                  </button>
+                </div>
+
+                <textarea
+                  rows={4}
+                  value={descriptionContent}
+                  onChange={(e) => setDescriptionContent(e.target.value)}
+                  className="w-full bg-stone-900/90 border border-stone-700 rounded p-1.5 text-[10px] font-mono text-stone-200 focus:outline-none focus:border-amber-400"
+                  placeholder="Place detailed asset image descriptions here (separated by --- or ### Title: prompt)..."
+                />
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[9px] text-stone-400">
+                    Drop any <code className="text-amber-300">.txt</code>,{' '}
+                    <code className="text-amber-300">.md</code>, or{' '}
+                    <code className="text-amber-300">.json</code> file into{' '}
+                    <code className="text-amber-300">assets/image_descriptions_import/</code>
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="run-batch-description-import-btn"
+                    disabled={batchImportBusy}
+                    onClick={() =>
+                      onRunBatchDescriptionImport &&
+                      onRunBatchDescriptionImport(descriptionFilename, descriptionContent)
+                    }
+                    className="w-full px-3 py-1.5 rounded bg-gradient-to-r from-amber-500 to-emerald-600 hover:from-amber-600 hover:to-emerald-700 disabled:opacity-50 text-stone-950 font-extrabold text-[10px] shadow-sm transition text-center"
+                  >
+                    {batchImportBusy
+                      ? '⏳ Generating Images (Flash-Lite) → Alpha-Matte → Meshy 3D → Importing...'
+                      : '⚡ Convert Descriptions → Images (Flash-Lite) → Alpha-Matte → Meshy 3D → Catalog'}
+                  </button>
+                </div>
+
+                {lastBatchImportSummary.length > 0 && (
+                  <div
+                    data-testid="batch-import-results-strip"
+                    className="pt-1.5 border-t border-stone-800 space-y-1"
+                  >
+                    <div className="text-[10px] font-bold text-emerald-300 flex items-center justify-between">
+                      <span>
+                        ✓ Imported {lastBatchImportSummary.length} Assets into Build Mode Catalog:
+                      </span>
+                      <span className="text-[9px] font-mono text-stone-400">
+                        gemini-3.1-flash-lite-image → meshy-4-image-to-3d
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-y-auto">
+                      {lastBatchImportSummary.map((item, idx) => (
+                        <div
+                          key={`${item.name}_${idx}`}
+                          className="flex items-center gap-1.5 p-1 rounded bg-stone-900 border border-emerald-500/30"
+                        >
+                          <img
+                            src={item.referenceImageUrl}
+                            alt={item.name}
+                            className="w-8 h-8 rounded object-cover border border-amber-500/40 shrink-0 bg-stone-950"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-bold text-amber-200 truncate">
+                              {item.name}
+                            </div>
+                            <div className="text-[9px] font-mono text-emerald-300 truncate">
+                              {item.alphaMatted !== false ? '✓ Alpha-Matted → ' : ''}
+                              {item.meshyModelUsed} → Catalog
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Saved Files List in Active Folder */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
@@ -311,6 +522,18 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      {activeFolder.category === 'asset_descriptions' &&
+                        onRunBatchDescriptionImport && (
+                          <button
+                            type="button"
+                            disabled={batchImportBusy}
+                            onClick={() => onRunBatchDescriptionImport(file.filename)}
+                            className="px-2 py-1 rounded bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/70 text-emerald-200 text-[10px] font-bold"
+                            title="Read this description file, generate reference images with gemini-3.1-flash-lite-image, pass to Meshy.ai Image-to-3D, and import all created 3D assets into the game catalog"
+                          >
+                            ⚡ Image → Meshy 3D → Catalog
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => onLoadFileFromFolder(activeFolder.category, file.filename)}
@@ -330,3 +553,4 @@ export const LocalDiskFoldersWindow: React.FC<LocalDiskFoldersWindowProps> = ({
     </StudioWindowFrame>
   );
 };
+

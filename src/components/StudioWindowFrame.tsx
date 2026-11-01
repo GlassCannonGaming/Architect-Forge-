@@ -132,26 +132,26 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
       data-testid={`studio-window-${windowState.id}`}
       onMouseDown={() => onFocus(windowState.id)}
       style={style}
-      className="fixed pointer-events-auto bg-white/95 backdrop-blur-md border border-[#cbd5e1] rounded-3xl shadow-2xl text-slate-800 flex flex-col overflow-hidden transition-shadow"
+      className="studio-dark-window fixed pointer-events-auto bg-slate-900/95 backdrop-blur-md border border-slate-700/90 rounded-3xl shadow-2xl text-slate-100 flex flex-col overflow-hidden transition-shadow"
     >
-      {/* Draggable Window Title Bar */}
+      {/* Draggable Window Title Bar (Dark Mode) */}
       <div
         data-testid={`window-titlebar-${windowState.id}`}
         onPointerDown={handleHeaderPointerDown}
         onDoubleClick={() => onToggleMaximize(windowState.id)}
-        className="cursor-move select-none bg-gradient-to-r from-[#f8fafc] via-[#f0f9ff] to-[#ecfdf5] border-b border-slate-200 px-3 py-1.5 flex items-center justify-between gap-2 shrink-0"
+        className="cursor-move select-none bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-slate-800 px-3 py-1.5 flex items-center justify-between gap-2 shrink-0"
       >
         <div className="flex items-center gap-1.5 min-w-0">
           {/* Drag Grip Dots */}
-          <span className="text-slate-400 text-xs font-bold tracking-tighter" title="Drag to move window">
+          <span className="text-slate-500 text-xs font-bold tracking-tighter" title="Drag to move window">
             ⋮⋮
           </span>
           <span className="w-2 h-2 rounded-full bg-[#10b981] shrink-0" />
-          <span className="text-xs font-extrabold tracking-tight text-slate-800 truncate">
+          <span className="text-xs font-extrabold tracking-tight text-slate-100 truncate">
             {windowState.title}
           </span>
           {badgeText && (
-            <span className="px-2 py-0.5 rounded-full bg-[#e0f2fe] text-[#0369a1] text-[10px] font-bold shrink-0">
+            <span className="px-2 py-0.5 rounded-full bg-sky-950/90 text-sky-300 border border-sky-700/60 text-[10px] font-bold shrink-0">
               {badgeText}
             </span>
           )}
@@ -164,7 +164,7 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
             aria-label={`Minimize ${windowState.title}`}
             title={windowState.isMinimized ? 'Restore Window' : 'Minimize Window'}
             onClick={() => onToggleMinimize(windowState.id)}
-            className="w-5 h-5 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-extrabold flex items-center justify-center border border-amber-300"
+            className="w-5 h-5 rounded-full bg-amber-950/90 hover:bg-amber-900 text-amber-200 text-[10px] font-extrabold flex items-center justify-center border border-amber-700/70"
           >
             {windowState.isMinimized ? '▲' : '—'}
           </button>
@@ -173,7 +173,7 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
             aria-label={`Maximize ${windowState.title}`}
             title={windowState.isMaximized ? 'Restore Window Size' : 'Maximize Window'}
             onClick={() => onToggleMaximize(windowState.id)}
-            className="w-5 h-5 rounded-full bg-sky-100 hover:bg-sky-200 text-sky-900 text-[10px] font-extrabold flex items-center justify-center border border-sky-300"
+            className="w-5 h-5 rounded-full bg-sky-950/90 hover:bg-sky-900 text-sky-200 text-[10px] font-extrabold flex items-center justify-center border border-sky-700/70"
           >
             {windowState.isMaximized ? '❐' : '□'}
           </button>
@@ -182,7 +182,7 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
             aria-label={`Close ${windowState.title}`}
             title="Close Window (Re-open from top Window Bar)"
             onClick={() => onClose(windowState.id)}
-            className="w-5 h-5 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-extrabold flex items-center justify-center border border-rose-300"
+            className="w-5 h-5 rounded-full bg-rose-950/90 hover:bg-rose-900 text-rose-200 text-[10px] font-extrabold flex items-center justify-center border border-rose-700/70"
           >
             ✕
           </button>
@@ -191,7 +191,7 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
 
       {/* Window Content Body */}
       {!windowState.isMinimized && (
-        <div className="flex-1 overflow-y-auto p-3 relative">{children}</div>
+        <div className="flex-1 overflow-y-auto p-3 relative text-slate-100">{children}</div>
       )}
 
       {/* Bottom-Right Resize Grip Handle */}
@@ -200,7 +200,7 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
           data-testid={`window-resize-${windowState.id}`}
           onPointerDown={handleResizePointerDown}
           title="Drag to resize window"
-          className="absolute bottom-0.5 right-1 w-4 h-4 cursor-nwse-resize text-[10px] text-slate-400 hover:text-[#0284c7] flex items-center justify-center select-none"
+          className="absolute bottom-0.5 right-1 w-4 h-4 cursor-nwse-resize text-[10px] text-slate-500 hover:text-sky-400 flex items-center justify-center select-none"
         >
           ◢
         </div>
@@ -208,3 +208,4 @@ export const StudioWindowFrame: React.FC<StudioWindowFrameProps> = ({
     </section>
   );
 };
+

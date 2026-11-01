@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-10-31T19:01:48.374Z",
+  "category": "interactions",
+  "folderPath": "ArchitectForge_Workspace/gameplay_logs/interactions",
+  "itemName": "Vincent Graves_Evening",
+  "data": {
+    "id": "int_1793473308368",
+    "timestamp": "2026-10-31T19:01:48.368Z",
+    "gameTimeFormatted": "07:30 PM",
+    "phase": "Evening",
+    "timeOfDayEvent": "Lobby Lights Dimming & Parlor Social Hour (Wall sconces flickering)",
+    "dailyActionAtTime": "Listening to the cassette tape player and watching who enters the service stairwell. (West Parlor Lounge)",
+    "characterName": "Vincent Graves",
+    "userMessage": "About your question from Day 1: Yes, I checked the Suite 202 fireplace latch and found the brass passkey.",
+    "agentReply": "*Vincent Graves exhales with relief at 07:30 PM (Disposition: CONFIDANT, Trust 92/100).* \"I've been waiting 1 day(s) since Day 1 for your answer, Clerk. Since you kept your word regarding 'Did you check behind the Suite 202 fireplace wall to see if the brass latch is unbolted?', I'll tell you what I've hidden in Suite 202: Behind the Suite 202 fireplace wainscoting is a pivoted brass latch that opens into the hidden service shaft.\"",
+    "gameDay": 2,
+    "trustDelta": 32,
+    "suspicionDelta": -16,
+    "resultingTrust": 92,
+    "resultingSuspicion": 4,
+    "resultingDisposition": "confidant",
+    "triggeredLikes": [
+      "Polished brass keys"
+    ],
+    "triggeredDislikes": [],
+    "answeredQuestionId": "pq_starter_202",
+    "answeredQuestionFromDay": 1,
+    "pendingQuestionAsked": null,
+    "unansweredQuestionDaysWaiting": 0,
+    "gameplayInfluenceSummary": "Answered question from 1 day(s) ago (\"Did you check behind the Suite 202 fireplace wal...\") → Trust +32 | Mentioned liked topic (Polished brass keys) → Tenant warmed up to CONFIDANT (Trust 92/100) | Gameplay Effect: Vincent Graves trusts you enough to reveal clue [clue_hollow_brick_101]!",
+    "unlockedClueId": "clue_hollow_brick_101"
+  }
+}

@@ -1,1 +1,164 @@
 @import "tailwindcss";
+
+/* ArchitectForge Studio Dark Theme Overrides for Floating Windows & Modals */
+.studio-dark-window {
+  color-scheme: dark;
+}
+
+.studio-dark-window .bg-white,
+.studio-dark-window .bg-white\/95,
+.studio-dark-window .bg-white\/92,
+.studio-dark-window .bg-white\/90 {
+  background-color: rgba(30, 41, 59, 0.92) !important;
+}
+
+.studio-dark-window .bg-slate-50,
+.studio-dark-window .bg-slate-50\/90,
+.studio-dark-window .bg-slate-50\/80,
+.studio-dark-window .bg-\[\#f8fafc\] {
+  background-color: rgba(15, 23, 42, 0.85) !important;
+}
+
+.studio-dark-window .bg-slate-100,
+.studio-dark-window .bg-slate-100\/90 {
+  background-color: rgba(51, 65, 85, 0.75) !important;
+}
+
+.studio-dark-window .bg-slate-200 {
+  background-color: rgba(71, 85, 105, 0.85) !important;
+}
+
+.studio-dark-window .bg-\[\#f0f9ff\],
+.studio-dark-window .bg-sky-50,
+.studio-dark-window .bg-\[\#e0f2fe\],
+.studio-dark-window .bg-sky-100 {
+  background-color: rgba(12, 74, 110, 0.55) !important;
+}
+
+.studio-dark-window .bg-\[\#ecfdf5\],
+.studio-dark-window .bg-emerald-50,
+.studio-dark-window .bg-\[\#d1fae5\],
+.studio-dark-window .bg-emerald-100 {
+  background-color: rgba(6, 78, 59, 0.55) !important;
+}
+
+.studio-dark-window .bg-amber-50,
+.studio-dark-window .bg-amber-50\/85,
+.studio-dark-window .bg-amber-50\/80,
+.studio-dark-window .bg-amber-50\/70,
+.studio-dark-window .bg-amber-50\/60,
+.studio-dark-window .bg-\[\#fffbeb\],
+.studio-dark-window .bg-amber-100 {
+  background-color: rgba(120, 53, 15, 0.55) !important;
+}
+
+.studio-dark-window .bg-rose-50,
+.studio-dark-window .bg-rose-100 {
+  background-color: rgba(136, 19, 55, 0.55) !important;
+}
+
+.studio-dark-window .bg-purple-50,
+.studio-dark-window .bg-purple-100,
+.studio-dark-window .bg-indigo-50,
+.studio-dark-window .bg-indigo-100 {
+  background-color: rgba(76, 29, 149, 0.55) !important;
+}
+
+.studio-dark-window .from-\[\#f0f9ff\] {
+  --tw-gradient-from: rgba(15, 23, 42, 0.9) var(--tw-gradient-from-position) !important;
+}
+.studio-dark-window .to-\[\#ecfdf5\] {
+  --tw-gradient-to: rgba(6, 78, 59, 0.45) var(--tw-gradient-to-position) !important;
+}
+
+.studio-dark-window .text-slate-900,
+.studio-dark-window .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+.studio-dark-window .text-slate-700,
+.studio-dark-window .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.studio-dark-window .text-slate-500,
+.studio-dark-window .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+.studio-dark-window .text-\[\#0369a1\],
+.studio-dark-window .text-sky-900,
+.studio-dark-window .text-sky-800,
+.studio-dark-window .text-sky-700 {
+  color: #7dd3fc !important;
+}
+
+.studio-dark-window .text-\[\#065f46\],
+.studio-dark-window .text-\[\#047857\],
+.studio-dark-window .text-emerald-900,
+.studio-dark-window .text-emerald-800,
+.studio-dark-window .text-emerald-700 {
+  color: #6ee7b7 !important;
+}
+
+.studio-dark-window .text-amber-950,
+.studio-dark-window .text-amber-900,
+.studio-dark-window .text-amber-800,
+.studio-dark-window .text-amber-700 {
+  color: #fde68a !important;
+}
+
+.studio-dark-window .text-rose-900,
+.studio-dark-window .text-rose-800,
+.studio-dark-window .text-rose-700,
+.studio-dark-window .text-rose-600 {
+  color: #fda4af !important;
+}
+
+.studio-dark-window .text-purple-900,
+.studio-dark-window .text-purple-800,
+.studio-dark-window .text-indigo-900,
+.studio-dark-window .text-indigo-800 {
+  color: #d8b4fe !important;
+}
+
+.studio-dark-window .border-slate-200,
+.studio-dark-window .border-slate-300,
+.studio-dark-window .border-\[\#cbd5e1\] {
+  border-color: rgba(71, 85, 105, 0.8) !important;
+}
+
+.studio-dark-window .border-\[\#bae6fd\],
+.studio-dark-window .border-sky-200,
+.studio-dark-window .border-sky-300 {
+  border-color: rgba(56, 189, 248, 0.4) !important;
+}
+
+.studio-dark-window .border-\[\#a7f3d0\],
+.studio-dark-window .border-emerald-200,
+.studio-dark-window .border-emerald-300 {
+  border-color: rgba(16, 185, 129, 0.45) !important;
+}
+
+.studio-dark-window .border-amber-200,
+.studio-dark-window .border-amber-300 {
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+.studio-dark-window .border-rose-200,
+.studio-dark-window .border-rose-300 {
+  border-color: rgba(244, 63, 94, 0.45) !important;
+}
+
+.studio-dark-window input:not([type="color"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.studio-dark-window select,
+.studio-dark-window textarea {
+  background-color: rgba(15, 23, 42, 0.92) !important;
+  color: #f8fafc !important;
+  border-color: rgba(71, 85, 105, 0.9) !important;
+}
+
+.studio-dark-window select option {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
