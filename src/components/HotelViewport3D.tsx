@@ -241,6 +241,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
   const playerPoseRef = useRef({
     x: 0,
+    y: 0,
     z: 4.0,
     yaw: 0,
     pitch: -0.04,
@@ -1495,8 +1496,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         if (strafeLeftHeld) strafeInput -= 1;
         if (strafeRightHeld) strafeInput += 1;
 
-        if (forwardInput !== 0 || strafeInput !== 0) {
+        if (forwardInput !== 0 || strafeInput !== 0 || keysHeld.has('Space') || keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) {
           const speed = (isCrouching ? 2.45 : 4.5) * dt;
+          if (keysHeld.has('Space')) pose.y += speed;
+          if (keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) pose.y -= speed;
+
           const forwardX = -Math.sin(pose.yaw);
           const forwardZ = -Math.cos(pose.yaw);
           const rightX = Math.cos(pose.yaw);
@@ -1516,7 +1520,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         }
 
         const bobOffset = Math.sin(pose.bobPhase) * (isCrouching ? 0.009 : 0.02);
-        camera.position.set(pose.x, pose.eyeHeight + bobOffset, pose.z);
+        camera.position.set(pose.x, pose.eyeHeight + pose.y + bobOffset, pose.z);
 
         const lookTargetX = pose.x - Math.sin(pose.yaw) * 4;
         const lookTargetY = pose.eyeHeight + pose.pitch * 3 + bobOffset * 0.5;
@@ -1624,6 +1628,15 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
       // Smooth 500ms Hinge Rotation / Pocket-Slide Animation for Doors & Secret Passages (Proposals 1 & 2)
       const wallClockMs = Date.now();
+      
+      // Architect Build Mode Camera Vertical Control
+      if (st.mode === 'architect') {
+        const speed = 0.2;
+        if (keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) {
+          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY - speed));
+        }
+      }
+
       const updateGroupHinges = (grp: THREE.Group) => {
         for (let i = 0; i < grp.children.length; i++) {
           const child = grp.children[i];

@@ -263,39 +263,9 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
     soundPresetId: 'sfx_telephone_ring',
     description: 'Scratched steel and walnut rotary coin telephone with armored handset cord and torn directory.'
   },
-  {
-    subType: 'porcelain_bathtub',
-    name: 'Water-Stained Clawfoot Bathtub',
-    category: 'furniture',
-    defaultDimensions: [1.6, 0.75, 0.8],
-    defaultColor: '#9c9484',
-    defaultTexture: 'checker_marble',
-    collidable: true,
-    tags: ['furniture', 'bathroom', 'plumbing', 'suite', 'late-70s'],
-    description: 'Crazed bone-ecru cast-iron tub with rust rings around the drain and tarnished verdigris claw feet.'
-  },
-  {
-    subType: 'marble_vanity_sink',
-    name: 'Cracked Formica & Ecru Vanity Sink',
-    category: 'furniture',
-    defaultDimensions: [1.1, 1.25, 0.65],
-    defaultColor: '#877f70',
-    defaultTexture: 'checker_marble',
-    collidable: true,
-    tags: ['furniture', 'bathroom', 'plumbing', 'suite', 'late-70s'],
-    description: 'Damp apartment bathroom vanity with water-spotted basin, dripping brass taps, and desilvered mirror.'
-  },
-  {
-    subType: 'suite_porcelain_toilet',
-    name: 'Stained Ecru Suite Toilet & Tank',
-    category: 'furniture',
-    defaultDimensions: [0.55, 0.85, 0.75],
-    defaultColor: '#948c7c',
-    defaultTexture: 'checker_marble',
-    collidable: true,
-    tags: ['furniture', 'bathroom', 'plumbing', 'suite', 'late-70s'],
-    description: 'Unmaintained bone-ceramic apartment commode with worn wooden seat and running flush tank.'
-  },
+
+
+
   {
     subType: 'gilded_wall_painting',
     name: 'Tarnished 70s Oil Portrait Frame',
@@ -318,17 +288,7 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
     tags: ['custom-ai', 'decor', 'plant', 'lobby', 'late-70s'],
     description: 'Overgrown, dusty olive-drab apartment fern inside a cracked terracotta pot with tarnished rim.'
   },
-  {
-    subType: 'brass_towel_rack',
-    name: 'Corroded Brass Towel Rail & Faded Linens',
-    category: 'furniture',
-    defaultDimensions: [0.75, 0.65, 0.35],
-    defaultColor: '#695737',
-    defaultTexture: 'aged_brass',
-    collidable: false,
-    tags: ['furniture', 'bathroom', 'brass', 'suite', 'late-70s'],
-    description: 'Wall-mounted tarnished brass towel rail draped with faded ecru and harvest-ochre bath linens.'
-  },
+
   {
     subType: 'retrofit_window_ac',
     name: '1979 Woodgrain Window AC & Conduit',

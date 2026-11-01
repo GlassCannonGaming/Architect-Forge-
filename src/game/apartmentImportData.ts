@@ -2082,7 +2082,7 @@ export const APARTMENT_1978_ORIGINAL_CATALOG_BLUEPRINTS: ApartmentAssetBlueprint
     era: '1970s',
     canUpdateInHotel: true,
     paired1990sId: 'apt_elevator_ceiling_access_panel_90s',
-    tags: ['elevator', 'cab', 'ceiling', 'access_panel', 'emergency_hatch', '1970s', 'ceiling'],
+    tags: ['elevator', 'cab', 'ceiling', 'access_panel', 'emergency_hatch', '1970s'],
     description: 'Heavy steel 7x7 tile elevator cab ceiling featuring a recessed 0.9m emergency escape hatch with padlock hasps, dual release handles, and recessed lighting fixtures.',
     compositeParts: [
       { id: 'ceiling_slab', shape: 'box', offset: [0, 0, 0], size: [7.0, 0.12, 7.0], color: '#2c2824', roughness: 0.85, metalness: 0.2 },
