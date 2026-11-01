@@ -77,6 +77,13 @@ export interface PlacedAsset {
   meshyTaskId?: string;
   tags?: string[];
   soundPresetId?: string;
+  pairedVariantId?: string;
+  conditionVariant?: 'pristine' | 'unkempt';
+  era?: '1970s' | '1980s' | '1990s' | 'timeless';
+  canUpdateInHotel?: boolean;
+  structuralConstraint?: string;
+  predecessor1978Id?: string;
+  paired1990sId?: string;
 }
 
 export type CharacterArchetype =
@@ -7825,11 +7832,24 @@ export interface SearchableBlueprintLike {
   tags?: string[];
   animationSpec?: string;
   soundPresetId?: string;
+  pairedVariantId?: string;
+  conditionVariant?: 'pristine' | 'unkempt';
+  compositeParts?: CompositeSubPart[];
+  referenceImageUrl?: string;
+  era?: '1970s' | '1980s' | '1990s' | 'timeless';
+  canUpdateInHotel?: boolean;
+  structuralConstraint?: string;
+  predecessor1978Id?: string;
+  paired1990sId?: string;
 }
 
 export function inferDefaultAssetBlueprintTags(bp: Partial<SearchableBlueprintLike>): string[] {
   const explicit = parseBlueprintTagsInput(bp.tags);
   const tagSet = new Set<string>(explicit);
+
+  if (bp.conditionVariant) {
+    tagSet.add(bp.conditionVariant);
+  }
 
   const cat = bp.category;
   const sub = (bp.subType || '').toLowerCase();
@@ -7867,23 +7887,70 @@ export function inferDefaultAssetBlueprintTags(bp: Partial<SearchableBlueprintLi
   if (bp.animationSpec || combined.includes('animated') || combined.includes('spool') || combined.includes('page-flip')) {
     tagSet.add('animated');
   }
-  if (bp.soundPresetId || combined.includes('dictaphone') || combined.includes('payphone') || combined.includes('radiator') || combined.includes('tv')) {
+  if (bp.soundPresetId || combined.includes('dictaphone') || combined.includes('payphone') || combined.includes('radiator') || combined.includes('tv') || combined.includes('intercom')) {
     tagSet.add('audio-linked');
   }
   if (combined.includes('70s') || combined.includes('1978') || combined.includes('1979') || combined.includes('1981')) {
     tagSet.add('late-70s');
+    tagSet.add('1970s');
+  }
+  if (combined.includes('apartment') || sub.startsWith('apt_')) {
+    tagSet.add('apartment');
+  }
+  if (combined.includes('infrastructure') || sub.includes('intercom') || sub.includes('mailbox') || sub.includes('chute') || sub.includes('stairwell') || sub.includes('meter')) {
+    tagSet.add('infrastructure');
   }
   if (combined.includes('brass')) tagSet.add('brass');
   if (combined.includes('walnut') || combined.includes('oak') || combined.includes('wood')) tagSet.add('wood');
   if (combined.includes('brick')) tagSet.add('brick');
-  if (combined.includes('bathroom') || combined.includes('bathtub') || combined.includes('toilet') || combined.includes('vanity') || combined.includes('towel')) {
+  if (combined.includes('bathroom') || combined.includes('bathtub') || combined.includes('toilet') || combined.includes('vanity') || combined.includes('towel') || sub.includes('bath')) {
     tagSet.add('bathroom');
   }
   if (combined.includes('lobby') || combined.includes('registration') || combined.includes('switchboard') || combined.includes('payphone')) {
     tagSet.add('lobby');
   }
-  if (combined.includes('suite') || combined.includes('bed') || combined.includes('kitchenette') || combined.includes('trunk')) {
+  if (combined.includes('kitchen') || sub.includes('kit_') || combined.includes('fridge') || combined.includes('stove') || combined.includes('range')) {
+    tagSet.add('kitchen');
+  }
+  if (combined.includes('bedroom') || sub.includes('bed_') || combined.includes('dresser') || combined.includes('nightstand')) {
+    tagSet.add('bedroom');
+  }
+  if (combined.includes('living') || sub.includes('lr_') || combined.includes('sofa') || combined.includes('couch')) {
+    tagSet.add('living');
+  }
+  if (combined.includes('suite') || combined.includes('kitchenette') || combined.includes('trunk')) {
     tagSet.add('suite');
+  }
+  if (combined.includes('unkempt') || combined.includes('stained') || combined.includes('rusted') || combined.includes('weathered')) {
+    tagSet.add('unkempt');
+  }
+  if (combined.includes('pristine')) {
+    tagSet.add('pristine');
+  }
+  if (
+    combined.includes('90s') ||
+    combined.includes('1990s') ||
+    combined.includes('1992') ||
+    combined.includes('1995') ||
+    bp.era === '1990s' ||
+    sub.includes('90s')
+  ) {
+    tagSet.add('1990s');
+    tagSet.add('hotel-updated');
+    tagSet.add('1992-1995');
+  }
+  if (
+    bp.canUpdateInHotel === false ||
+    Boolean(bp.structuralConstraint) ||
+    sub.includes('stairwell') ||
+    sub.includes('chute') ||
+    sub.includes('elevator') ||
+    sub.includes('breaker_panel') ||
+    cat === 'wall' ||
+    cat === 'secret_wall'
+  ) {
+    tagSet.add('structural_fixed');
+    tagSet.add('structural');
   }
 
   return Array.from(tagSet);
@@ -8738,6 +8805,8 @@ export interface AssetClipboardItem {
   compositeParts?: CompositeSubPart[];
   tags?: string[];
   soundPresetId?: string;
+  pairedVariantId?: string;
+  conditionVariant?: 'pristine' | 'unkempt';
 }
 
 export interface AssetClipboardPayload {
@@ -8762,7 +8831,44 @@ export interface AssetSet {
   items: AssetClipboardItem[];
 }
 
+import {
+  APARTMENT_ROOM_ASSET_SETS,
+  APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+  togglePlacedAssetConditionVariant,
+  getPairedVariantSubtype,
+  buildGeminiApartmentAssetPromptQueue,
+  APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+  APARTMENT_UPDATED_HOTEL_ASSET_SETS,
+  STRUCTURAL_HOTEL_ASSET_SUBTYPES,
+  isStructuralHotelAsset,
+  canAssetBeUpdatedInHotel,
+  getUpdated1990sVariantSubtype,
+  getPredecessor1978Subtype,
+  upgradeAssetTo1990sHotelVersion,
+  downgradeAssetTo1978Version,
+  buildGemini1990sHotelAssetPromptQueue
+} from './apartmentImportData';
+export type { ApartmentAssetBlueprint } from './apartmentImportData';
+export {
+  APARTMENT_ROOM_ASSET_SETS,
+  APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+  togglePlacedAssetConditionVariant,
+  getPairedVariantSubtype,
+  buildGeminiApartmentAssetPromptQueue,
+  APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+  APARTMENT_UPDATED_HOTEL_ASSET_SETS,
+  STRUCTURAL_HOTEL_ASSET_SUBTYPES,
+  isStructuralHotelAsset,
+  canAssetBeUpdatedInHotel,
+  getUpdated1990sVariantSubtype,
+  getPredecessor1978Subtype,
+  upgradeAssetTo1990sHotelVersion,
+  downgradeAssetTo1978Version,
+  buildGemini1990sHotelAssetPromptQueue
+};
+
 export const INITIAL_ASSET_SETS: AssetSet[] = [
+  ...APARTMENT_ROOM_ASSET_SETS,
   {
     id: 'set_concierge_station_1978',
     name: '1978 Concierge Desk & Banker Lamp Set',
@@ -8952,7 +9058,9 @@ export function copySelectedAssetsToClipboard(
     collidable: a.collidable,
     compositeParts: a.compositeParts ? a.compositeParts.map((p) => ({ ...p })) : undefined,
     tags: a.tags ? [...a.tags] : undefined,
-    soundPresetId: a.soundPresetId
+    soundPresetId: a.soundPresetId,
+    pairedVariantId: a.pairedVariantId,
+    conditionVariant: a.conditionVariant
   }));
 
   return {
@@ -9026,7 +9134,9 @@ export function pasteAssetsFromClipboard(
       collidable: item.collidable,
       compositeParts: item.compositeParts ? item.compositeParts.map((p) => ({ ...p })) : undefined,
       tags: item.tags ? [...item.tags] : undefined,
-      soundPresetId: item.soundPresetId
+      soundPresetId: item.soundPresetId,
+      pairedVariantId: item.pairedVariantId,
+      conditionVariant: item.conditionVariant
     };
   });
 

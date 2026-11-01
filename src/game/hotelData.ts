@@ -9,7 +9,8 @@ import {
   buildProcedural3DSpecFromPrompt,
   inferDefaultAssetBlueprintTags,
   parseBlueprintTagsInput,
-  DEFAULT_CHARACTER_VOICE_PROFILES
+  DEFAULT_CHARACTER_VOICE_PROFILES,
+  APARTMENT_BUILDING_CATALOG_BLUEPRINTS
 } from './rules';
 
 export interface AssetBlueprint {
@@ -28,6 +29,13 @@ export interface AssetBlueprint {
   tags?: string[];
   animationSpec?: string;
   soundPresetId?: string;
+  pairedVariantId?: string;
+  conditionVariant?: 'pristine' | 'unkempt';
+  era?: '1970s' | '1980s' | '1990s' | 'timeless';
+  canUpdateInHotel?: boolean;
+  structuralConstraint?: string;
+  predecessor1978Id?: string;
+  paired1990sId?: string;
 }
 
 export function createBlueprintFromAsset(asset: PlacedAsset): AssetBlueprint {
@@ -45,7 +53,14 @@ export function createBlueprintFromAsset(asset: PlacedAsset): AssetBlueprint {
     referenceImageUrl: asset.customTextureUrl,
     isGenerated: true,
     tags: asset.tags ? parseBlueprintTagsInput(asset.tags) : undefined,
-    soundPresetId: asset.soundPresetId
+    soundPresetId: asset.soundPresetId,
+    pairedVariantId: asset.pairedVariantId,
+    conditionVariant: asset.conditionVariant,
+    era: asset.era,
+    canUpdateInHotel: asset.canUpdateInHotel,
+    structuralConstraint: asset.structuralConstraint,
+    predecessor1978Id: asset.predecessor1978Id,
+    paired1990sId: asset.paired1990sId
   };
   baseBp.tags = inferDefaultAssetBlueprintTags(baseBp);
   return baseBp;
@@ -361,7 +376,9 @@ export const ASSET_CATALOG: AssetBlueprint[] = [
     soundPresetId: tpl.soundPresetId,
     compositeParts: buildProcedural3DSpecFromPrompt(tpl.name).parts,
     description: tpl.description
-  }))
+  })),
+  // Standard Apartment Building & 1970s/1980s Catalog Blueprints (with Dual Pristine/Unkempt Variants)
+  ...APARTMENT_BUILDING_CATALOG_BLUEPRINTS
 ];
 
 function createFourRoomFloorAssets(floor: FloorId, prefix: string): PlacedAsset[] {

@@ -366,7 +366,11 @@ export default function App() {
       const saved = localStorage.getItem('architectforge_asset_sets_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingIds = new Set(parsed.map((s: AssetSet) => s.id));
+          const missingBuiltins = INITIAL_ASSET_SETS.filter((b) => !existingIds.has(b.id));
+          return [...parsed, ...missingBuiltins];
+        }
       }
     } catch {
       // ignore storage error
@@ -1386,7 +1390,9 @@ export default function App() {
         collidable: activeBlueprint.collidable,
         compositeParts: activeBlueprint.compositeParts,
         tags: activeBlueprint.tags ? [...activeBlueprint.tags] : undefined,
-        soundPresetId: activeBlueprint.soundPresetId
+        soundPresetId: activeBlueprint.soundPresetId,
+        pairedVariantId: activeBlueprint.pairedVariantId,
+        conditionVariant: activeBlueprint.conditionVariant
       };
       setAssets((prev) => [...prev, newAsset]);
       setSelectedAssetId(newAsset.id);
@@ -1431,7 +1437,9 @@ export default function App() {
         collidable: bp.collidable,
         compositeParts: bp.compositeParts,
         tags: bp.tags ? [...bp.tags] : undefined,
-        soundPresetId: bp.soundPresetId
+        soundPresetId: bp.soundPresetId,
+        pairedVariantId: bp.pairedVariantId,
+        conditionVariant: bp.conditionVariant
       }));
 
       setAssets((prev) => [...prev, ...newAssets]);

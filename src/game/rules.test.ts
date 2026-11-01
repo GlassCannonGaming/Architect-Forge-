@@ -2411,3 +2411,275 @@ test('Copy (Ctrl+C) / Paste (Ctrl+V) Single & Multi-Selected Assets and Reusable
   assert.equal(assetSetsFolder?.extension, '.assetset.json');
 });
 
+test('Apartment Building Items Ingestion: 65+ procedural catalog assets, bidirectional dual-variant linking, room asset sets, and Gemini-2.5-flash queue', async () => {
+  const {
+    APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+    APARTMENT_ROOM_ASSET_SETS,
+    togglePlacedAssetConditionVariant,
+    getPairedVariantSubtype,
+    buildGeminiApartmentAssetPromptQueue,
+    INITIAL_ASSET_SETS,
+    instantiateAssetSetOnFloor
+  } = await import('./rules');
+
+  // 1. Verify all 65+ imported items parsed from text file are present
+  assert.equal(APARTMENT_BUILDING_CATALOG_BLUEPRINTS.length >= 65, true);
+
+  // 2. Verify all items have valid positive bounding dimensions, textures, and non-empty descriptions
+  for (const bp of APARTMENT_BUILDING_CATALOG_BLUEPRINTS) {
+    assert.equal(bp.defaultDimensions[0] > 0, true, `${bp.subType} width`);
+    assert.equal(bp.defaultDimensions[1] > 0, true, `${bp.subType} height`);
+    assert.equal(bp.defaultDimensions[2] > 0, true, `${bp.subType} depth`);
+    assert.equal(Boolean(bp.defaultTexture), true, `${bp.subType} texture`);
+    assert.equal(Boolean(bp.description && bp.description.length > 10), true, `${bp.subType} description`);
+    assert.equal(bp.tags && bp.tags.length > 0, true, `${bp.subType} tags`);
+  }
+
+  // 3. Verify bidirectional pairing for dual condition variants (Pristine <-> Unkempt)
+  const pairedItems = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.filter((b) => b.pairedVariantId);
+  assert.equal(pairedItems.length >= 40, true);
+
+  for (const item of pairedItems) {
+    const counterpartSubtype = item.pairedVariantId!;
+    const counterpart = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === counterpartSubtype);
+    assert.equal(
+      counterpart !== undefined,
+      true,
+      `Counterpart for ${item.subType} (${counterpartSubtype}) must exist in catalog`
+    );
+    assert.equal(
+      counterpart!.pairedVariantId,
+      item.subType,
+      `Pairing must be reciprocal: ${counterpart!.subType}.pairedVariantId must equal ${item.subType}`
+    );
+    assert.notEqual(
+      item.conditionVariant,
+      counterpart!.conditionVariant,
+      `Paired items must have opposing condition variants: ${item.subType} vs ${counterpart!.subType}`
+    );
+  }
+
+  // 4. Test in-place condition variant toggling on a placed 3D asset
+  const sofaPristineBp = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_lr_sofa_pristine')!;
+  const placedSofa = {
+    id: 'placed_sofa_test_101',
+    name: sofaPristineBp.name,
+    category: sofaPristineBp.category,
+    subType: sofaPristineBp.subType,
+    floor: 'floor1',
+    position: [2.5, 0.45, -3.0] as [number, number, number],
+    dimensions: [...sofaPristineBp.defaultDimensions] as [number, number, number],
+    rotationY: 1.57,
+    color: sofaPristineBp.defaultColor,
+    textureId: sofaPristineBp.defaultTexture,
+    collidable: true,
+    pairedVariantId: sofaPristineBp.pairedVariantId,
+    conditionVariant: sofaPristineBp.conditionVariant,
+    tags: sofaPristineBp.tags ? [...sofaPristineBp.tags] : []
+  };
+
+  // Toggle Pristine -> Unkempt
+  const unkemptSofa = togglePlacedAssetConditionVariant(placedSofa, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+  assert.equal(unkemptSofa !== null, true);
+  assert.equal(unkemptSofa!.id, placedSofa.id); // Must preserve exact placed asset ID
+  assert.deepEqual(unkemptSofa!.position, placedSofa.position); // Must preserve exact coordinates
+  assert.equal(unkemptSofa!.rotationY, placedSofa.rotationY); // Must preserve rotation
+  assert.equal(unkemptSofa!.subType, 'apt_lr_sofa_unkempt');
+  assert.equal(unkemptSofa!.conditionVariant, 'unkempt');
+  assert.equal(unkemptSofa!.pairedVariantId, 'apt_lr_sofa_pristine');
+
+  // Toggle Unkempt -> Pristine (reverse back)
+  const restoredSofa = togglePlacedAssetConditionVariant(unkemptSofa!, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+  assert.equal(restoredSofa !== null, true);
+  assert.equal(restoredSofa!.subType, 'apt_lr_sofa_pristine');
+  assert.equal(restoredSofa!.conditionVariant, 'pristine');
+
+  // 5. Verify all pre-composed room Asset Sets exist in INITIAL_ASSET_SETS
+  const expectedSetIds = [
+    'set_apt_hallway_utility_1978',
+    'set_apt_pristine_living_room_1978',
+    'set_apt_unkempt_living_room_1978',
+    'set_apt_kitchenette_harvest_gold_1978',
+    'set_apt_unkempt_kitchenette_1978',
+    'set_apt_tenement_bathroom_1978',
+    'set_apt_bedroom_retro_1978'
+  ];
+
+  for (const expectedId of expectedSetIds) {
+    const foundSet = INITIAL_ASSET_SETS.find((s) => s.id === expectedId);
+    assert.equal(foundSet !== undefined, true, `Asset Set ${expectedId} must exist in INITIAL_ASSET_SETS`);
+    assert.equal(foundSet!.items.length >= 3, true, `${expectedId} must have at least 3 items`);
+
+    // Verify instantiation
+    const spawned = instantiateAssetSetOnFloor(foundSet!, 'floor1', 1.0, 1.0);
+    assert.equal(spawned.spawnedAssets.length, foundSet!.items.length);
+  }
+
+  // 6. Verify Gemini-2.5-flash AI generation queue generation
+  const queue = buildGeminiApartmentAssetPromptQueue('gemini-2.5-flash');
+  assert.equal(queue.length, APARTMENT_BUILDING_CATALOG_BLUEPRINTS.length);
+  assert.equal(queue[0].modelId, 'gemini-2.5-flash');
+  assert.equal(queue[0].prompt.includes('1970s'), true);
+});
+
+test('1992-1995 Hotel Updated Assets Ingestion: set_apt_updated_* sets, structural immutability enforcement, bidirectional upgrade/downgrade, and Gemini-2.5-flash queue', async () => {
+  const {
+    APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+    APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+    APARTMENT_UPDATED_HOTEL_ASSET_SETS,
+    STRUCTURAL_HOTEL_ASSET_SUBTYPES,
+    isStructuralHotelAsset,
+    canAssetBeUpdatedInHotel,
+    getUpdated1990sVariantSubtype,
+    getPredecessor1978Subtype,
+    upgradeAssetTo1990sHotelVersion,
+    downgradeAssetTo1978Version,
+    buildGemini1990sHotelAssetPromptQueue,
+    INITIAL_ASSET_SETS,
+    instantiateAssetSetOnFloor
+  } = await import('./rules');
+
+  // 1. Verify 1990s blueprints count and catalog inclusion
+  assert.equal(APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.length >= 25, true);
+  for (const bp of APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS) {
+    assert.equal(bp.era, '1990s', `${bp.subType} must be era 1990s`);
+    assert.equal(bp.canUpdateInHotel, true, `${bp.subType} must be marked canUpdateInHotel`);
+    assert.equal(bp.tags?.includes('1990s'), true, `${bp.subType} must have 1990s tag`);
+    assert.equal(bp.tags?.includes('hotel-updated'), true, `${bp.subType} must have hotel-updated tag`);
+    assert.equal(bp.defaultDimensions[0] > 0, true);
+    assert.equal(bp.defaultDimensions[1] > 0, true);
+    assert.equal(bp.defaultDimensions[2] > 0, true);
+    assert.equal(bp.description.length > 20, true);
+
+    // Verify it is also reachable in the unified catalog
+    const inCatalog = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === bp.subType);
+    assert.equal(inCatalog !== undefined, true, `${bp.subType} must exist in APARTMENT_BUILDING_CATALOG_BLUEPRINTS`);
+  }
+
+  // 2. Verify Structural Immutability Enforcement
+  const structuralSubtypes = [
+    'apt_concrete_stairwell_flight',
+    'apt_elevator_sliding_doors',
+    'apt_wall_trash_chute_door',
+    'apt_baseboard_steam_radiator',
+    'apt_utility_gas_electric_meter',
+    'apt_surface_breaker_panel',
+    'apt_popcorn_ceiling_tile'
+  ];
+
+  for (const sub of structuralSubtypes) {
+    assert.equal(isStructuralHotelAsset(sub, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true, `${sub} must be classified as structural`);
+    assert.equal(canAssetBeUpdatedInHotel(sub, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), false, `${sub} cannot be updated in hotel`);
+
+    // Verify upgrade attempt is strictly refused
+    const placedStructural: PlacedAsset = {
+      id: `placed_${sub}_01`,
+      name: 'Structural Component',
+      category: 'furniture',
+      subType: sub,
+      floor: 'floor1',
+      position: [0, 0, 0],
+      dimensions: [1, 1, 1],
+      rotationY: 0,
+      color: '#ffffff',
+      textureId: 'industrial_concrete',
+      collidable: true
+    };
+
+    const attempt = upgradeAssetTo1990sHotelVersion(placedStructural, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(attempt.success, false, `Upgrading structural asset ${sub} must fail`);
+    assert.equal(attempt.reason.toLowerCase().includes('structural'), true);
+  }
+
+  // 3. Verify Upgrading Updatable Items to 1990s Hotel Version
+  const updatablePairs = [
+    { from1978: 'apt_lr_television_pristine', to1990s: 'apt_tv_crt_90s_black' },
+    { from1978: 'apt_wall_rotary_telephone', to1990s: 'apt_phone_touchtone_90s' },
+    { from1978: 'apt_bed_alarm_clock_pristine', to1990s: 'apt_bed_digital_clock_radio_90s' },
+    { from1978: 'apt_lr_sofa_pristine', to1990s: 'apt_hotel_sofa_90s' },
+    { from1978: 'apt_lr_coffee_table_pristine', to1990s: 'apt_coffee_table_glass_steel_90s' },
+    { from1978: 'apt_harvest_gold_refrigerator', to1990s: 'apt_fridge_white_90s' },
+    { from1978: 'apt_formica_countertop_wood_trim', to1990s: 'apt_counter_laminate_bullnose_90s' },
+    { from1978: 'porcelain_bathtub', to1990s: 'apt_bath_acrylic_tub_enclosure_90s' },
+    { from1978: 'suite_porcelain_toilet', to1990s: 'apt_toilet_white_90s' },
+    { from1978: 'apt_interior_tenement_door', to1990s: 'apt_door_keycard_reader_90s' },
+    { from1978: 'apt_ceiling_smoke_detector', to1990s: 'apt_fire_alarm_strobe_horn_90s' },
+    { from1978: 'apt_illuminated_exit_sign', to1990s: 'apt_hotel_exit_sign_led_90s' }
+  ];
+
+  for (const pair of updatablePairs) {
+    assert.equal(canAssetBeUpdatedInHotel(pair.from1978, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true, `${pair.from1978} must be updatable`);
+    assert.equal(getUpdated1990sVariantSubtype(pair.from1978, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), pair.to1990s);
+
+    const placedOriginal: PlacedAsset = {
+      id: `placed_${pair.from1978}_99`,
+      name: '1978 Item',
+      category: 'furniture',
+      subType: pair.from1978,
+      floor: 'floor2',
+      position: [2.5, 0.4, -1.8],
+      dimensions: [1.2, 0.8, 0.8],
+      rotationY: 1.57,
+      color: '#854d0e',
+      textureId: 'oak_parquet',
+      collidable: true
+    };
+
+    const upgradeResult = upgradeAssetTo1990sHotelVersion(placedOriginal, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(upgradeResult.success, true, `Upgrade of ${pair.from1978} must succeed`);
+    const upgraded = upgradeResult.upgradedAsset;
+    assert.equal(upgraded.id, placedOriginal.id, 'Must preserve placed asset ID');
+    assert.deepEqual(upgraded.position, placedOriginal.position, 'Must preserve coordinates');
+    assert.equal(upgraded.rotationY, placedOriginal.rotationY, 'Must preserve rotation');
+    assert.equal(upgraded.floor, placedOriginal.floor, 'Must preserve floor');
+    assert.equal(upgraded.subType, pair.to1990s);
+    assert.equal(upgraded.era, '1990s');
+    assert.equal(upgraded.predecessor1978Id, pair.from1978);
+
+    // Reverse test: Downgrade back to 1978 predecessor
+    const downgradeResult = downgradeAssetTo1978Version(upgraded, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(downgradeResult.success, true, `Downgrade of ${upgraded.subType} must succeed`);
+    const downgraded = downgradeResult.downgradedAsset;
+    assert.equal(downgraded.subType, pair.from1978);
+    assert.equal(downgraded.era, '1970s');
+  }
+
+  // 4. Verify All 5 set_apt_updated_* Asset Sets Exist with Valid Composition
+  const expectedUpdatedSets = [
+    'set_apt_updated_guest_room_90s',
+    'set_apt_updated_suite_living_90s',
+    'set_apt_updated_kitchenette_90s',
+    'set_apt_updated_bathroom_90s',
+    'set_apt_updated_hallway_access_90s'
+  ];
+
+  for (const expectedSetId of expectedUpdatedSets) {
+    assert.equal(expectedSetId.startsWith('set_apt_updated_'), true, 'Must strictly match set_apt_updated_* pattern');
+
+    const inInitial = INITIAL_ASSET_SETS.find((s) => s.id === expectedSetId);
+    assert.equal(inInitial !== undefined, true, `${expectedSetId} must be in INITIAL_ASSET_SETS`);
+
+    const inUpdatedArray = APARTMENT_UPDATED_HOTEL_ASSET_SETS.find((s) => s.id === expectedSetId);
+    assert.equal(inUpdatedArray !== undefined, true, `${expectedSetId} must be in APARTMENT_UPDATED_HOTEL_ASSET_SETS`);
+
+    assert.equal(inInitial!.items.length >= 4, true, `${expectedSetId} must have at least 4 items`);
+    assert.equal(inInitial!.boundingSize[0] > 0, true);
+    assert.equal(inInitial!.boundingSize[1] > 0, true);
+    assert.equal(inInitial!.tags.includes('1990s'), true);
+    assert.equal(inInitial!.tags.includes('hotel-updated'), true);
+
+    // Verify instantiation on lot
+    const spawned = instantiateAssetSetOnFloor(inInitial!, 'floor1', 2.0, 3.0);
+    assert.equal(spawned.spawnedAssets.length, inInitial!.items.length);
+  }
+
+  // 5. Verify Gemini-2.5-flash 1990s Hotel Asset Generation Queue
+  const queue90s = buildGemini1990sHotelAssetPromptQueue('gemini-2.5-flash');
+  assert.equal(queue90s.length, APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.length);
+  assert.equal(queue90s[0].modelId, 'gemini-2.5-flash');
+  assert.equal(queue90s[0].era, '1990s');
+  assert.equal(queue90s[0].prompt.includes('1992-1995'), true);
+});
+
+
+

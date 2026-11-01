@@ -23,7 +23,14 @@ import {
   assignSoundToAssetOrBlueprint,
   AssetSet,
   AssetClipboardPayload,
-  searchAndFilterAssetSets
+  searchAndFilterAssetSets,
+  togglePlacedAssetConditionVariant,
+  isStructuralHotelAsset,
+  canAssetBeUpdatedInHotel,
+  getUpdated1990sVariantSubtype,
+  getPredecessor1978Subtype,
+  upgradeAssetTo1990sHotelVersion,
+  downgradeAssetTo1978Version
 } from '../game/rules';
 import { AssetBlueprint } from '../game/hotelData';
 import {
@@ -239,7 +246,34 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   const [replaceFloorOnLoad, setReplaceFloorOnLoad] = useState<boolean>(false);
   const blueprintFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const filteredAssetSets = searchAndFilterAssetSets(assetSets, assetSetSearchQuery);
+  const [setEraFilter, setSetEraFilter] = useState<'all' | '1990s' | '1978' | 'custom'>('all');
+
+  const searchedAssetSets = searchAndFilterAssetSets(assetSets, assetSetSearchQuery);
+  const filteredAssetSets = searchedAssetSets.filter((setItem) => {
+    if (setEraFilter === '1990s') {
+      return (
+        setItem.id.startsWith('set_apt_updated_') ||
+        setItem.tags?.includes('1990s') ||
+        setItem.tags?.includes('hotel-updated')
+      );
+    }
+    if (setEraFilter === '1978') {
+      return (
+        (setItem.id.startsWith('set_apt_') && !setItem.id.startsWith('set_apt_updated_')) ||
+        setItem.tags?.includes('1978') ||
+        setItem.tags?.includes('late-70s')
+      );
+    }
+    if (setEraFilter === 'custom') {
+      return (
+        !setItem.id.startsWith('set_apt_') &&
+        !setItem.id.startsWith('set_hotel_') &&
+        !setItem.id.startsWith('set_lobby_') &&
+        !setItem.id.startsWith('set_hallway_')
+      );
+    }
+    return true;
+  });
   const clipboardCount = assetClipboard?.items?.length || 0;
 
   const filteredCatalog = searchAndFilterCatalogBlueprints(catalogAssets, {
@@ -1137,28 +1171,105 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     </span>
                   </div>
 
+                  {/* Period & Renovation Filter Chips for Sets */}
+                  <div
+                    data-testid="asset-sets-era-filter-bar"
+                    className="flex flex-wrap items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1"
+                  >
+                    <span className="text-[8px] font-extrabold uppercase tracking-wider text-slate-500">
+                      Filter:
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="set-filter-all-btn"
+                      onClick={() => setSetEraFilter('all')}
+                      className={`px-2 py-0.2 rounded-full text-[9px] font-bold border transition-all ${
+                        setEraFilter === 'all'
+                          ? 'bg-[#0284c7] text-white border-[#38bdf8]'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      All Sets ({assetSets.length})
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="set-filter-1990s-btn"
+                      onClick={() => setSetEraFilter('1990s')}
+                      className={`px-2 py-0.2 rounded-full text-[9px] font-bold border transition-all ${
+                        setEraFilter === '1990s'
+                          ? 'bg-teal-700 text-white border-teal-500'
+                          : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border-teal-200'
+                      }`}
+                    >
+                      🏨 1990s Hotel Updated (5)
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="set-filter-1978-btn"
+                      onClick={() => setSetEraFilter('1978')}
+                      className={`px-2 py-0.2 rounded-full text-[9px] font-bold border transition-all ${
+                        setEraFilter === '1978'
+                          ? 'bg-amber-800 text-white border-amber-600'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                      }`}
+                    >
+                      🏢 1978 Original Apartment
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="set-filter-custom-btn"
+                      onClick={() => setSetEraFilter('custom')}
+                      className={`px-2 py-0.2 rounded-full text-[9px] font-bold border transition-all ${
+                        setEraFilter === 'custom'
+                          ? 'bg-emerald-700 text-white border-emerald-500'
+                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-200'
+                      }`}
+                    >
+                      ✨ Custom Sets
+                    </button>
+                  </div>
+
                   <div
                     data-testid="saved-asset-sets-list"
                     className="grid grid-cols-2 gap-2 pr-0.5 pb-1"
                   >
-                    {filteredAssetSets.map((setItem) => (
-                      <div
-                        key={setItem.id}
-                        data-testid={`asset-set-card-${setItem.id}`}
-                        className="bg-white border border-slate-200 hover:border-[#10b981] rounded-2xl p-2 shadow-2xs flex flex-col justify-between gap-1.5 transition-all"
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-1">
-                            <span className="text-[11px] font-extrabold text-slate-800">
-                              {setItem.name}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold shrink-0">
-                              {setItem.items.length} {setItem.items.length === 1 ? 'item' : 'items'} · {setItem.boundingSize[0]}×{setItem.boundingSize[1]}m
-                            </span>
-                          </div>
-                          <div className="text-[9px] text-slate-500 line-clamp-1 mt-0.5">
-                            {setItem.description}
-                          </div>
+                    {filteredAssetSets.map((setItem) => {
+                      const is1990sSet =
+                        setItem.id.startsWith('set_apt_updated_') ||
+                        setItem.tags?.includes('1990s') ||
+                        setItem.tags?.includes('hotel-updated');
+                      const is1978Set =
+                        setItem.id.startsWith('set_apt_') && !setItem.id.startsWith('set_apt_updated_');
+                      return (
+                        <div
+                          key={setItem.id}
+                          data-testid={`asset-set-card-${setItem.id}`}
+                          className="bg-white border border-slate-200 hover:border-[#10b981] rounded-2xl p-2 shadow-2xs flex flex-col justify-between gap-1.5 transition-all"
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-1">
+                              <span className="text-[11px] font-extrabold text-slate-800">
+                                {setItem.name}
+                              </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {is1990sSet && (
+                                  <span className="px-1.5 py-0.2 rounded-full bg-teal-100 text-teal-900 border border-teal-300 text-[8px] font-extrabold">
+                                    🏨 90s Hotel
+                                  </span>
+                                )}
+                                {is1978Set && (
+                                  <span className="px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[8px] font-extrabold">
+                                    🏢 1978 Apt
+                                  </span>
+                                )}
+                                <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                                  {setItem.items.length} {setItem.items.length === 1 ? 'item' : 'items'} · {setItem.boundingSize[0]}×{setItem.boundingSize[1]}m
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-[9px] text-slate-500 line-clamp-1 mt-0.5">
+                              {setItem.description}
+                            </div>
                           <div className="flex flex-wrap items-center gap-1 mt-1">
                             {setItem.items.slice(0, 4).map((it, idx) => (
                               <span
@@ -1201,9 +1312,10 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                           >
                             ✕
                           </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1291,6 +1403,52 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     >
                       {filteredCatalog.length}/{catalogAssets.length} shown
                     </span>
+                  </div>
+
+                  {/* Renovation / Era Filter Chips */}
+                  <div
+                    data-testid="catalog-renovation-filter-bar"
+                    className="flex flex-wrap items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-0.5"
+                  >
+                    <span className="text-[8px] font-extrabold uppercase tracking-wider text-slate-500">
+                      Renovation:
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="filter-era-1990s-btn"
+                      onClick={() => handleToggleCatalogTagFilter('1990s')}
+                      className={`px-1.5 py-0.1 rounded-full text-[8px] font-bold border transition-all ${
+                        activeCatalogTags.includes('1990s')
+                          ? 'bg-teal-700 text-white border-teal-500'
+                          : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border-teal-200'
+                      }`}
+                    >
+                      🏨 1990s Hotel Updated
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="filter-era-1978-btn"
+                      onClick={() => handleToggleCatalogTagFilter('1978')}
+                      className={`px-1.5 py-0.1 rounded-full text-[8px] font-bold border transition-all ${
+                        activeCatalogTags.includes('1978')
+                          ? 'bg-amber-800 text-white border-amber-600'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                      }`}
+                    >
+                      🕰️ 1978 Apartment
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="filter-era-structural-btn"
+                      onClick={() => handleToggleCatalogTagFilter('structural_fixed')}
+                      className={`px-1.5 py-0.1 rounded-full text-[8px] font-bold border transition-all ${
+                        activeCatalogTags.includes('structural_fixed')
+                          ? 'bg-slate-700 text-white border-slate-500'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      🔒 Structural Fixed
+                    </button>
                   </div>
 
                   {/* Interactive Blueprint Tag Filter Chips (Compact Single-Line Scroll/Wrap) */}
@@ -1502,11 +1660,34 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                                 <span className="text-[9px] text-slate-500 font-medium truncate">
                                   {bp.category.replace('_', ' ')}
                                 </span>
-                                {topTags.length > 0 && (
-                                  <span className="text-[8px] font-mono text-sky-600 truncate">
-                                    #{topTags[0]}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {bp.era === '1990s' && (
+                                    <span className="px-1 py-0.1 rounded-full text-[8px] font-extrabold bg-teal-100 text-teal-900 border border-teal-200">
+                                      90s
+                                    </span>
+                                  )}
+                                  {bp.canUpdateInHotel === false && (
+                                    <span className="px-1 py-0.1 rounded-full text-[8px] font-extrabold bg-slate-200 text-slate-800 border border-slate-300">
+                                      Shell
+                                    </span>
+                                  )}
+                                  {bp.conditionVariant && (
+                                    <span
+                                      className={`px-1 py-0.1 rounded-full text-[8px] font-extrabold ${
+                                        bp.conditionVariant === 'unkempt'
+                                          ? 'bg-orange-100 text-orange-900 border border-orange-200'
+                                          : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                      }`}
+                                    >
+                                      {bp.conditionVariant === 'unkempt' ? 'Unkempt' : 'Pristine'}
+                                    </span>
+                                  )}
+                                  {topTags.length > 0 && (
+                                    <span className="text-[8px] font-mono text-sky-600 truncate">
+                                      #{topTags[0]}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </button>
@@ -1908,6 +2089,186 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       className="w-6 h-6 rounded-full cursor-pointer border border-slate-300 bg-transparent"
                     />
                   </div>
+
+                  {/* Dual Condition Variant Switcher (Pristine Vintage ↔ Atmospheric Weathered/Unkempt) */}
+                  {(() => {
+                    const pairedSubtype =
+                      selectedAsset.pairedVariantId ||
+                      catalogAssets.find((b) => b.subType === selectedAsset.subType)?.pairedVariantId;
+                    if (!pairedSubtype) return null;
+                    const targetBp = catalogAssets.find((b) => b.subType === pairedSubtype);
+                    const currentCondition =
+                      selectedAsset.conditionVariant ||
+                      (selectedAsset.name.toLowerCase().includes('unkempt') || selectedAsset.tags?.includes('unkempt')
+                        ? 'unkempt'
+                        : 'pristine');
+                    const targetCondition = currentCondition === 'pristine' ? 'unkempt' : 'pristine';
+
+                    return (
+                      <div
+                        data-testid="inspector-condition-variant-section"
+                        className="flex items-center justify-between gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                      >
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-extrabold text-amber-900">
+                              🎭 Condition:
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                                currentCondition === 'unkempt'
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              }`}
+                            >
+                              {currentCondition === 'unkempt' ? 'Weathered / Unkempt' : 'Pristine Vintage'}
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-slate-500 truncate">
+                            {targetBp ? `Next: ${targetBp.name}` : `Swap to ${targetCondition} version`}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          data-testid="inspector-toggle-condition-variant-btn"
+                          onClick={() => {
+                            const swapped = togglePlacedAssetConditionVariant(selectedAsset, catalogAssets);
+                            if (swapped) {
+                              onUpdateAsset(swapped);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
+                        >
+                          <span>↻ Swap to {targetCondition === 'unkempt' ? 'Unkempt' : 'Pristine'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  {/* 1990s Hotel Renovation & Structural Immutability Controls */}
+                  {(() => {
+                    const isStructural =
+                      isStructuralHotelAsset(selectedAsset.subType) ||
+                      selectedAsset.canUpdateInHotel === false ||
+                      selectedAsset.tags?.includes('structural_fixed') ||
+                      selectedAsset.tags?.includes('structural');
+
+                    if (isStructural) {
+                      return (
+                        <div
+                          data-testid="inspector-structural-locked-banner"
+                          className="flex items-center gap-2 bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                        >
+                          <span className="text-sm">🔒</span>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[10px] font-extrabold text-slate-800 flex items-center gap-1">
+                              Fixed Structural Shell
+                              <span className="px-1 py-0.1 rounded-full bg-slate-200 text-slate-700 text-[8px] font-mono">
+                                #structural_fixed
+                              </span>
+                            </span>
+                            <span className="text-[9px] text-slate-600">
+                              {selectedAsset.structuralConstraint ||
+                                'Cannot be updated during hotel conversion (load-bearing masonry, hoistway, waste chutes, cast-iron plumbing).'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const is1990s =
+                      selectedAsset.era === '1990s' ||
+                      selectedAsset.subType.endsWith('_90s') ||
+                      selectedAsset.tags?.includes('1990s') ||
+                      selectedAsset.tags?.includes('hotel-updated');
+                    const paired1990sSubtype = getUpdated1990sVariantSubtype(selectedAsset.subType);
+                    const predecessor1978Subtype = getPredecessor1978Subtype(selectedAsset.subType);
+
+                    if (is1990s) {
+                      const predecessorBp = predecessor1978Subtype
+                        ? catalogAssets.find((b) => b.subType === predecessor1978Subtype)
+                        : null;
+                      return (
+                        <div
+                          data-testid="inspector-era-downgrade-section"
+                          className="flex items-center justify-between gap-2 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-extrabold text-teal-900">
+                                🏨 1992–1995 Hotel Updated
+                              </span>
+                              <span className="px-1.5 py-0.1 rounded-full bg-teal-100 text-teal-800 text-[8px] font-bold">
+                                #1990s
+                              </span>
+                            </div>
+                            <span className="text-[9px] text-slate-500 truncate">
+                              {predecessorBp
+                                ? `Reversible to 1978: ${predecessorBp.name}`
+                                : 'Renovated commercial fixture/appliance'}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            data-testid="inspector-downgrade-era-btn"
+                            onClick={() => {
+                              const res = downgradeAssetTo1978Version(selectedAsset, catalogAssets);
+                              if (res.success) {
+                                onUpdateAsset(res.downgradedAsset);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
+                          >
+                            <span>⏪ Revert to 1978 Version</span>
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    if (paired1990sSubtype) {
+                      const target90sBp = catalogAssets.find((b) => b.subType === paired1990sSubtype);
+                      return (
+                        <div
+                          data-testid="inspector-era-upgrade-section"
+                          className="flex items-center justify-between gap-2 bg-gradient-to-r from-teal-50 to-cyan-50 border border-teal-200 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-extrabold text-teal-900">
+                                🕰️ 1978 Original Apartment Item
+                              </span>
+                              <span className="px-1.5 py-0.1 rounded-full bg-amber-100 text-amber-800 text-[8px] font-bold">
+                                #1978
+                              </span>
+                            </div>
+                            <span className="text-[9px] text-slate-500 truncate">
+                              {target90sBp
+                                ? `Hotel Renovation: ${target90sBp.name}`
+                                : `Upgrade to 90s hotel version (${paired1990sSubtype})`}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            data-testid="inspector-upgrade-era-btn"
+                            onClick={() => {
+                              const res = upgradeAssetTo1990sHotelVersion(selectedAsset, catalogAssets);
+                              if (res.success) {
+                                onUpdateAsset(res.upgradedAsset);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
+                          >
+                            <span>⏩ Upgrade to 1990s Hotel Version</span>
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  })()}
 
                   <div className="grid grid-cols-5 gap-1 text-[10px]">
                     <label className="flex flex-col">
