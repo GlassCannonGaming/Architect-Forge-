@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T18:26:33.702Z",
+  "category": "asset_sets",
+  "folderPath": "ArchitectForge_Workspace/assets/asset_sets",
+  "itemName": "Custom Lobby Concierge Group Set",
+  "data": {
+    "id": "set_1793557593689_7kh3",
+    "name": "Custom Lobby Concierge Group Set",
+    "description": "Grouped multi-item prop/furniture set saved separately from Room Blueprints.",
+    "createdAt": "2026-11-01T18:26:33.689Z",
+    "tags": [
+      "custom_set",
+      "multi_item",
+      "props"
+    ],
+    "boundingSize": [
+      3.2,
+      2.5
+    ],
+    "items": [
+      {
+        "name": "Scarred Walnut Concierge Desk",
+        "category": "furniture",
+        "subType": "concierge_desk",
+        "relPosition": [
+          0,
+          0.55,
+          -1
+        ],
+        "dimensions": [
+          2.6,
+          1.1,
+          0.9
+        ],
+        "rotationY": 0,
+        "color": "#3b2314",
+        "textureId": "oak_parquet",
+        "isOpen": false,
+        "collidable": true,
+        "tags": [
+          "concierge",
+          "furniture"
+        ]
+      },
+      {
+        "name": "Tarnished Banker Desk Lamp",
+        "category": "lighting",
+        "subType": "brass_table_lamp",
+        "relPosition": [
+          -1,
+          1.2,
+          -1
+        ],
+        "dimensions": [
+          0.4,
+          0.55,
+          0.4
+        ],
+        "rotationY": 0,
+        "color": "#5e4c2e",
+        "textureId": "aged_brass",
+        "isOpen": false,
+        "collidable": false,
+        "tags": [
+          "lamp",
+          "lighting"
+        ]
+      },
+      {
+        "name": "Threadbare Oxblood Parlor Rug",
+        "category": "floor_tile",
+        "subType": "crimson_carpet_runner",
+        "relPosition": [
+          0,
+          0.03,
+          0
+        ],
+        "dimensions": [
+          3.2,
+          0.06,
+          2
+        ],
+        "rotationY": 0,
+        "color": "#4a181b",
+        "textureId": "velvet_crimson",
+        "isOpen": false,
+        "collidable": false,
+        "tags": [
+          "rug",
+          "carpet"
+        ]
+      }
+    ]
+  }
+}

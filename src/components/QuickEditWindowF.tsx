@@ -19,6 +19,10 @@ interface QuickEditWindowFProps {
   onDuplicate: (asset: PlacedAsset) => void;
   onDeleteSelected: () => void;
   onExtendWallRow?: (asset: PlacedAsset) => void;
+  onCopySelected?: () => void;
+  onPasteClipboard?: () => void;
+  clipboardCount?: number;
+  onSaveSelectionAsSet?: (setName: string) => void;
 }
 
 const SWATCH_COLORS = [
@@ -52,10 +56,15 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
   onInteractKeyE,
   onDuplicate,
   onDeleteSelected,
-  onExtendWallRow
+  onExtendWallRow,
+  onCopySelected,
+  onPasteClipboard,
+  clipboardCount = 0,
+  onSaveSelectionAsSet
 }) => {
   const [customPos, setCustomPos] = useState<{ x: number; y: number } | null>(null);
   const [minimized, setMinimized] = useState<boolean>(false);
+  const [setNameDraft, setSetNameDraft] = useState<string>('');
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
   // Reset custom drag offset if primary asset changes
@@ -368,6 +377,55 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             >
               Delete ({selectedCount})
             </button>
+            {onCopySelected && (
+              <button
+                type="button"
+                data-testid="quick-edit-copy-btn"
+                onClick={onCopySelected}
+                className="px-2.5 py-1 bg-sky-100 hover:bg-sky-200 rounded-full text-[11px] font-bold text-sky-900"
+              >
+                📋 Copy ({selectedCount}) [Ctrl+C]
+              </button>
+            )}
+            {onPasteClipboard && (
+              <button
+                type="button"
+                data-testid="quick-edit-paste-btn"
+                disabled={clipboardCount === 0}
+                onClick={onPasteClipboard}
+                className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 disabled:opacity-40 rounded-full text-[11px] font-bold text-emerald-900"
+              >
+                📥 Paste ({clipboardCount}) [Ctrl+V]
+              </button>
+            )}
+            {onSaveSelectionAsSet && (
+              <div className="col-span-2 flex items-center gap-1 bg-slate-50/90 border border-slate-200 rounded-full px-2 py-0.5">
+                <input
+                  type="text"
+                  data-testid="quick-edit-set-name-input"
+                  value={setNameDraft}
+                  onChange={(e) => setSetNameDraft(e.target.value)}
+                  placeholder={`Set name (${selectedCount} ${selectedCount === 1 ? 'item' : 'items'})...`}
+                  className="flex-1 bg-transparent text-[10px] font-bold text-slate-800 px-1 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  data-testid="quick-edit-save-set-btn"
+                  onClick={() => {
+                    onSaveSelectionAsSet(
+                      setNameDraft.trim() ||
+                        (selectedCount === 1
+                          ? `${primaryAsset.name} Set`
+                          : `${primaryAsset.name} + ${selectedCount - 1} Items Set`)
+                    );
+                    setSetNameDraft('');
+                  }}
+                  className="px-2 py-0.5 rounded-full bg-gradient-to-r from-[#10b981] to-[#059669] text-white text-[10px] font-extrabold shrink-0"
+                >
+                  + Save Set
+                </button>
+              </div>
+            )}
             {primaryAsset.category === 'wall' && onExtendWallRow && (
               <button
                 type="button"

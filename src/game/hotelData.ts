@@ -8,7 +8,8 @@ import {
   IN_GAME_FEATURE_ASSET_TEMPLATES,
   buildProcedural3DSpecFromPrompt,
   inferDefaultAssetBlueprintTags,
-  parseBlueprintTagsInput
+  parseBlueprintTagsInput,
+  DEFAULT_CHARACTER_VOICE_PROFILES
 } from './rules';
 
 export interface AssetBlueprint {
@@ -912,6 +913,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     ],
     suspicionLevel: 0,
     trustLevel: 100,
+    voiceStyle: '1920s Transatlantic Broadcast Modulation · Metallic brass-horn phonograph resonance',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_helper },
+    activeFacialExpression: 'cryptic_whisper',
     appearance: {
       archetype: 'Occult Archivist',
       headShape: 'chibi_block',
@@ -922,9 +926,13 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       outfitColor: '#3b2314',
       accentColor: '#6e562f',
       mouthStyle: 'calm_neutral',
+      facialExpression: 'cryptic_whisper',
+      spineCurvature: 0,
+      hasWalkingCane: false,
       heightScale: 0.9,
       widthScale: 0.95,
-      headScale: 1.15
+      headScale: 1.15,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_helper }
     },
     stats: { physic: 2, agility: 3, mind: 6, endurance: 4, pointsRemaining: 0 },
     assignedTraits: ['tape_memory', 'acoustic_sync']
@@ -939,6 +947,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'present',
     occupation: 'Senior Night Registrar & Building Super (38 Yrs)',
     personality: 'Polite, unblinking, dryly formal, fiercely protective of "house rules" and the building’s piecemeal repairs; deflects questions about vanished long-term residents.',
+    voiceStyle: '1970s Old New York Mid-Atlantic accent · Hushed, gravel-edged, world-weary front-desk baritone',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_arthur },
+    activeFacialExpression: 'side_eye_glare',
     secretTruth: 'Arthur has been forging departure log entries for multi-decade permanent tenants who sleepwalk into the secret brick crawlspaces when the Basement boiler hums at 33 Hz.',
     knownFacts: [
       'Has worked the front desk for 38 years and personally supervised every piecemeal patch—from surface-mounted electrical conduits to the 1981 amber-phosphor desk terminal.',
@@ -962,12 +973,13 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       accentColor: '#6e562f',
       mouthStyle: 'slight_smirk',
       facialExpression: 'side_eye_glare',
-      spineCurvature: 8,
+      spineCurvature: 0,
       hasWalkingCane: false,
       hasSpectacles: false,
       heightScale: 1.04,
       widthScale: 0.98,
-      headScale: 1.0
+      headScale: 1.0,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_arthur }
     },
     stats: { physic: 3, agility: 2, mind: 5, endurance: 4, pointsRemaining: 0 },
     assignedTraits: ['velvet_tongue', 'wax_memory'],
@@ -1035,6 +1047,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     ],
     suspicionLevel: 20,
     trustLevel: 60,
+    voiceStyle: 'New England Brahmin Transatlantic accent · Poised, aristocratic, sharply observant contralto',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_eleanor },
+    activeFacialExpression: 'suspicious',
     appearance: {
       archetype: 'Elderly Matron',
       headShape: 'proportional_human',
@@ -1046,13 +1061,14 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       outfitColor: '#4f3548',
       accentColor: '#6e562f',
       mouthStyle: 'nervous_frown',
-      facialExpression: 'hollow_stare',
-      spineCurvature: 38,
-      hasWalkingCane: true,
+      facialExpression: 'suspicious',
+      spineCurvature: 0,
+      hasWalkingCane: false,
       hasSpectacles: true,
       heightScale: 0.94,
       widthScale: 0.98,
-      headScale: 1.0
+      headScale: 1.0,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_eleanor }
     },
     stats: { physic: 2, agility: 3, mind: 4, endurance: 2, pointsRemaining: 0 },
     assignedTraits: ['hollow_knock'],
@@ -1061,7 +1077,7 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
         timeRange: '06:00–11:59',
         phase: 'Morning',
         location: 'Lobby Registration Desk',
-        action: 'Leans on her cane by the front desk demanding her morning mail and complaining of wall drafts.',
+        action: 'Stands by the front desk demanding her morning mail and complaining of wall drafts.',
         targetFloor: 'lobby',
         targetPosition: [-1.8, 0, -4.8],
         activityGesture: 'inspect_ledger',
@@ -1071,7 +1087,7 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
         timeRange: '12:00–16:59',
         phase: 'Afternoon',
         location: 'Floor 1 Corridor & Room 101',
-        action: 'Slowly paces the Floor 1 runner with her walnut cane, tapping the wainscot seams.',
+        action: 'Slowly paces the Floor 1 runner, inspecting the wainscot seams.',
         targetFloor: 'floor1',
         targetPosition: [-2.2, 0, -1.5],
         activityGesture: 'pace_corridor',
@@ -1109,6 +1125,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'present',
     occupation: 'Insomniac Watchmaker (27-Yr Resident, Rm 104)',
     personality: 'Fidgety, meticulous permanent resident who has repaired watches in Suite 104 for nearly three decades; complains about the buzz of piecemeal conduit wiring.',
+    voiceStyle: 'Oxford-Inflected Antiquarian accent · Reverent, ink-stained, conspiratorial academic bass',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_barnaby },
+    activeFacialExpression: 'paranoid_twitch',
     secretTruth: 'When installers drilled surface conduits for the late-70s hallway upgrades, he measured Floor 1 and proved the interior suites are 4 feet narrower than the exterior brick facade—hiding secret corridors.',
     knownFacts: [
       'Has lived in Suite 104 for 27 years, brewing tea on a harvest-gold hotplate kitchenette while mapping every renovation patch in the building.',
@@ -1132,12 +1151,13 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       accentColor: '#6e562f',
       mouthStyle: 'nervous_frown',
       facialExpression: 'paranoid_twitch',
-      spineCurvature: 16,
+      spineCurvature: 0,
       hasWalkingCane: false,
       hasSpectacles: true,
       heightScale: 0.96,
       widthScale: 1.0,
-      headScale: 1.0
+      headScale: 1.0,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_barnaby }
     },
     stats: { physic: 2, agility: 4, mind: 5, endurance: 2, pointsRemaining: 0 },
     assignedTraits: ['hollow_knock', 'iron_nerve'],
@@ -1194,6 +1214,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'erratic',
     occupation: 'Stage Costume Designer (19-Yr Resident, Rm 201)',
     personality: 'Sharp-tongued, observant permanent tenant of 19 years; terrified since her longtime neighbor Julian in Room 202 (a 25-year resident) vanished mid-sentence through the wall.',
+    voiceStyle: 'Manhattan Upper East Side Vintage accent · Breathless, velvet-gloved, theatrical socialite mezzo',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_clara },
+    activeFacialExpression: 'cryptic_whisper',
     secretTruth: 'She peered through a gap beside a corroded radiator valve in the wainscot and saw decade-long residents walking in a trance down a hidden brick stair toward the Basement.',
     knownFacts: [
       'Has lived in Suite 201 for 19 years; her sewing mannequins and steamer trunks fill the corners next to a faded 1979 harvest-gold kitchenette.',
@@ -1217,12 +1240,13 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       accentColor: '#6e562f',
       mouthStyle: 'calm_neutral',
       facialExpression: 'cryptic_whisper',
-      spineCurvature: 4,
+      spineCurvature: 0,
       hasWalkingCane: false,
       hasSpectacles: false,
       heightScale: 1.0,
       widthScale: 0.95,
-      headScale: 1.0
+      headScale: 1.0,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_clara }
     },
     stats: { physic: 2, agility: 4, mind: 4, endurance: 3, pointsRemaining: 0 },
     assignedTraits: ['carpet_step'],
@@ -1279,6 +1303,9 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
     status: 'present',
     occupation: 'Architectural Historian (12-Yr Resident, Rm 304)',
     personality: 'Scholarly, intense permanent resident (considered "the newcomer" by the 30-year tenants) who studies how the old apartment-hotel was patched over the decades.',
+    voiceStyle: 'Chicago Industrial Drafting-Room accent · Restless, analytical, sleep-deprived structural tenor',
+    voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_marcus },
+    activeFacialExpression: 'side_eye_glare',
     secretTruth: 'He moved into Room 304 twelve years ago as a permanent resident after recovering the original blueprint of "The House Suite" and overlaying every decade of piecemeal plumbing and electrical upgrades.',
     knownFacts: [
       'Keeps the annotated construction blueprint on his drafting table in Room 304 showing how every decade’s small upgrades carefully avoided piercing the hollow inner shaft.',
@@ -1302,12 +1329,13 @@ export const INITIAL_AGENTS: HotelAgentProfile[] = [
       accentColor: '#6e562f',
       mouthStyle: 'slight_smirk',
       facialExpression: 'side_eye_glare',
-      spineCurvature: 6,
+      spineCurvature: 0,
       hasWalkingCane: false,
       hasSpectacles: true,
       heightScale: 1.02,
       widthScale: 0.98,
-      headScale: 1.0
+      headScale: 1.0,
+      voiceProfile: { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_marcus }
     },
     stats: { physic: 3, agility: 3, mind: 5, endurance: 3, pointsRemaining: 0 },
     assignedTraits: ['wax_memory', 'hollow_knock'],

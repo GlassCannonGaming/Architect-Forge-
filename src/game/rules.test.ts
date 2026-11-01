@@ -664,7 +664,7 @@ test('AI_MODEL_REGISTRY enforces cheapest capable Google Gemini models and Meshy
   assert.equal(check.compliant, true);
   assert.equal(check.violations.length, 0);
   assert.equal(check.meshyModelCount, 1);
-  assert.equal(check.googleModelCount, 11);
+  assert.equal(check.googleModelCount, 12);
 
   // Confirm cheapest models are selected for each task
   assert.equal(AI_MODEL_REGISTRY.character_chat.modelId, 'gemini-3.1-flash-lite');
@@ -1442,8 +1442,8 @@ test('Daily Schedule Manager relocates AI tenants based on gameTimeMinutes and s
   const barnabyEvening = eveningAgents.find((a) => a.id === 'agent_barnaby')!;
   assert.equal(eleanorEvening.floor, 'lobby');
   assert.equal(barnabyEvening.floor, 'lobby');
-  assert.equal(eleanorEvening.appearance.spineCurvature, 38);
-  assert.equal(eleanorEvening.appearance.hasWalkingCane, true);
+  assert.equal(eleanorEvening.appearance.spineCurvature, 0);
+  assert.equal(eleanorEvening.appearance.hasWalkingCane, false);
 
   // 2. Late Night (23:45 = 1425 mins): Tenants return to their respective suites on Floor 1, Floor 2, Floor 3
   const nightAgents = computeScheduledAgentsForTime(tenants, 23 * 60 + 45, false);
@@ -2105,5 +2105,309 @@ test('Top-Right Undo Action Cluster Removal & Silent Studio Audio Policy: no aut
   assert.equal((catalogWithSound.tags || []).includes('audio-linked'), true);
 });
 
+test('Google AI Studio Character Animation System (gemini-3.1-flash-lite) replaces Meshy animation and enforces upright external-rig-ready posture', async () => {
+  const {
+    AI_MODEL_REGISTRY,
+    verifyAiModelCompliance,
+    GOOGLE_AI_ANIMATION_PRESETS,
+    buildGoogleAiAnimationPromptSpec,
+    synthesizeGoogleAiCharacterAnimationClip,
+    sampleDecimatedClipPose
+  } = await import('./rules');
+  const { INITIAL_AGENTS } = await import('./hotelData');
 
+  // 1. Model registry routes character_animation to Google gemini-3.1-flash-lite
+  assert.equal(AI_MODEL_REGISTRY.character_animation.modelId, 'gemini-3.1-flash-lite');
+  assert.equal(AI_MODEL_REGISTRY.character_animation.provider, 'Google');
+  assert.equal(AI_MODEL_REGISTRY.character_animation.costTier, 'Lowest-Cost Flash-Lite');
+  const compliance = verifyAiModelCompliance(AI_MODEL_REGISTRY);
+  assert.equal(compliance.compliant, true);
+
+  // 2. All INITIAL_AGENTS use upright external-rig-ready posture (spineCurvature === 0, hasWalkingCane === false)
+  for (const agent of INITIAL_AGENTS) {
+    assert.equal(agent.appearance.spineCurvature ?? 0, 0);
+    assert.equal(Boolean(agent.appearance.hasWalkingCane), false);
+  }
+
+  // 3. Google AI Studio animation prompt spec and low-frame synthesis
+  const sampleAgent = INITIAL_AGENTS[1]; // Arthur Pendelton
+  const promptSpec = buildGoogleAiAnimationPromptSpec({
+    characterName: sampleAgent.name,
+    archetype: sampleAgent.appearance.archetype,
+    gesture: 'inspect_ledger',
+    globalFps: 8,
+    customMotionPrompt: 'Trace ledger entries with a suspicious side-eye glare',
+    facialExpression: 'side_eye_glare',
+    voiceProfile: sampleAgent.voiceProfile
+  });
+  assert.equal(promptSpec.modelId, 'gemini-3.1-flash-lite');
+  assert.equal(promptSpec.targetFps, 8);
+  assert.equal(promptSpec.expectedKeyframeCount, 16);
+  assert.equal(promptSpec.promptText.includes('Trace ledger entries'), true);
+
+  const clip = synthesizeGoogleAiCharacterAnimationClip(
+    sampleAgent.appearance,
+    'inspect_ledger',
+    8,
+    {
+      customMotionPrompt: 'Trace ledger entries with a suspicious side-eye glare',
+      facialExpression: 'side_eye_glare',
+      aiKeyframeModifiers: [{ headY: 0.22, spineThoracicX: 0.14, facialExpression: 'side_eye_glare' }]
+    }
+  );
+  assert.equal(clip.engine, 'google_ai_studio');
+  assert.equal(clip.modelId, 'gemini-3.1-flash-lite');
+  assert.equal(clip.bakedFps, 8);
+  assert.equal(clip.decimatedFrameCount, 16);
+  assert.equal(clip.dominantExpression, 'side_eye_glare');
+  assert.equal(clip.keyframes.length, 16);
+  assert.equal(clip.keyframes[0].pose.caneGripActive, false);
+
+  // 4. sampleDecimatedClipPose reads directly from appearance.googleAiAnimations
+  const appearanceWithGoogleClip = {
+    ...sampleAgent.appearance,
+    googleAiAnimations: {
+      inspect_ledger: clip
+    }
+  };
+  const sampledPose = sampleDecimatedClipPose(
+    appearanceWithGoogleClip,
+    'inspect_ledger',
+    0.0,
+    false,
+    false
+  );
+  assert.equal(sampledPose.headY, 0.22);
+  assert.equal(sampledPose.spineThoracicX, 0.14);
+});
+
+test('Persistent Character Voice, Vocal Tone, Regional Accent & Facial Expression System maintains each character identity across the playthrough', async () => {
+  const {
+    DEFAULT_CHARACTER_VOICE_PROFILES,
+    getOrCreateCharacterVoiceProfile,
+    resolveCharacterVoiceAndExpressionForTurn,
+    buildGeminiTtsRequestPayload,
+    buildSandboxedCharacterSystemPrompt,
+    evaluateCharacterInteractionMemory
+  } = await import('./rules');
+  const { INITIAL_AGENTS } = await import('./hotelData');
+
+  // 1. Every starter character in INITIAL_AGENTS has a locked, distinct voiceProfile and activeFacialExpression
+  const seenAccents = new Set<string>();
+  const seenTones = new Set<string>();
+  for (const agent of INITIAL_AGENTS) {
+    const vp = getOrCreateCharacterVoiceProfile(agent);
+    assert.equal(vp.persistAcrossPlaythrough, true);
+    assert.equal(vp.accent.length > 5, true);
+    assert.equal(vp.vocalTone.length > 5, true);
+    assert.equal(vp.cadenceStyle.length > 5, true);
+    seenAccents.add(vp.accent);
+    seenTones.add(vp.vocalTone);
+  }
+  assert.equal(seenAccents.size, INITIAL_AGENTS.length);
+  assert.equal(seenTones.size, INITIAL_AGENTS.length);
+
+  // 2. Multi-turn interactions strictly preserve the character's locked voice/tone/accent while adapting facial expression
+  const eleanor = INITIAL_AGENTS.find((a) => a.id === 'agent_eleanor')!;
+  const friendlyMem = evaluateCharacterInteractionMemory(
+    eleanor,
+    'Good evening Mrs. Vance, I brought warm tea and checked the brass keys.',
+    20 * 60,
+    1
+  );
+  const turn1 = resolveCharacterVoiceAndExpressionForTurn(
+    friendlyMem.updatedAgent,
+    friendlyMem,
+    'Thank you, Clerk. Listen closely — someone whispers behind the wall.'
+  );
+  assert.equal(turn1.voiceProfile.prebuiltVoiceName, DEFAULT_CHARACTER_VOICE_PROFILES.agent_eleanor.prebuiltVoiceName);
+  assert.equal(turn1.voiceProfile.accent, 'New England Brahmin Transatlantic');
+  assert.equal(turn1.voiceProfile.vocalTone, DEFAULT_CHARACTER_VOICE_PROFILES.agent_eleanor.vocalTone);
+  assert.equal(turn1.activeFacialExpression, 'cryptic_whisper');
+
+  const hostileMem = evaluateCharacterInteractionMemory(
+    friendlyMem.updatedAgent,
+    'You are lying and guilty! Confess right now!',
+    22 * 60,
+    2
+  );
+  const turn2 = resolveCharacterVoiceAndExpressionForTurn(
+    hostileMem.updatedAgent,
+    hostileMem,
+    'Step away from my door at once.'
+  );
+  // Voice, tone, and accent remain 100% locked across days and disposition shifts
+  assert.equal(turn2.voiceProfile.prebuiltVoiceName, turn1.voiceProfile.prebuiltVoiceName);
+  assert.equal(turn2.voiceProfile.accent, turn1.voiceProfile.accent);
+  assert.equal(turn2.voiceProfile.vocalTone, turn1.voiceProfile.vocalTone);
+  assert.equal(turn2.voiceProfile.persistAcrossPlaythrough, true);
+  assert.equal(
+    turn2.activeFacialExpression === 'side_eye_glare' || turn2.activeFacialExpression === 'grimace',
+    true
+  );
+
+  // 3. Sandboxed character system prompt embeds the locked voice/tone/accent and facial expression
+  const sysPrompt = buildSandboxedCharacterSystemPrompt(
+    {
+      ...hostileMem.updatedAgent,
+      voiceProfile: turn2.voiceProfile,
+      activeFacialExpression: turn2.activeFacialExpression
+    },
+    '',
+    22 * 60,
+    2,
+    hostileMem
+  );
+  assert.equal(sysPrompt.includes('New England Brahmin Transatlantic'), true);
+  assert.equal(sysPrompt.includes(turn2.voiceProfile.vocalTone), true);
+  assert.equal(sysPrompt.includes(turn2.activeFacialExpression), true);
+
+  // 4. Gemini TTS payload builder formats gemini-3.8-flash-lite-tts with prebuiltVoiceConfig and speechMetadata.style
+  const ttsPayload = buildGeminiTtsRequestPayload(
+    eleanor,
+    'Do not trust the footsteps in Room 102.',
+    'suspicious'
+  );
+  assert.equal(ttsPayload.model, 'gemini-3.8-flash-lite-tts');
+  assert.equal(
+    ttsPayload.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName,
+    'Kore'
+  );
+  assert.equal(
+    ttsPayload.contents.parts[0].speechMetadata.style.includes('New England Brahmin Transatlantic'),
+    true
+  );
+  assert.equal(
+    ttsPayload.contents.parts[0].speechMetadata.style.includes('suspicious'),
+    true
+  );
+});
+
+test('Copy (Ctrl+C) / Paste (Ctrl+V) Single & Multi-Selected Assets and Reusable Asset Sets (Separate from Blueprints)', async () => {
+  const {
+    copySelectedAssetsToClipboard,
+    pasteAssetsFromClipboard,
+    createAssetSetFromSelection,
+    instantiateAssetSetOnFloor,
+    searchAndFilterAssetSets,
+    INITIAL_ASSET_SETS,
+    LOCAL_WORKSPACE_FOLDERS
+  } = await import('./rules');
+
+  const sampleFloorAssets: PlacedAsset[] = [
+    {
+      id: 'item_desk_1',
+      name: 'Scarred Walnut Concierge Desk',
+      category: 'furniture',
+      subType: 'concierge_desk',
+      floor: 'lobby',
+      position: [-2.0, 0.55, 1.0],
+      dimensions: [2.6, 1.1, 0.9],
+      rotationY: 0,
+      color: '#3b2314',
+      textureId: 'oak_parquet',
+      collidable: true,
+      tags: ['concierge', 'furniture']
+    },
+    {
+      id: 'item_lamp_1',
+      name: 'Tarnished Banker Desk Lamp',
+      category: 'lighting',
+      subType: 'brass_table_lamp',
+      floor: 'lobby',
+      position: [-2.5, 1.2, 1.0],
+      dimensions: [0.4, 0.55, 0.4],
+      rotationY: Math.PI / 2,
+      color: '#5e4c2e',
+      textureId: 'aged_brass',
+      collidable: false,
+      tags: ['lamp', 'lighting'],
+      soundPresetId: 'cassette_click'
+    },
+    {
+      id: 'item_rug_1',
+      name: 'Threadbare Oxblood Parlor Rug',
+      category: 'floor_tile',
+      subType: 'crimson_carpet_runner',
+      floor: 'lobby',
+      position: [-2.0, 0.03, 2.0],
+      dimensions: [3.2, 0.06, 2.0],
+      rotationY: 0,
+      color: '#4a181b',
+      textureId: 'velvet_crimson',
+      collidable: false
+    }
+  ];
+
+  // 1. Copy & Paste a SINGLE selected item (Ctrl+C / Ctrl+V)
+  const singleClip = copySelectedAssetsToClipboard(sampleFloorAssets, [], 'item_lamp_1');
+  assert.equal(singleClip !== null, true);
+  assert.equal(singleClip!.items.length, 1);
+  assert.equal(singleClip!.items[0].name, 'Tarnished Banker Desk Lamp');
+  assert.equal(singleClip!.items[0].soundPresetId, 'cassette_click');
+
+  const singlePaste = pasteAssetsFromClipboard(singleClip, 'lobby', 1);
+  assert.equal(singlePaste.pastedAssets.length, 1);
+  assert.equal(singlePaste.pastedIds.length, 1);
+  assert.equal(singlePaste.primaryId, singlePaste.pastedAssets[0].id);
+  assert.notEqual(singlePaste.pastedAssets[0].id, 'item_lamp_1');
+  assert.equal(singlePaste.pastedAssets[0].position[0], -1.5); // -2.5 + 1.0m step offset
+  assert.equal(singlePaste.pastedAssets[0].position[2], 2.0); // 1.0 + 1.0m step offset
+
+  // 2. Copy & Paste MULTIPLE selected items as a group (preserving relative offsets)
+  const multiClip = copySelectedAssetsToClipboard(
+    sampleFloorAssets,
+    ['item_desk_1', 'item_lamp_1', 'item_rug_1'],
+    'item_rug_1'
+  );
+  assert.equal(multiClip !== null, true);
+  assert.equal(multiClip!.items.length, 3);
+
+  const origDeltaXZ = [
+    sampleFloorAssets[1].position[0] - sampleFloorAssets[0].position[0],
+    sampleFloorAssets[1].position[2] - sampleFloorAssets[0].position[2]
+  ];
+
+  const multiPaste = pasteAssetsFromClipboard(multiClip, 'floor1', 2);
+  assert.equal(multiPaste.pastedAssets.length, 3);
+  assert.equal(multiPaste.pastedIds.length, 3);
+  assert.equal(multiPaste.pastedAssets.every((a) => a.floor === 'floor1'), true);
+
+  const pastedDeltaXZ = [
+    multiPaste.pastedAssets[1].position[0] - multiPaste.pastedAssets[0].position[0],
+    multiPaste.pastedAssets[1].position[2] - multiPaste.pastedAssets[0].position[2]
+  ];
+  assert.deepEqual(pastedDeltaXZ, origDeltaXZ);
+
+  // 3. Save a group of multiple selected items as a reusable "Set" (AssetSet), separate from RoomBlueprint
+  const customSet = createAssetSetFromSelection({
+    name: 'Lobby Desk & Banker Lamp Set',
+    description: 'Grouped desk, banker lamp, and oxblood rug set.',
+    tags: ['lobby_set', 'concierge'],
+    allAssets: sampleFloorAssets,
+    selectedIds: ['item_desk_1', 'item_lamp_1', 'item_rug_1'],
+    primaryId: 'item_rug_1'
+  });
+  assert.equal(customSet !== null, true);
+  assert.equal(customSet!.id.startsWith('set_'), true);
+  assert.equal(customSet!.name, 'Lobby Desk & Banker Lamp Set');
+  assert.equal(customSet!.items.length, 3);
+  assert.equal(customSet!.tags.includes('lobby_set'), true);
+
+  // 4. Instantiate/place the saved AssetSet onto any floor at custom (offsetX, offsetZ)
+  const spawned = instantiateAssetSetOnFloor(customSet!, 'floor2', 4.0, -3.0);
+  assert.equal(spawned.spawnedAssets.length, 3);
+  assert.equal(spawned.spawnedIds.length, 3);
+  assert.equal(spawned.spawnedAssets.every((a) => a.floor === 'floor2'), true);
+
+  // 5. Search & filter AssetSets and verify dedicated local workspace folder 'asset_sets'
+  const allSets = [customSet!, ...INITIAL_ASSET_SETS];
+  const filteredSets = searchAndFilterAssetSets(allSets, 'Dictaphone');
+  assert.equal(filteredSets.length, 1);
+  assert.equal(filteredSets[0].id, 'set_investigator_evidence_table');
+
+  const assetSetsFolder = LOCAL_WORKSPACE_FOLDERS.find((f) => f.category === 'asset_sets');
+  assert.equal(Boolean(assetSetsFolder), true);
+  assert.equal(assetSetsFolder?.extension, '.assetset.json');
+});
 

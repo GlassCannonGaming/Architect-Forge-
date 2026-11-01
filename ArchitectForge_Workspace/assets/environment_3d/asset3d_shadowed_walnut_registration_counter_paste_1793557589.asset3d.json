@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T18:26:29.164Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Shadowed Walnut Registration Counter",
+  "data": {
+    "id": "paste_1793557589083_0_8uzh",
+    "name": "Shadowed Walnut Registration Counter",
+    "category": "furniture",
+    "subType": "reception_desk",
+    "floor": "lobby",
+    "roomNumber": "Ground Floor · Layer L1",
+    "position": [
+      1,
+      0.58,
+      -4
+    ],
+    "dimensions": [
+      4.2,
+      1.15,
+      1.2
+    ],
+    "rotationY": 0,
+    "color": "#331b0e",
+    "textureId": "oak_parquet",
+    "isOpen": false,
+    "collidable": true
+  }
+}

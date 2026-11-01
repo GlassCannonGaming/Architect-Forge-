@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T18:26:31.524Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Scarred Walnut Concierge Desk",
+  "data": {
+    "id": "paste_1793557591519_0_8ucf",
+    "name": "Scarred Walnut Concierge Desk",
+    "category": "furniture",
+    "subType": "concierge_desk",
+    "floor": "lobby",
+    "roomNumber": "1978 Concierge Desk & Banker Lamp Set",
+    "position": [
+      0,
+      0.55,
+      -0.5
+    ],
+    "dimensions": [
+      2.6,
+      1.1,
+      0.9
+    ],
+    "rotationY": 0,
+    "color": "#3b2314",
+    "textureId": "oak_parquet",
+    "isOpen": false,
+    "collidable": true,
+    "tags": [
+      "concierge",
+      "furniture"
+    ]
+  }
+}

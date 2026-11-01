@@ -20,7 +20,10 @@ import {
   collectBlueprintTagCounts,
   searchAndFilterCatalogBlueprints,
   searchAndFilterRoomBlueprints,
-  assignSoundToAssetOrBlueprint
+  assignSoundToAssetOrBlueprint,
+  AssetSet,
+  AssetClipboardPayload,
+  searchAndFilterAssetSets
 } from '../game/rules';
 import { AssetBlueprint } from '../game/hotelData';
 import {
@@ -104,6 +107,15 @@ interface UnifiedBottomDockProps {
   aiForgeBusy: boolean;
   loreSummary: string | null;
   customGeneratedTexUrl: string | null;
+  // Single/Multi-Item Copy (Ctrl+C), Paste (Ctrl+V) & Saved Asset Sets (Separate from Blueprints)
+  assetClipboard?: AssetClipboardPayload | null;
+  onCopySelectedAssets?: () => void;
+  onPasteClipboardAssets?: () => void;
+  assetSets?: AssetSet[];
+  onSaveSelectionAsAssetSet?: (name: string, description: string, tags: string[]) => void;
+  onPlaceAssetSet?: (assetSet: AssetSet, offsetX?: number, offsetZ?: number) => void;
+  onDeleteAssetSet?: (id: string) => void;
+  onExportAssetSet?: (assetSet: AssetSet) => void;
 }
 
 const TEXTURE_OPTIONS: { id: TexturePresetId; label: string }[] = [
@@ -179,9 +191,17 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   onResearchNycLore,
   aiForgeBusy,
   loreSummary,
-  customGeneratedTexUrl
+  customGeneratedTexUrl,
+  assetClipboard = null,
+  onCopySelectedAssets,
+  onPasteClipboardAssets,
+  assetSets = [],
+  onSaveSelectionAsAssetSet,
+  onPlaceAssetSet,
+  onDeleteAssetSet,
+  onExportAssetSet
 }) => {
-  const [architectTab, setArchitectTab] = useState<'catalog' | 'ai3d' | 'texture' | 'lore' | 'models'>('catalog');
+  const [architectTab, setArchitectTab] = useState<'catalog' | 'sets' | 'ai3d' | 'texture' | 'lore' | 'models'>('catalog');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [capabilityFilter, setCapabilityFilter] = useState<CatalogCapabilityFilter>('all');
   const [sortBy, setSortBy] = useState<CatalogSortMode>('relevance');
@@ -194,6 +214,16 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   const meshyImageInputRef = useRef<HTMLInputElement | null>(null);
   const [texPrompt, setTexPrompt] = useState('Crimson geometric corridor carpet');
   const [loreQuery, setLoreQuery] = useState('Boutique hotel room dimensions & standard door proportions');
+
+  // Asset Set Creator & Search State (Separate from Room Blueprints)
+  const [setNameInput, setSetNameInput] = useState<string>('Custom Desk & Lamp Set');
+  const [setDescInput, setSetDescInput] = useState<string>(
+    'Grouped multi-item prop/furniture set saved separately from Room Blueprints.'
+  );
+  const [setTagsInput, setSetTagsInput] = useState<string>('custom_set, multi_item, props');
+  const [assetSetSearchQuery, setAssetSetSearchQuery] = useState<string>('');
+  const [setOffsetX, setSetOffsetX] = useState<number>(0);
+  const [setOffsetZ, setSetOffsetZ] = useState<number>(0);
 
   // Room Blueprint Creator, Tagging & Search State
   const [bpName, setBpName] = useState<string>('Custom Parlor Suite');
@@ -208,6 +238,9 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   const [bpOffsetZ, setBpOffsetZ] = useState<number>(0);
   const [replaceFloorOnLoad, setReplaceFloorOnLoad] = useState<boolean>(false);
   const blueprintFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const filteredAssetSets = searchAndFilterAssetSets(assetSets, assetSetSearchQuery);
+  const clipboardCount = assetClipboard?.items?.length || 0;
 
   const filteredCatalog = searchAndFilterCatalogBlueprints(catalogAssets, {
     query: searchQuery,
@@ -725,9 +758,9 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 value={architectTab}
                 onChange={(e) => {
                   e.currentTarget.blur();
-                  const nextTab = e.target.value as 'catalog' | 'ai3d' | 'texture' | 'lore' | 'models';
+                  const nextTab = e.target.value as 'catalog' | 'sets' | 'ai3d' | 'texture' | 'lore' | 'models';
                   setArchitectTab(nextTab);
-                  if (nextTab === 'catalog') {
+                  if (nextTab === 'catalog' || nextTab === 'sets') {
                     onOpenWindow?.('catalog');
                     onFocusWindow('catalog');
                   }
@@ -735,6 +768,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 className="w-full bg-[#f0f9ff] border border-[#bae6fd] rounded-2xl px-2.5 py-1.5 text-xs font-bold text-[#0369a1]"
               >
                 <option value="catalog">📦 Build Mode Visual Catalog ({catalogAssets.length})</option>
+                <option value="sets">📚 Saved Asset Sets ({assetSets.length} Sets · Separate from Blueprints)</option>
                 <option value="ai3d">✨ Meshy.ai Image-to-3D &amp; Google 3D Forge</option>
                 <option value="texture">🎨 Google Flash-Lite Surface Textures</option>
                 <option value="lore">📐 In-Game Scale Reference (Flash Low)</option>
@@ -802,6 +836,63 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 >
                   <span>⬚ Marquee Multi-Select</span>
                   <span className="text-[10px] opacity-85">[Shift]</span>
+                </button>
+
+                {/* Copy (Ctrl+C) / Paste (Ctrl+V) Single or Multi-Selected Assets + Open Asset Sets */}
+                <div
+                  data-testid="tools-copy-paste-bar"
+                  className="grid grid-cols-2 gap-1 pt-0.5"
+                >
+                  <button
+                    type="button"
+                    data-testid="copy-selected-assets-btn"
+                    disabled={selectedCount === 0}
+                    onClick={() => onCopySelectedAssets?.()}
+                    title="Copy selected single asset or group of multiple selected assets (Ctrl+C)"
+                    className={`px-2 py-1 rounded-full text-[10px] font-bold flex items-center justify-between gap-1 whitespace-nowrap transition-all ${
+                      selectedCount > 0
+                        ? 'bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <span>📋 Copy ({selectedCount})</span>
+                    <span className="text-[8px] font-mono opacity-85">Ctrl+C</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="paste-assets-btn"
+                    disabled={clipboardCount === 0}
+                    onClick={() => onPasteClipboardAssets?.()}
+                    title="Paste copied single asset or multi-asset group onto active floor (Ctrl+V)"
+                    className={`px-2 py-1 rounded-full text-[10px] font-bold flex items-center justify-between gap-1 whitespace-nowrap transition-all ${
+                      clipboardCount > 0
+                        ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <span>📥 Paste ({clipboardCount})</span>
+                    <span className="text-[8px] font-mono opacity-85">Ctrl+V</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="open-asset-sets-tab-btn"
+                  onClick={() => {
+                    setArchitectTab('sets');
+                    onOpenWindow?.('catalog');
+                    onFocusWindow('catalog');
+                  }}
+                  className={`w-full px-3 py-1 rounded-full text-xs font-bold text-left flex items-center justify-between whitespace-nowrap transition-all ${
+                    architectTab === 'sets'
+                      ? 'bg-[#0284c7] text-white shadow-xs'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200'
+                  }`}
+                >
+                  <span>📚 Asset Sets Library</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-white/50 rounded-md">
+                    {assetSets.length} Sets
+                  </span>
                 </button>
 
                 <button
@@ -902,6 +993,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 {(
                   [
                     { id: 'catalog', label: `Catalog (${filteredCatalog.length})` },
+                    { id: 'sets', label: `📚 Asset Sets (${assetSets.length})` },
                     { id: 'ai3d', label: 'Meshy Image-to-3D' },
                     { id: 'texture', label: 'Flash-Lite Texture' },
                     { id: 'lore', label: 'Scale Ref' },
@@ -923,6 +1015,198 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                   </button>
                 ))}
               </div>
+
+              {architectTab === 'sets' && (
+                <div
+                  data-testid="asset-sets-panel"
+                  className="flex flex-col gap-2 pr-1 text-xs"
+                >
+                  {/* Copy / Paste & Save Selection as Reusable "Set" (Separate from Room Blueprints) */}
+                  <div className="bg-[#ecfdf5] border border-[#a7f3d0] rounded-2xl p-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-extrabold text-[#065f46]">
+                          📚 Save Selected Group or Item as a &ldquo;Set&rdquo; (Separate from Room Blueprints)
+                        </div>
+                        <div className="text-[9px] text-slate-600">
+                          Shift+Click or Marquee-drag to select multiple items, copy/paste with Ctrl+C / Ctrl+V, or save the group as a reusable Set (.assetset.json).
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          data-testid="sets-panel-copy-btn"
+                          disabled={selectedCount === 0}
+                          onClick={() => onCopySelectedAssets?.()}
+                          className="px-2 py-0.5 rounded-full bg-sky-100 hover:bg-sky-200 disabled:opacity-40 text-sky-900 text-[10px] font-extrabold border border-sky-300"
+                        >
+                          📋 Copy ({selectedCount}) [Ctrl+C]
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="sets-panel-paste-btn"
+                          disabled={clipboardCount === 0}
+                          onClick={() => onPasteClipboardAssets?.()}
+                          className="px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 disabled:opacity-40 text-emerald-900 text-[10px] font-extrabold border border-emerald-300"
+                        >
+                          📥 Paste ({clipboardCount}) [Ctrl+V]
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <input
+                        type="text"
+                        data-testid="asset-set-name-input"
+                        value={setNameInput}
+                        onChange={(e) => setSetNameInput(e.target.value)}
+                        aria-label="Asset Set Name"
+                        placeholder="Set name (e.g., Desk & Lamp Set)..."
+                        className="bg-white border border-emerald-300 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-slate-800"
+                      />
+                      <input
+                        type="text"
+                        data-testid="asset-set-tags-input"
+                        value={setTagsInput}
+                        onChange={(e) => setSetTagsInput(e.target.value)}
+                        aria-label="Asset Set Tags"
+                        placeholder="Tags: desk_set, props..."
+                        className="bg-white border border-emerald-300 rounded-full px-2.5 py-0.5 text-[10px] font-mono text-slate-700"
+                      />
+                      <button
+                        type="button"
+                        data-testid="save-asset-set-btn"
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          onSaveSelectionAsAssetSet?.(
+                            setNameInput,
+                            setDescInput,
+                            parseBlueprintTagsInput(setTagsInput)
+                          );
+                        }}
+                        className="py-0.5 px-2.5 rounded-full bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] disabled:opacity-40 text-white font-extrabold text-[10px] shadow-2xs"
+                      >
+                        + Save Selection as Set ({selectedCount})
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <input
+                        type="text"
+                        data-testid="asset-set-description-input"
+                        value={setDescInput}
+                        onChange={(e) => setSetDescInput(e.target.value)}
+                        aria-label="Asset Set Description"
+                        placeholder="Short description of this multi-item set..."
+                        className="flex-1 bg-white border border-emerald-200 rounded-full px-2.5 py-0.5 text-[10px] text-slate-700"
+                      />
+                      <div className="flex items-center gap-1 text-[10px] shrink-0">
+                        <span className="font-bold text-slate-600">Place Center X,Z:</span>
+                        <input
+                          type="number"
+                          aria-label="Asset Set Offset X"
+                          step={0.5}
+                          value={setOffsetX}
+                          onChange={(e) => setSetOffsetX(parseFloat(e.target.value) || 0)}
+                          className="w-11 bg-white border border-slate-300 rounded-lg px-1 py-0.2 text-[10px] font-mono text-center"
+                        />
+                        <input
+                          type="number"
+                          aria-label="Asset Set Offset Z"
+                          step={0.5}
+                          value={setOffsetZ}
+                          onChange={(e) => setSetOffsetZ(parseFloat(e.target.value) || 0)}
+                          className="w-11 bg-white border border-slate-300 rounded-lg px-1 py-0.2 text-[10px] font-mono text-center"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Search & Saved Asset Sets Grid */}
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="text"
+                      data-testid="asset-sets-search-input"
+                      value={assetSetSearchQuery}
+                      onChange={(e) => setAssetSetSearchQuery(e.target.value)}
+                      placeholder="Search saved Asset Sets by name, item, or #tag..."
+                      className="flex-1 bg-slate-100 border border-slate-300 rounded-full px-2.5 py-0.5 text-[11px] text-slate-800"
+                    />
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                      {filteredAssetSets.length}/{assetSets.length} Sets (Separate from Blueprints)
+                    </span>
+                  </div>
+
+                  <div
+                    data-testid="saved-asset-sets-list"
+                    className="grid grid-cols-2 gap-2 pr-0.5 pb-1"
+                  >
+                    {filteredAssetSets.map((setItem) => (
+                      <div
+                        key={setItem.id}
+                        data-testid={`asset-set-card-${setItem.id}`}
+                        className="bg-white border border-slate-200 hover:border-[#10b981] rounded-2xl p-2 shadow-2xs flex flex-col justify-between gap-1.5 transition-all"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="text-[11px] font-extrabold text-slate-800">
+                              {setItem.name}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold shrink-0">
+                              {setItem.items.length} {setItem.items.length === 1 ? 'item' : 'items'} · {setItem.boundingSize[0]}×{setItem.boundingSize[1]}m
+                            </span>
+                          </div>
+                          <div className="text-[9px] text-slate-500 line-clamp-1 mt-0.5">
+                            {setItem.description}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {setItem.items.slice(0, 4).map((it, idx) => (
+                              <span
+                                key={`${setItem.id}_item_${idx}`}
+                                className="px-1.5 py-0.1 rounded-full bg-slate-100 text-slate-700 text-[8px] font-semibold"
+                              >
+                                {it.name}
+                              </span>
+                            ))}
+                            {setItem.items.length > 4 && (
+                              <span className="text-[8px] font-mono text-slate-500">
+                                +{setItem.items.length - 4} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 pt-1 border-t border-slate-100">
+                          <button
+                            type="button"
+                            data-testid={`place-asset-set-btn-${setItem.id}`}
+                            onClick={() => onPlaceAssetSet?.(setItem, setOffsetX, setOffsetZ)}
+                            className="flex-1 py-0.5 px-2 bg-[#10b981] hover:bg-[#059669] text-white font-bold rounded-full text-[10px]"
+                          >
+                            + Place Set ({setItem.items.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onExportAssetSet?.(setItem)}
+                            title="Export Asset Set as .assetset.json"
+                            className="py-0.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-full text-[9px]"
+                          >
+                            .assetset.json
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteAssetSet?.(setItem.id)}
+                            title="Delete Asset Set"
+                            className="py-0.5 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-full text-[9px]"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {architectTab === 'catalog' && (
                 <>
@@ -1896,6 +2180,47 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     >
                       Duplicate
                     </button>
+                    {onCopySelectedAssets && (
+                      <button
+                        type="button"
+                        data-testid="inspector-copy-btn"
+                        onClick={() => onCopySelectedAssets()}
+                        className="px-2.5 py-1 bg-sky-100 hover:bg-sky-200 text-sky-900 border border-sky-300 rounded-full text-[11px] font-bold"
+                      >
+                        📋 Copy ({selectedCount}) [Ctrl+C]
+                      </button>
+                    )}
+                    {onPasteClipboardAssets && (
+                      <button
+                        type="button"
+                        data-testid="inspector-paste-btn"
+                        disabled={clipboardCount === 0}
+                        onClick={() => onPasteClipboardAssets()}
+                        className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 disabled:opacity-40 text-emerald-900 border border-emerald-300 rounded-full text-[11px] font-bold"
+                      >
+                        📥 Paste ({clipboardCount}) [Ctrl+V]
+                      </button>
+                    )}
+                    {onSaveSelectionAsAssetSet && (
+                      <button
+                        type="button"
+                        data-testid="inspector-save-as-set-btn"
+                        onClick={() => {
+                          const autoSetName =
+                            selectedCount > 1
+                              ? `${selectedAsset.name} + ${selectedCount - 1} Items Set`
+                              : `${selectedAsset.name} Set`;
+                          onSaveSelectionAsAssetSet(
+                            autoSetName,
+                            `Saved ${selectedCount === 1 ? 'single item' : `group of ${selectedCount} items`} as a reusable Set (separate from Room Blueprints).`,
+                            ['custom_set', selectedCount > 1 ? 'multi_item' : 'single_item']
+                          );
+                        }}
+                        className="px-2.5 py-1 bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white rounded-full text-[11px] font-bold"
+                      >
+                        📚 + Save as Set ({selectedCount})
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={onToggleQuickEditF}

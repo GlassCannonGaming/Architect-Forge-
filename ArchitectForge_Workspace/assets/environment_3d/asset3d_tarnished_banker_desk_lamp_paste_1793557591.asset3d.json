@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T18:26:31.528Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Tarnished Banker Desk Lamp",
+  "data": {
+    "id": "paste_1793557591519_1_ck6d",
+    "name": "Tarnished Banker Desk Lamp",
+    "category": "lighting",
+    "subType": "brass_table_lamp",
+    "floor": "lobby",
+    "roomNumber": "1978 Concierge Desk & Banker Lamp Set",
+    "position": [
+      -1,
+      1.2,
+      -0.5
+    ],
+    "dimensions": [
+      0.4,
+      0.55,
+      0.4
+    ],
+    "rotationY": 0,
+    "color": "#5e4c2e",
+    "textureId": "aged_brass",
+    "isOpen": false,
+    "collidable": false,
+    "tags": [
+      "lamp",
+      "lighting"
+    ]
+  }
+}

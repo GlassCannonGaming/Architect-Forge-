@@ -28,9 +28,13 @@ import {
   GlobalAnimationFps,
   ALLOWED_GLOBAL_ANIMATION_FPS,
   DEFAULT_GLOBAL_ANIMATION_FPS,
-  MESHY_ANIMATION_PRESETS,
-  decimateAnimationKeyframes,
-  MeshyCharacterAnimationClipSpec
+  GOOGLE_AI_ANIMATION_PRESETS,
+  GoogleAiCharacterAnimationClipSpec,
+  synthesizeGoogleAiCharacterAnimationClip,
+  GEMINI_PREBUILT_VOICES,
+  GeminiPrebuiltVoiceName,
+  CharacterVoiceProfile,
+  inferVoiceProfileFromArchetypeAndName
 } from '../game/rules';
 import { StudioWindowFrame } from './StudioWindowFrame';
 
@@ -169,13 +173,16 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
   onChangeGlobalAnimationFps
 }) => {
   const [rightTab, setRightTab] = useState<'ai_persona' | 'daily_history' | 'stats_traits'>('ai_persona');
-  const [charName, setCharName] = useState('Mrs. Eleanor Vance');
-  const [meshySelectedGesture, setMeshySelectedGesture] = useState<ScheduledActivityGesture>('idle_observe');
-  const [meshyBaking, setMeshyBaking] = useState(false);
-  const [meshyStatusNote, setMeshyStatusNote] = useState<string | null>(null);
+  const [charName, setCharName] = useState('Vincent Graves');
+  const [googleAnimSelectedGesture, setGoogleAnimSelectedGesture] = useState<ScheduledActivityGesture>('idle_observe');
+  const [googleAnimCustomPrompt, setGoogleAnimCustomPrompt] = useState(
+    GOOGLE_AI_ANIMATION_PRESETS.idle_observe.motionPromptDirective
+  );
+  const [googleAnimBaking, setGoogleAnimBaking] = useState(false);
+  const [googleAnimStatusNote, setGoogleAnimStatusNote] = useState<string | null>(null);
   const [targetRoom, setTargetRoom] = useState<{ floor: FloorId; room: string }>({
-    floor: 'floor1',
-    room: 'Room 101'
+    floor: 'floor2',
+    room: 'Suite 202'
   });
   const [selectedScheduleAgentId, setSelectedScheduleAgentId] = useState<string>('custom_creator');
 
@@ -183,9 +190,14 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     'Observant boutique hotel night clerk who guards the brass passkeys and hears footsteps behind Suite 202'
   );
   const [aiGenerating, setAiGenerating] = useState(false);
-  const [voiceStyle, setVoiceStyle] = useState(
-    'Crisp Mid-Atlantic concierge cadence, hushed and deliberate'
+  const [voiceProfile, setVoiceProfile] = useState<CharacterVoiceProfile>(() =>
+    appearance.voiceProfile ||
+    inferVoiceProfileFromArchetypeAndName('Vincent Graves', appearance.archetype, '')
   );
+  const [voiceStyle, setVoiceStyle] = useState(
+    '1970s Old New York Mid-Atlantic accent · Hushed, gravel-edged, world-weary baritone'
+  );
+  const [voiceAuditionBusy, setVoiceAuditionBusy] = useState(false);
   const [demeanor, setDemeanor] = useState(
     'Polite, meticulous, quietly unnerved by noises behind the brickwork'
   );
@@ -203,7 +215,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     ].join('\n')
   );
   const [personalInstructionSet, setPersonalInstructionSet] = useState(
-    'Speak exclusively as Vincent Graves inside The Alderney Arms Hotel universe. Never use internet knowledge or out-of-game references. Only share facts from Starting Known Information and respond according to your current Time-of-Day Daily Action.'
+    'Speak exclusively as Vincent Graves inside The Alderney Arms Hotel universe. Maintain your locked accent, vocal tone, and cadence throughout the entire playthrough. Never use internet knowledge or out-of-game references.'
   );
   const [dailySchedule, setDailySchedule] = useState<DailyActionEntry[]>(DEFAULT_DAILY_SCHEDULE);
 
@@ -214,86 +226,155 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
-  const speakReplyAloud = (text: string) => {
+  const updateLockedVoiceProfile = (updates: Partial<CharacterVoiceProfile>) => {
+    const nextProfile: CharacterVoiceProfile = {
+      ...voiceProfile,
+      ...updates,
+      persistAcrossPlaythrough: true
+    };
+    setVoiceProfile(nextProfile);
+    const nextVoiceSummary = `${nextProfile.accent} accent · ${nextProfile.vocalTone} (${nextProfile.cadenceStyle})`;
+    setVoiceStyle(nextVoiceSummary);
+    onChangeAppearance({
+      ...appearance,
+      facialExpression: updates.baselineExpression || appearance.facialExpression || nextProfile.baselineExpression,
+      voiceProfile: nextProfile
+    });
+  };
+
+  const speakReplyAloud = async (text: string, overrideExpr?: FacialExpressionType) => {
+    const cleanSpeech = text.replace(/\*[^*]+\*/g, '').trim();
+    if (!cleanSpeech) return;
+
+    try {
+      const res = await fetch('/api/agent/speak-tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: {
+            id: `char_${charName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+            name: charName,
+            occupation: appearance.archetype,
+            voiceStyle,
+            voiceProfile,
+            activeFacialExpression: overrideExpr || appearance.facialExpression || voiceProfile.baselineExpression,
+            appearance
+          },
+          text: cleanSpeech,
+          overrideExpression: overrideExpr || appearance.facialExpression || voiceProfile.baselineExpression
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audioDataUrl && typeof Audio !== 'undefined') {
+          const audio = new Audio(data.audioDataUrl);
+          await audio.play();
+          return;
+        }
+      }
+    } catch {
+      // Fall back to locked pitch/rate Web Speech synthesis below
+    }
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
-        const cleanSpeech = text.replace(/\*[^*]+\*/g, '').trim();
-        if (cleanSpeech) {
-          const utterance = new SpeechSynthesisUtterance(cleanSpeech);
-          utterance.rate = 0.95;
-          utterance.pitch = appearance.archetype === 'Elderly Matron' ? 1.15 : 0.9;
-          window.speechSynthesis.speak(utterance);
-        }
+        const utterance = new SpeechSynthesisUtterance(cleanSpeech);
+        utterance.rate = Math.max(0.75, Math.min(1.25, voiceProfile.speakingRate || 0.94));
+        utterance.pitch = Math.max(0.7, Math.min(1.3, voiceProfile.pitchMultiplier || 0.92));
+        window.speechSynthesis.speak(utterance);
       } catch {
         // speech synthesis fallback
       }
     }
   };
 
-  const handleBakeMeshyAnimations = async () => {
-    setMeshyBaking(true);
-    setMeshyStatusNote(null);
+  const handleAuditionCharacterVoice = async () => {
+    setVoiceAuditionBusy(true);
+    const activeExpr = appearance.facialExpression || voiceProfile.baselineExpression || 'suspicious';
+    const sampleLine = `I am ${charName} of ${targetRoom.room}. I maintain my ${voiceProfile.accent} accent and ${voiceProfile.vocalTone.toLowerCase()} throughout the entire playthrough.`;
+    setSaveFeedback(
+      `🔊 Auditioning ${charName}'s locked voice (${voiceProfile.prebuiltVoiceName} · ${voiceProfile.accent}) & "${activeExpr.replace(/_/g, ' ')}" facial expression...`
+    );
+    await speakReplyAloud(sampleLine, activeExpr);
+    setVoiceAuditionBusy(false);
+  };
+
+  const handleSynthesizeGoogleAiAnimations = async () => {
+    setGoogleAnimBaking(true);
+    setGoogleAnimStatusNote(null);
+    const cleanApp: CharacterAppearance = {
+      ...appearance,
+      spineCurvature: 0,
+      hasWalkingCane: false,
+      voiceProfile
+    };
     try {
-      const response = await fetch('/api/forge/meshy-animate-rig', {
+      const response = await fetch('/api/forge/google-animate-rig', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           characterName: charName,
-          appearance,
-          gesture: meshySelectedGesture,
+          appearance: cleanApp,
+          gesture: googleAnimSelectedGesture,
           bakeAllGestures: true,
           globalFps: globalAnimationFps,
-          existingRigTaskId: appearance.meshyRigTaskId
+          customMotionPrompt: googleAnimCustomPrompt,
+          facialExpression: appearance.facialExpression || voiceProfile.baselineExpression,
+          voiceProfile
         })
       });
       if (!response.ok) {
-        throw new Error('Meshy endpoint fallback');
+        throw new Error('Google AI Studio animation endpoint fallback');
       }
       const data = await response.json();
       const nextAnimations = data.animations as Partial<
-        Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>
+        Record<ScheduledActivityGesture, GoogleAiCharacterAnimationClipSpec>
       >;
       onChangeAppearance({
-        ...appearance,
+        ...cleanApp,
         meshyRigTaskId: data.rigTaskId,
+        googleAiAnimations: nextAnimations,
         meshyAnimations: nextAnimations
       });
       const primary =
-        nextAnimations?.[meshySelectedGesture] ||
-        (data.primaryClip as MeshyCharacterAnimationClipSpec | undefined);
-      setMeshyStatusNote(
-        `Baked 6 Meshy.ai clips @ ${globalAnimationFps} FPS (${
-          primary ? `${primary.originalFrameCount}→${primary.decimatedFrameCount} frames, -${primary.keyframeReductionPct}%` : 'decimated'
+        nextAnimations?.[googleAnimSelectedGesture] ||
+        (data.primaryClip as GoogleAiCharacterAnimationClipSpec | undefined);
+      setGoogleAnimStatusNote(
+        `Google AI Studio (gemini-3.1-flash-lite) synthesized 6 clips @ ${globalAnimationFps} FPS (${
+          primary
+            ? `${primary.originalFrameCount}→${primary.decimatedFrameCount} kf, -${primary.keyframeReductionPct}% load, face: ${primary.dominantExpression}`
+            : 'synced with 3D facial rig'
         })`
       );
     } catch {
-      const fallbackRigId = appearance.meshyRigTaskId || `meshy_rig_${Date.now().toString(36)}`;
       const fallbackAnimations: Partial<
-        Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>
+        Record<ScheduledActivityGesture, GoogleAiCharacterAnimationClipSpec>
       > = {};
-      (Object.keys(MESHY_ANIMATION_PRESETS) as ScheduledActivityGesture[]).forEach((g) => {
-        fallbackAnimations[g] = decimateAnimationKeyframes(
-          appearance,
+      (Object.keys(GOOGLE_AI_ANIMATION_PRESETS) as ScheduledActivityGesture[]).forEach((g) => {
+        fallbackAnimations[g] = synthesizeGoogleAiCharacterAnimationClip(
+          cleanApp,
           g,
           globalAnimationFps,
-          fallbackRigId,
-          `meshy_anim_${g}_${globalAnimationFps}fps`
+          {
+            customMotionPrompt: g === googleAnimSelectedGesture ? googleAnimCustomPrompt : undefined,
+            facialExpression: appearance.facialExpression || voiceProfile.baselineExpression
+          }
         );
       });
       onChangeAppearance({
-        ...appearance,
-        meshyRigTaskId: fallbackRigId,
+        ...cleanApp,
+        googleAiAnimations: fallbackAnimations,
         meshyAnimations: fallbackAnimations
       });
-      const clip = fallbackAnimations[meshySelectedGesture];
-      setMeshyStatusNote(
-        `Baked low-frame rig @ ${globalAnimationFps} FPS (${clip?.originalFrameCount ?? 120}→${
-          clip?.decimatedFrameCount ?? 16
-        } frames, -${clip?.keyframeReductionPct ?? 87}% load)`
+      const clip = fallbackAnimations[googleAnimSelectedGesture];
+      setGoogleAnimStatusNote(
+        `Google AI Studio synthesized 6 low-frame clips @ ${globalAnimationFps} FPS (${
+          clip?.originalFrameCount ?? 120
+        }→${clip?.decimatedFrameCount ?? 16} kf, -${clip?.keyframeReductionPct ?? 87}% load)`
       );
     } finally {
-      setMeshyBaking(false);
+      setGoogleAnimBaking(false);
     }
   };
 
@@ -404,6 +485,13 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     const dislikes = parseCommaList(dislikesText);
     const knownFacts = parseLinesList(knownFactsText);
     const charHistory = savedInteractions.filter((item) => item.characterName === charName.trim());
+    const activeExpr: FacialExpressionType =
+      appearance.facialExpression || voiceProfile.baselineExpression || 'neutral';
+    const lockedVoice: CharacterVoiceProfile = {
+      ...voiceProfile,
+      baselineExpression: activeExpr,
+      persistAcrossPlaythrough: true
+    };
 
     return {
       id: `char_rig_${Date.now()}`,
@@ -414,8 +502,10 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
       position: [2.8, 0, -2.5],
       status: 'present',
       occupation: `${appearance.archetype.trim()} (${targetRoom.room})`,
-      personality: `Voice: ${voiceStyle} | Demeanor: ${demeanor} | Likes: ${likes.join(', ')} | Dislikes: ${dislikes.join(', ')}`,
+      personality: `Voice: ${voiceStyle} | Accent: ${lockedVoice.accent} | Tone: ${lockedVoice.vocalTone} | Demeanor: ${demeanor} | Likes: ${likes.join(', ')} | Dislikes: ${dislikes.join(', ')}`,
       voiceStyle,
+      voiceProfile: lockedVoice,
+      activeFacialExpression: activeExpr,
       demeanor,
       likes,
       dislikes,
@@ -429,7 +519,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
       knownFacts: knownFacts.length > 0 ? knownFacts : [`Spawn Zone: ${targetRoom.room}`],
       memories: [
         `Created in ArchitectForge Character Studio (${appearance.headShape}).`,
-        `Voice: ${voiceStyle}`,
+        `Locked Voice Identity: ${lockedVoice.prebuiltVoiceName} · ${lockedVoice.accent} accent · ${lockedVoice.vocalTone} (${lockedVoice.cadenceStyle})`,
         `Demeanor: ${demeanor}`,
         ...charHistory.map(
           (h) =>
@@ -438,7 +528,13 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
       ],
       suspicionLevel,
       trustLevel,
-      appearance,
+      appearance: {
+        ...appearance,
+        spineCurvature: 0,
+        hasWalkingCane: false,
+        facialExpression: activeExpr,
+        voiceProfile: lockedVoice
+      },
       stats,
       assignedTraits
     };
@@ -446,7 +542,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
 
   const handleAIGeneratePersonality = async () => {
     setAiGenerating(true);
-    setSaveFeedback('AI Persona Editor: Generating game-specific voice, demeanor, likes/dislikes & schedule...');
+    setSaveFeedback('AI Persona Editor: Generating game-specific voice, tone, accent, demeanor, likes/dislikes & schedule...');
     try {
       const res = await fetch('/api/agent/generate-persona', {
         method: 'POST',
@@ -469,6 +565,16 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
           targetRoom.room
         );
       setVoiceStyle(p.voiceStyle);
+      if (p.voiceProfile) {
+        setVoiceProfile({ ...p.voiceProfile, persistAcrossPlaythrough: true });
+        onChangeAppearance({
+          ...appearance,
+          spineCurvature: 0,
+          hasWalkingCane: false,
+          facialExpression: p.voiceProfile.baselineExpression || appearance.facialExpression,
+          voiceProfile: { ...p.voiceProfile, persistAcrossPlaythrough: true }
+        });
+      }
       setDemeanor(p.demeanor);
       setLikesText(Array.isArray(p.likes) ? p.likes.join(', ') : likesText);
       setDislikesText(Array.isArray(p.dislikes) ? p.dislikes.join(', ') : dislikesText);
@@ -477,7 +583,7 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
       if (Array.isArray(p.dailySchedule) && p.dailySchedule.length > 0) {
         setDailySchedule(p.dailySchedule);
       }
-      setSaveFeedback(`AI Persona generated & saved for "${charName}" (Offline Game-Lore Sandbox)!`);
+      setSaveFeedback(`AI Persona & Locked Voice/Accent generated for "${charName}" (Offline Game-Lore Sandbox)!`);
     } catch {
       const fallback = buildProceduralPersonaFromPrompt(
         charName,
@@ -486,13 +592,21 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
         targetRoom.room
       );
       setVoiceStyle(fallback.voiceStyle);
+      setVoiceProfile(fallback.voiceProfile);
+      onChangeAppearance({
+        ...appearance,
+        spineCurvature: 0,
+        hasWalkingCane: false,
+        facialExpression: fallback.voiceProfile.baselineExpression || appearance.facialExpression,
+        voiceProfile: fallback.voiceProfile
+      });
       setDemeanor(fallback.demeanor);
       setLikesText(fallback.likes.join(', '));
       setDislikesText(fallback.dislikes.join(', '));
       setKnownFactsText(fallback.knownFacts.join('\n'));
       setPersonalInstructionSet(fallback.personalInstructionSet);
       setDailySchedule(fallback.dailySchedule);
-      setSaveFeedback(`Applied game-specific AI personality & schedule for "${charName}"!`);
+      setSaveFeedback(`Applied game-specific AI personality, locked voice/accent & schedule for "${charName}"!`);
     } finally {
       setAiGenerating(false);
     }
@@ -659,35 +773,12 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
     setSaveFeedback(`Exported "${rig.name}.json" with full personality, instructions & history!`);
   };
 
-  const handleApplyOldLadyPreset = () => {
-    const defaults = getArchetypeDefaults('Elderly Matron');
-    setCharName('Mrs. Eleanor Vance');
-    setTargetRoom({ floor: 'floor1', room: 'Room 101' });
-    onChangeAppearance({
-      ...appearance,
-      ...defaults,
-      archetype: 'Elderly Matron',
-      headShape: 'proportional_human',
-      bodyProportionStyle: 'proportional_human',
-      spineCurvature: 38,
-      hasWalkingCane: true,
-      hasSpectacles: true,
-      facialExpression: 'hollow_stare',
-      hairStyle: 'silver_bun',
-      hairColor: '#d1d5db',
-      outfitColor: '#4b5563',
-      eyeStyle: 'wide_amber',
-      mouthStyle: 'nervous_frown'
-    });
-    setSaveFeedback('👵 Applied Old Lady Preset: 38° Bent Spine (Kyphosis), Walnut Cane, Wire Spectacles & Hollow Stare!');
-  };
-
   return (
     <>
       {/* 1. CREATE-A-CHARACTER APPEARANCE & MESH RIG WINDOW */}
       <StudioWindowFrame
         windowState={windows.char_appearance}
-        badgeText="3D Skeleton & Face Rig"
+        badgeText="3D Hull, Face & Google AI Anim"
         onFocus={onFocusWindow}
         onMove={onMoveWindow}
         onResize={onResizeWindow}
@@ -696,41 +787,6 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
         onClose={onCloseWindow}
       >
         <div className="space-y-2 text-xs">
-          {/* Quick Starter Presets Bar */}
-          <div className="flex items-center gap-1.5 bg-amber-100/80 border border-amber-300 rounded-xl p-1.5">
-            <button
-              type="button"
-              data-testid="preset-old-lady-bent-spine-btn"
-              onClick={handleApplyOldLadyPreset}
-              className="flex-1 py-1 px-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-bold text-[10px] shadow-xs transition-all"
-            >
-              👵 Begin Old Lady (38° Bent Spine + Cane)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const defaults = getArchetypeDefaults('Detective Clerk');
-                setCharName('Vincent Graves');
-                setTargetRoom({ floor: 'floor2', room: 'Suite 202' });
-                onChangeAppearance({
-                  ...appearance,
-                  ...defaults,
-                  archetype: 'Detective Clerk',
-                  headShape: 'proportional_human',
-                  bodyProportionStyle: 'proportional_human',
-                  spineCurvature: 4,
-                  hasWalkingCane: false,
-                  hasSpectacles: false,
-                  facialExpression: 'side_eye_glare'
-                });
-                setSaveFeedback('🕵️ Applied Noir Clerk Preset (Upright Spine + Side-Eye Glare)!');
-              }}
-              className="py-1 px-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white font-bold text-[10px] transition-all"
-            >
-              🕵️ Noir Clerk
-            </button>
-          </div>
-
           <label className="block">
             <span className="text-[11px] font-bold text-slate-600">Character Name</span>
             <input
@@ -751,10 +807,16 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                   e.currentTarget.blur();
                   const nextArch = e.target.value as CharacterAppearance['archetype'];
                   const defaults = getArchetypeDefaults(nextArch);
+                  const nextVoice = inferVoiceProfileFromArchetypeAndName(charName, nextArch, '');
+                  setVoiceProfile(nextVoice);
+                  setVoiceStyle(`${nextVoice.accent} accent · ${nextVoice.vocalTone} (${nextVoice.cadenceStyle})`);
                   onChangeAppearance({
                     ...appearance,
                     ...defaults,
-                    archetype: nextArch
+                    archetype: nextArch,
+                    spineCurvature: 0,
+                    hasWalkingCane: false,
+                    voiceProfile: nextVoice
                   });
                 }}
                 className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-2.5 py-1 text-xs font-semibold text-slate-800"
@@ -777,63 +839,6 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
                 className="mt-0.5 w-full bg-slate-50 border border-slate-300 rounded-full px-2.5 py-1 text-xs font-semibold text-slate-800"
               />
             </label>
-          </div>
-
-          {/* Posture & Spine Curvature (Old Lady Bent Spine Kyphosis) */}
-          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-2 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-bold text-amber-900">
-                🦴 Posture: Spine Curvature ({appearance.spineCurvature ?? 0}°)
-              </span>
-              <span className="text-[10px] font-mono text-amber-700 font-semibold">
-                {(appearance.spineCurvature ?? 0) >= 20 ? 'Elderly Bent Spine (Kyphosis)' : 'Upright Stance'}
-              </span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="45"
-              step="1"
-              value={appearance.spineCurvature ?? 0}
-              onChange={(e) =>
-                onChangeAppearance({
-                  ...appearance,
-                  spineCurvature: parseInt(e.target.value, 10)
-                })
-              }
-              className="w-full accent-amber-600 h-1.5 bg-amber-200 rounded-lg cursor-pointer"
-            />
-            <div className="flex items-center justify-between text-[10px] pt-0.5">
-              <label className="flex items-center gap-1 font-semibold text-amber-900 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(appearance.hasWalkingCane)}
-                  onChange={(e) =>
-                    onChangeAppearance({
-                      ...appearance,
-                      hasWalkingCane: e.target.checked
-                    })
-                  }
-                  className="rounded text-amber-600 focus:ring-amber-500"
-                />
-                <span>🦯 Wooden Cane</span>
-              </label>
-
-              <label className="flex items-center gap-1 font-semibold text-amber-900 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(appearance.hasSpectacles)}
-                  onChange={(e) =>
-                    onChangeAppearance({
-                      ...appearance,
-                      hasSpectacles: e.target.checked
-                    })
-                  }
-                  className="rounded text-amber-600 focus:ring-amber-500"
-                />
-                <span>👓 Wire Glasses</span>
-              </label>
-            </div>
           </div>
 
           {/* 3D Facial Expression Rig */}
@@ -1016,23 +1021,152 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
             />
           </div>
 
-          {/* Meshy.ai Auto-Rigging & Low-Frame Animation Stepper (Alterations 1, 2 & 3) */}
+          {/* Persistent Facial Expression & Locked Playthrough Voice / Tone / Accent Identity */}
           <div
-            data-testid="meshy-low-frame-animation-panel"
+            data-testid="character-voice-expression-panel"
+            className="bg-slate-900/95 border border-sky-500/30 text-slate-100 rounded-2xl p-2.5 space-y-2 shadow-inner"
+          >
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-extrabold text-sky-300 flex items-center gap-1">
+                🎭 Facial Expression &amp; Locked Voice/Accent
+              </span>
+              <span className="text-[9px] font-mono bg-sky-500/20 text-sky-300 border border-sky-500/40 px-1.5 py-0.5 rounded-md">
+                🔒 Playthrough Locked
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <label className="block">
+                <span className="text-[10px] font-bold text-slate-300">Gemini Voice Timbre:</span>
+                <select
+                  data-testid="voice-prebuilt-select"
+                  value={voiceProfile.prebuiltVoiceName}
+                  onChange={(e) =>
+                    updateLockedVoiceProfile({
+                      prebuiltVoiceName: e.target.value as GeminiPrebuiltVoiceName
+                    })
+                  }
+                  className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[10px] font-semibold text-slate-100"
+                >
+                  {GEMINI_PREBUILT_VOICES.map((v) => (
+                    <option key={v.voiceName} value={v.voiceName}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-[10px] font-bold text-slate-300">Signature Expression:</span>
+                <select
+                  data-testid="voice-baseline-expression-select"
+                  value={appearance.facialExpression || voiceProfile.baselineExpression || 'neutral'}
+                  onChange={(e) => {
+                    const expr = e.target.value as FacialExpressionType;
+                    updateLockedVoiceProfile({ baselineExpression: expr });
+                  }}
+                  className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[10px] font-semibold text-slate-100"
+                >
+                  {FACIAL_EXPRESSIONS.map((fe) => (
+                    <option key={fe} value={fe}>
+                      {fe.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <label className="block">
+                <span className="text-[10px] font-bold text-slate-300">Locked Regional Accent:</span>
+                <input
+                  type="text"
+                  data-testid="voice-accent-input"
+                  value={voiceProfile.accent}
+                  onChange={(e) => updateLockedVoiceProfile({ accent: e.target.value })}
+                  placeholder="e.g. 1970s Old New York Mid-Atlantic"
+                  className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-100"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-bold text-slate-300">Locked Vocal Tone:</span>
+                <input
+                  type="text"
+                  data-testid="voice-tone-input"
+                  value={voiceProfile.vocalTone}
+                  onChange={(e) => updateLockedVoiceProfile({ vocalTone: e.target.value })}
+                  placeholder="e.g. Hushed, gravel-edged, world-weary"
+                  className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-100"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
+              <div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Pitch Lock</span>
+                  <span className="font-mono text-sky-300">{voiceProfile.pitchMultiplier.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.75}
+                  max={1.25}
+                  step={0.02}
+                  value={voiceProfile.pitchMultiplier}
+                  onChange={(e) =>
+                    updateLockedVoiceProfile({ pitchMultiplier: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-sky-400 h-1"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Cadence Rate</span>
+                  <span className="font-mono text-sky-300">{voiceProfile.speakingRate.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.8}
+                  max={1.2}
+                  step={0.02}
+                  value={voiceProfile.speakingRate}
+                  onChange={(e) =>
+                    updateLockedVoiceProfile({ speakingRate: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-sky-400 h-1"
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              data-testid="audition-character-voice-btn"
+              disabled={voiceAuditionBusy}
+              onClick={handleAuditionCharacterVoice}
+              className="w-full py-1.5 px-3 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-400 hover:to-indigo-400 disabled:opacity-50 text-white font-extrabold text-[11px] shadow-xs transition-all cursor-pointer"
+            >
+              {voiceAuditionBusy
+                ? '🔊 Synthesizing Locked Character Voice...'
+                : `🔊 Audition Locked Voice (${voiceProfile.prebuiltVoiceName} · ${voiceProfile.accent})`}
+            </button>
+          </div>
+
+          {/* Google AI Studio Character Animation & Low-Frame Stepper (gemini-3.1-flash-lite) */}
+          <div
+            data-testid="google-ai-animation-panel"
             className="pt-2 mt-1 border-t border-slate-200 bg-slate-900/95 text-slate-100 rounded-2xl p-2.5 space-y-2 shadow-inner"
           >
             <div className="flex items-center justify-between gap-1">
               <span className="text-[11px] font-extrabold text-amber-300 flex items-center gap-1">
-                ⚡ Meshy.ai Animate &amp; Low-Frame Rig
+                ⚡ Google AI Studio Character Animation
               </span>
               <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded-md">
-                -{Math.round(((60 - globalAnimationFps) / 60) * 100)}% CPU/GPU Load
+                gemini-3.1-flash-lite · -{Math.round(((60 - globalAnimationFps) / 60) * 100)}% Load
               </span>
             </div>
 
             <p className="text-[10px] text-slate-300 leading-tight">
-              Uses Meshy <code className="text-amber-300">/v1/rigging</code> +{' '}
-              <code className="text-amber-300">/v1/animations</code> (<code className="text-sky-300">change_fps</code>) with client-side keyframe decimation, 60Hz facial rig overlay, and distance LOD culling.
+              Synthesizes low-frame skeletal Euler keyframes &amp; synchronized 60Hz 3D facial expression curves via Google AI Studio (<code className="text-amber-300">gemini-3.1-flash-lite</code>). Ready for external rigging pipelines.
             </p>
 
             {/* Global Character Animation Step Rate (Strictly Global across all characters) */}
@@ -1060,45 +1194,61 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
               </div>
             </div>
 
-            {/* Meshy Action Library Preset Selector */}
+            {/* Google AI Studio Action Preset Selector */}
             <label className="block">
               <span className="text-[10px] font-bold text-slate-300">
-                Meshy Animation Preset (<code className="text-amber-300">action_id</code>):
+                Google AI Animation Sequence (<code className="text-amber-300">gesture</code>):
               </span>
               <select
-                data-testid="meshy-action-preset-select"
-                value={meshySelectedGesture}
-                onChange={(e) =>
-                  setMeshySelectedGesture(e.target.value as ScheduledActivityGesture)
-                }
+                data-testid="google-ai-gesture-select"
+                value={googleAnimSelectedGesture}
+                onChange={(e) => {
+                  const nextG = e.target.value as ScheduledActivityGesture;
+                  setGoogleAnimSelectedGesture(nextG);
+                  setGoogleAnimCustomPrompt(GOOGLE_AI_ANIMATION_PRESETS[nextG].motionPromptDirective);
+                }}
                 className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-100"
               >
-                {Object.values(MESHY_ANIMATION_PRESETS).map((preset) => (
+                {Object.values(GOOGLE_AI_ANIMATION_PRESETS).map((preset) => (
                   <option key={preset.gesture} value={preset.gesture}>
-                    #{preset.actionId} · {preset.categoryLabel} ({preset.cycleDurationSec}s)
+                    {preset.categoryLabel} ({preset.cycleDurationSec}s · {preset.defaultFacialExpression})
                   </option>
                 ))}
               </select>
             </label>
 
+            <label className="block">
+              <span className="text-[10px] font-bold text-slate-300">
+                Motion &amp; Expression Directive:
+              </span>
+              <input
+                type="text"
+                data-testid="google-ai-motion-prompt-input"
+                value={googleAnimCustomPrompt}
+                onChange={(e) => setGoogleAnimCustomPrompt(e.target.value)}
+                placeholder="Describe low-frame gesture & facial micro-expression..."
+                className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-100"
+              />
+            </label>
+
             <button
               type="button"
-              data-testid="meshy-bake-low-frame-btn"
-              disabled={meshyBaking}
-              onClick={handleBakeMeshyAnimations}
+              data-testid="google-ai-bake-animation-btn"
+              disabled={googleAnimBaking}
+              onClick={handleSynthesizeGoogleAiAnimations}
               className="w-full py-1.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold text-[11px] shadow-xs transition-all cursor-pointer"
             >
-              {meshyBaking
-                ? '⏳ Auto-Rigging & Decimating Keyframes...'
-                : `⚡ Auto-Rig & Bake Low-Frame Clips (${globalAnimationFps} FPS)`}
+              {googleAnimBaking
+                ? '⏳ Synthesizing Google AI Studio Keyframes...'
+                : `⚡ Synthesize Google AI Studio Clips (${globalAnimationFps} FPS)`}
             </button>
 
-            {meshyStatusNote && (
+            {googleAnimStatusNote && (
               <div
-                data-testid="meshy-bake-status-note"
+                data-testid="google-ai-bake-status-note"
                 className="text-[10px] font-mono text-emerald-300 bg-slate-950/80 border border-emerald-500/30 rounded-lg px-2 py-1"
               >
-                ✓ {meshyStatusNote}
+                ✓ {googleAnimStatusNote}
               </div>
             )}
 
@@ -1106,9 +1256,9 @@ export const CharacterCreatorOverlay: React.FC<CharacterCreatorOverlayProps> = (
               <div className="bg-slate-800/90 border border-slate-700 rounded-md px-1.5 py-1">
                 <div className="font-bold text-amber-300">Alt 1 · Decimated</div>
                 <div>
-                  {appearance.meshyAnimations?.[meshySelectedGesture]
-                    ? `${appearance.meshyAnimations[meshySelectedGesture]?.decimatedFrameCount} kf baked`
-                    : `${Math.round(MESHY_ANIMATION_PRESETS[meshySelectedGesture].cycleDurationSec * globalAnimationFps)} kf / cycle`}
+                  {appearance.googleAiAnimations?.[googleAnimSelectedGesture]
+                    ? `${appearance.googleAiAnimations[googleAnimSelectedGesture]?.decimatedFrameCount} kf baked`
+                    : `${Math.round(GOOGLE_AI_ANIMATION_PRESETS[googleAnimSelectedGesture].cycleDurationSec * globalAnimationFps)} kf / cycle`}
                 </div>
               </div>
               <div className="bg-slate-800/90 border border-slate-700 rounded-md px-1.5 py-1">

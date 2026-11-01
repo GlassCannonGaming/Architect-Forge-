@@ -47,7 +47,17 @@ import {
   normalizeGlobalAnimationFps,
   buildMeshyRiggingRequestPayload,
   buildMeshyAnimateRequestPayload,
-  decimateAnimationKeyframes
+  decimateAnimationKeyframes,
+  GOOGLE_AI_ANIMATION_PRESETS,
+  GoogleAiCharacterAnimationClipSpec,
+  buildGoogleAiAnimationPromptSpec,
+  synthesizeGoogleAiCharacterAnimationClip,
+  getOrCreateCharacterVoiceProfile,
+  resolveCharacterVoiceAndExpressionForTurn,
+  buildGeminiTtsRequestPayload,
+  inferVoiceProfileFromArchetypeAndName,
+  FacialExpressionType,
+  CharacterVoiceProfile
 } from './src/game/rules';
 import { INITIAL_AGENTS, createBlueprintFromAsset, AssetBlueprint } from './src/game/hotelData';
 
@@ -151,11 +161,29 @@ async function startServer() {
 
       const rawReply = response.text || '';
       const validated = sanitizeAndValidateAgentResponse(rawReply, memoryEval.updatedAgent);
+      const voiceAndExpr = resolveCharacterVoiceAndExpressionForTurn(
+        memoryEval.updatedAgent,
+        memoryEval,
+        validated.text
+      );
+      memoryEval.updatedAgent = {
+        ...memoryEval.updatedAgent,
+        voiceProfile: voiceAndExpr.voiceProfile,
+        activeFacialExpression: voiceAndExpr.activeFacialExpression,
+        appearance: {
+          ...memoryEval.updatedAgent.appearance,
+          facialExpression: voiceAndExpr.activeFacialExpression,
+          voiceProfile: voiceAndExpr.voiceProfile
+        }
+      };
 
       res.json({
         reply: validated.text,
         wasFiltered: validated.wasFiltered,
         memoryEvaluation: memoryEval,
+        voiceProfile: voiceAndExpr.voiceProfile,
+        activeFacialExpression: voiceAndExpr.activeFacialExpression,
+        ttsStyleDirective: voiceAndExpr.ttsStyleDirective,
         modelUsed: modelName,
         provider: 'Google'
       });
@@ -176,7 +204,7 @@ async function startServer() {
             : `Thank you for answering my question so quickly`;
         fallbackReply = `*${agent.name} exhales with relief at ${timeInfo.formattedTime} (Disposition: ${memoryEval.resultingDisposition.toUpperCase()}, Trust ${memoryEval.resultingTrust}/100).* "${waitPhrase}, Clerk. Since you kept your word regarding '${memoryEval.answeredQuestion.questionText}', I'll tell you what I've hidden in ${agent.roomNumber}: ${agent.secretTruth || knownFactHint}"`;
       } else if (memoryEval.oldestUnansweredQuestion && memoryEval.unansweredDaysWaiting >= 1) {
-        fallbackReply = `*${agent.name} narrows their eyes at ${timeInfo.formattedTime} on Day ${gameDay} (Waiting ${memoryEval.unansweredDaysWaiting} day(s) for answer).* "Hold on, Clerk — I asked you ${memoryEval.unansweredDaysWaiting} day(s) ago on Day ${memoryEval.oldestUnansweredQuestion.askedOnDay}: '${memoryEval.oldestUnansweredQuestion.questionText}' You still haven't given me an answer!"`;
+        fallbackReply = `*${agent.name} narrows their eyes at ${timeInfo.formattedTime} on Day ${gameDay} (Waiting ${memoryEval.unansweredDaysWaiting} day(s) for answer).* "Hold on, Clerk — I asked you ${memoryEval.unansweredDaysWaiting} day(s) ago on Day ${memoryEval.oldestUnansweredQuestion.questionText}' You still haven't given me an answer!"`;
       } else if (
         memoryEval.resultingDisposition === 'hostile' ||
         memoryEval.resultingDisposition === 'cold' ||
@@ -194,20 +222,40 @@ async function startServer() {
           memoryEval.newlyAskedQuestion.questionText
         }"`;
       } else {
+        const lockedVoice = getOrCreateCharacterVoiceProfile(agent);
         fallbackReply = `*${agent?.name || 'The resident'} (${
           agent?.demeanor || 'guarded'
         }) pauses while ${activeDaily.action.toLowerCase()} at ${
           timeInfo.formattedTime
-        }.* "Speaking in my usual ${
-          agent?.voiceStyle ? agent.voiceStyle.slice(0, 36).toLowerCase() : 'hushed cadence'
+        }.* "Speaking in my usual ${lockedVoice.accent} accent and ${
+          lockedVoice.vocalTone.toLowerCase()
         }, Clerk — all I know for certain is this: ${knownFactHint}"`;
       }
+
+      const voiceAndExpr = resolveCharacterVoiceAndExpressionForTurn(
+        memoryEval.updatedAgent,
+        memoryEval,
+        fallbackReply
+      );
+      memoryEval.updatedAgent = {
+        ...memoryEval.updatedAgent,
+        voiceProfile: voiceAndExpr.voiceProfile,
+        activeFacialExpression: voiceAndExpr.activeFacialExpression,
+        appearance: {
+          ...memoryEval.updatedAgent.appearance,
+          facialExpression: voiceAndExpr.activeFacialExpression,
+          voiceProfile: voiceAndExpr.voiceProfile
+        }
+      };
 
       res.json({
         reply: fallbackReply,
         wasFiltered: false,
         fallbackUsed: true,
         memoryEvaluation: memoryEval,
+        voiceProfile: voiceAndExpr.voiceProfile,
+        activeFacialExpression: voiceAndExpr.activeFacialExpression,
+        ttsStyleDirective: voiceAndExpr.ttsStyleDirective,
         modelUsed: AI_MODEL_REGISTRY.character_chat.modelId,
         errorDetail: errMsg
       });
@@ -279,8 +327,16 @@ ${globalInstructionSet}`,
 
       const parsed = JSON.parse((response.text || '{}').trim());
       if (parsed && parsed.voiceStyle && Array.isArray(parsed.knownFacts)) {
+        const inferredVoice = inferVoiceProfileFromArchetypeAndName(
+          name,
+          archetype,
+          `${seedPrompt} ${parsed.voiceStyle || ''}`
+        );
         res.json({
-          persona: parsed,
+          persona: {
+            ...parsed,
+            voiceProfile: inferredVoice
+          },
           modelUsed: modelName,
           source: 'gemini-3.1-flash-lite-sandboxed'
         });
@@ -293,6 +349,69 @@ ${globalInstructionSet}`,
         persona: fallback,
         modelUsed: modelName,
         source: 'procedural-offline-sandbox'
+      });
+    }
+  });
+
+  // 1C. Persistent Character Voice, Tone, Accent & Facial Expression TTS Endpoint (gemini-3.8-flash-lite-tts)
+  app.post('/api/agent/speak-tts', async (req, res) => {
+    const {
+      agent,
+      text = 'The corridors of The Alderney Arms are unusually quiet tonight.',
+      overrideExpression
+    }: {
+      agent?: Partial<HotelAgentProfile>;
+      text?: string;
+      overrideExpression?: FacialExpressionType;
+    } = req.body || {};
+
+    const safeAgent: HotelAgentProfile = {
+      ...INITIAL_AGENTS[1],
+      ...(agent || {}),
+      appearance: {
+        ...INITIAL_AGENTS[1].appearance,
+        ...(agent?.appearance || {})
+      }
+    };
+
+    const ttsPayload = buildGeminiTtsRequestPayload(safeAgent, text, overrideExpression);
+    const modelName = AI_MODEL_REGISTRY.voice_tts.modelId; // 'gemini-3.8-flash-lite-tts'
+
+    try {
+      const ai = getGenAIClient();
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: ttsPayload.contents,
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: ttsPayload.config.speechConfig
+        }
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        res.json({
+          audioDataUrl: `data:audio/wav;base64,${base64Audio}`,
+          mimeType: 'audio/wav',
+          voiceProfile: ttsPayload.voiceProfile,
+          activeFacialExpression: ttsPayload.activeFacialExpression,
+          styleDirective: ttsPayload.contents.parts[0].speechMetadata.style,
+          modelUsed: modelName,
+          provider: 'Google'
+        });
+        return;
+      }
+      throw new Error('No inline audio returned from gemini-3.8-flash-lite-tts');
+    } catch (err: unknown) {
+      res.json({
+        audioDataUrl: null,
+        fallbackWebSpeech: true,
+        voiceProfile: ttsPayload.voiceProfile,
+        activeFacialExpression: ttsPayload.activeFacialExpression,
+        styleDirective: ttsPayload.contents.parts[0].speechMetadata.style,
+        modelUsed: modelName,
+        provider: 'Google',
+        errorDetail: err instanceof Error ? err.message : String(err)
       });
     }
   });
@@ -503,7 +622,178 @@ Return between 4 and 8 distinct 3D sub-parts (box, cylinder, sphere, cone, or to
     }
   });
 
-  // 4b. Meshy.ai Auto-Rigging & Low-Frame Character Animation Pipeline (/openapi/v1/rigging + /openapi/v1/animations)
+  // 4a. Google AI Studio Character Animation & Synchronized Facial Expression Pipeline (gemini-3.1-flash-lite)
+  app.post('/api/forge/google-animate-rig', async (req, res) => {
+    const {
+      characterName = 'Alderney Resident',
+      appearance,
+      gesture = 'idle_observe',
+      bakeAllGestures = true,
+      globalFps = 8,
+      customMotionPrompt = '',
+      facialExpression,
+      voiceProfile
+    }: {
+      characterName?: string;
+      appearance?: CharacterAppearance;
+      gesture?: ScheduledActivityGesture;
+      bakeAllGestures?: boolean;
+      globalFps?: number;
+      customMotionPrompt?: string;
+      facialExpression?: FacialExpressionType;
+      voiceProfile?: CharacterVoiceProfile;
+    } = req.body || {};
+
+    const validGlobalFps = normalizeGlobalAnimationFps(Number(globalFps));
+    const safeAppearance: CharacterAppearance = {
+      ...(appearance || INITIAL_AGENTS[1].appearance),
+      spineCurvature: 0,
+      hasWalkingCane: false
+    };
+    const modelName = AI_MODEL_REGISTRY.character_animation.modelId; // 'gemini-3.1-flash-lite'
+    const rigTaskId = `gai_rig_${Date.now().toString(36)}`;
+
+    const promptSpec = buildGoogleAiAnimationPromptSpec({
+      characterName,
+      archetype: safeAppearance.archetype,
+      gesture: gesture as ScheduledActivityGesture,
+      globalFps: validGlobalFps,
+      customMotionPrompt,
+      facialExpression: facialExpression || safeAppearance.facialExpression,
+      voiceProfile: voiceProfile || safeAppearance.voiceProfile
+    });
+
+    // Optional live Google AI Studio keyframe refinement for the primary gesture
+    let aiKeyframeModifiers: Array<{
+      headX?: number;
+      headY?: number;
+      headZ?: number;
+      spineThoracicX?: number;
+      spineLumbarY?: number;
+      leftUpperArmX?: number;
+      rightUpperArmX?: number;
+      leftForearmX?: number;
+      rightForearmX?: number;
+      facialExpression?: FacialExpressionType;
+    }> = [];
+    let aiAnimationStatus: 'GOOGLE_AI_STUDIO_SYNTHESIZED' | 'GOOGLE_AI_DETERMINISTIC_FALLBACK' =
+      'GOOGLE_AI_DETERMINISTIC_FALLBACK';
+
+    if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MISSING_KEY') {
+      try {
+        const ai = getGenAIClient();
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: promptSpec.promptText,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                keyframes: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      headX: { type: Type.NUMBER },
+                      headY: { type: Type.NUMBER },
+                      headZ: { type: Type.NUMBER },
+                      spineThoracicX: { type: Type.NUMBER },
+                      spineLumbarY: { type: Type.NUMBER },
+                      leftUpperArmX: { type: Type.NUMBER },
+                      rightUpperArmX: { type: Type.NUMBER },
+                      leftForearmX: { type: Type.NUMBER },
+                      rightForearmX: { type: Type.NUMBER }
+                    }
+                  }
+                }
+              },
+              required: ['keyframes']
+            }
+          }
+        });
+        const parsed = JSON.parse((response.text || '{}').trim());
+        if (parsed && Array.isArray(parsed.keyframes) && parsed.keyframes.length > 0) {
+          aiKeyframeModifiers = parsed.keyframes;
+          aiAnimationStatus = 'GOOGLE_AI_STUDIO_SYNTHESIZED';
+        }
+      } catch {
+        aiAnimationStatus = 'GOOGLE_AI_DETERMINISTIC_FALLBACK';
+      }
+    }
+
+    const targetGestures: ScheduledActivityGesture[] = bakeAllGestures
+      ? (Object.keys(GOOGLE_AI_ANIMATION_PRESETS) as ScheduledActivityGesture[])
+      : [gesture as ScheduledActivityGesture];
+
+    const animations: Partial<Record<ScheduledActivityGesture, GoogleAiCharacterAnimationClipSpec>> = {};
+    for (const g of targetGestures) {
+      animations[g] = synthesizeGoogleAiCharacterAnimationClip(
+        safeAppearance,
+        g,
+        validGlobalFps,
+        {
+          customMotionPrompt: g === gesture ? customMotionPrompt : undefined,
+          facialExpression: facialExpression || safeAppearance.facialExpression,
+          aiKeyframeModifiers: g === gesture ? aiKeyframeModifiers : undefined,
+          taskId: `gai_anim_${g}_${validGlobalFps}fps_${Date.now().toString(36).slice(-4)}`
+        }
+      );
+    }
+
+    let savedDiskPath: string | null = null;
+    try {
+      const rigFolderSpec = getLocalFolderSpec('character_rigs');
+      const absDir = path.join(process.cwd(), LOCAL_WORKSPACE_ROOT_NAME, rigFolderSpec.relativePath);
+      fs.mkdirSync(absDir, { recursive: true });
+      const filename = buildLocalFolderItemFilename(
+        'character_rigs',
+        `${characterName}_google_ai_${validGlobalFps}fps`,
+        rigTaskId.slice(-6)
+      );
+      const fullPath = path.join(absDir, filename);
+      fs.writeFileSync(
+        fullPath,
+        JSON.stringify(
+          {
+            schemaVersion: '3.0.0',
+            savedAt: new Date().toISOString(),
+            category: 'character_rigs',
+            engine: 'google_ai_studio',
+            modelUsed: modelName,
+            characterName,
+            rigTaskId,
+            globalFps: validGlobalFps,
+            promptSpec,
+            animations
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+      savedDiskPath = `./${LOCAL_WORKSPACE_ROOT_NAME}/${rigFolderSpec.relativePath}/${filename}`;
+    } catch {
+      savedDiskPath = null;
+    }
+
+    const primaryClip =
+      animations[gesture as ScheduledActivityGesture] || Object.values(animations)[0];
+
+    res.json({
+      rigTaskId,
+      aiAnimationStatus,
+      globalFps: validGlobalFps,
+      promptSpec,
+      primaryClip,
+      animations,
+      savedDiskPath,
+      provider: 'Google',
+      modelUsed: modelName
+    });
+  });
+
+  // 4b. Legacy Meshy.ai Auto-Rigging & Low-Frame Character Animation Pipeline (/openapi/v1/rigging + /openapi/v1/animations)
   app.post('/api/forge/meshy-animate-rig', async (req, res) => {
     const {
       characterName = 'Alderney Resident',

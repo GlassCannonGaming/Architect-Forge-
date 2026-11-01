@@ -162,11 +162,36 @@ export interface SkeletonPoseEuler {
   caneGripActive: boolean;
 }
 
+export type GeminiPrebuiltVoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
+
+export const GEMINI_PREBUILT_VOICES: readonly {
+  voiceName: GeminiPrebuiltVoiceName;
+  label: string;
+  timbreSummary: string;
+}[] = [
+  { voiceName: 'Charon', label: 'Charon (Deep gravelly baritone)', timbreSummary: 'Measured, authoritative, noir concierge register' },
+  { voiceName: 'Kore', label: 'Kore (Crisp mid-alto)', timbreSummary: 'Poised, aristocratic, sharp analytical articulation' },
+  { voiceName: 'Fenrir', label: 'Fenrir (Resonant low bass)', timbreSummary: 'Weathered, intense, conspiratorial undertone' },
+  { voiceName: 'Zephyr', label: 'Zephyr (Airy breathless contralto)', timbreSummary: 'Eerie, hushed, atmospheric whisper-ready timbre' },
+  { voiceName: 'Puck', label: 'Puck (Nimble expressive tenor)', timbreSummary: 'Quick-witted, nervous, kinetic cadence' }
+] as const;
+
+export interface CharacterVoiceProfile {
+  prebuiltVoiceName: GeminiPrebuiltVoiceName;
+  vocalTone: string; // e.g., 'Hushed, gravel-edged, world-weary', 'Aristocratic, clipped, suspiciously polite'
+  accent: string; // e.g., '1970s Old New York Mid-Atlantic', 'New England Brahmin', 'Eastern European Emigré'
+  cadenceStyle: string; // e.g., 'Measured, deliberate pauses between clauses', 'Rapid, breathless, glancing over shoulder'
+  pitchMultiplier: number; // 0.75 to 1.25 (locked for Web Speech fallback & DSP pitch consistency)
+  speakingRate: number; // 0.80 to 1.20 (locked speaking tempo)
+  baselineExpression: FacialExpressionType;
+  persistAcrossPlaythrough: boolean;
+}
+
 export interface CharacterAppearance {
   archetype: CharacterArchetype;
   headShape: 'chibi_block' | 'rounded_toon' | 'tall_noir' | 'proportional_human';
   bodyProportionStyle?: BodyProportionStyle;
-  spineCurvature?: number; // 0 to 45 degrees forward kyphosis tilt (bent spine)
+  spineCurvature?: number; // 0 by default (external rigging pipeline handles posture)
   hasWalkingCane?: boolean;
   hasSpectacles?: boolean;
   facialExpression?: FacialExpressionType;
@@ -182,6 +207,8 @@ export interface CharacterAppearance {
   headScale: number;
   meshyRigTaskId?: string;
   meshyAnimations?: Partial<Record<ScheduledActivityGesture, MeshyCharacterAnimationClipSpec>>;
+  googleAiAnimations?: Partial<Record<ScheduledActivityGesture, GoogleAiCharacterAnimationClipSpec>>;
+  voiceProfile?: CharacterVoiceProfile;
 }
 
 export interface CharacterStats {
@@ -461,6 +488,8 @@ export interface HotelAgentProfile {
   occupation: string;
   personality: string;
   voiceStyle?: string;
+  voiceProfile?: CharacterVoiceProfile;
+  activeFacialExpression?: FacialExpressionType;
   demeanor?: string;
   likes?: string[];
   dislikes?: string[];
@@ -2967,6 +2996,13 @@ export function buildSandboxedCharacterSystemPrompt(
           .join('\n')
       : 'No unanswered questions currently pending.';
 
+  const lockedVoice = getOrCreateCharacterVoiceProfile(agent);
+  const activeExpr =
+    agent.activeFacialExpression ||
+    agent.appearance?.facialExpression ||
+    lockedVoice.baselineExpression ||
+    'neutral';
+
   return [
     `=== GLOBAL INSTRUCTION SET (GAME-SPECIFIC SANDBOX / NO INTERNET ACCESS) ===`,
     globalInstructionSet || DEFAULT_GLOBAL_INSTRUCTION_SET,
@@ -2977,6 +3013,12 @@ export function buildSandboxedCharacterSystemPrompt(
     `=== CHARACTER IDENTITY & INITIAL PERSONALITY ===`,
     `Name: ${agent.name} | Role/Archetype: ${agent.occupation} | Suite/Zone: ${agent.roomNumber} (${agent.floor})`,
     `Voice Style: ${voice}`,
+    `Locked Playthrough Voice Identity (MUST MAINTAIN STRICTLY EVERY TURN):`,
+    `- Prebuilt Voice Timbre: ${lockedVoice.prebuiltVoiceName} (Pitch ${lockedVoice.pitchMultiplier.toFixed(2)}x, Rate ${lockedVoice.speakingRate.toFixed(2)}x)`,
+    `- Locked Regional/Period Accent: ${lockedVoice.accent}`,
+    `- Locked Vocal Tone: ${lockedVoice.vocalTone}`,
+    `- Locked Cadence & Phrasing: ${lockedVoice.cadenceStyle}`,
+    `- Active 3D Facial Expression: ${activeExpr}`,
     `Demeanor: ${demeanor}`,
     `Likes: ${likes}`,
     `Dislikes: ${dislikes}`,
@@ -2999,7 +3041,7 @@ export function buildSandboxedCharacterSystemPrompt(
     `=== SAVED INTERACTION & DIALOGUE HISTORY ===`,
     historyList,
     ``,
-    `Respond strictly in-character in 2 to 4 sentences reflecting your Voice Style, Demeanor, Likes/Dislikes, Disposition (${disposition.toUpperCase()}), and any unanswered questions from days ago.`
+    `Respond strictly in-character in 2 to 4 sentences reflecting your locked Accent (${lockedVoice.accent}), Vocal Tone (${lockedVoice.vocalTone}), Cadence (${lockedVoice.cadenceStyle}), Facial Expression (${activeExpr}), Likes/Dislikes, Disposition (${disposition.toUpperCase()}), and any unanswered questions from days ago.`
   ].join('\n');
 }
 
@@ -3010,6 +3052,7 @@ export function buildProceduralPersonaFromPrompt(
   roomNumber: string
 ): {
   voiceStyle: string;
+  voiceProfile: CharacterVoiceProfile;
   demeanor: string;
   likes: string[];
   dislikes: string[];
@@ -3018,8 +3061,10 @@ export function buildProceduralPersonaFromPrompt(
   dailySchedule: DailyActionEntry[];
 } {
   const cleanSeed = seedPrompt.trim() || `${archetype} stationed near ${roomNumber}`;
+  const voiceProfile = inferVoiceProfileFromArchetypeAndName(name, archetype, cleanSeed);
   return {
-    voiceStyle: `Crisp vintage ${archetype.toLowerCase()} cadence with measured pauses (${cleanSeed.slice(0, 42)})`,
+    voiceStyle: `${voiceProfile.accent} accent · ${voiceProfile.vocalTone} (${voiceProfile.cadenceStyle})`,
+    voiceProfile,
     demeanor: `Attentive, slightly secretive, protective of ${roomNumber} routines`,
     likes: ['Polished brass fixtures', 'Warm radiator steam', 'Accurate guest ledgers', 'Quiet corridors'],
     dislikes: ['Unexplained footsteps behind walls', 'Missing room keys', 'Drafts from the airshaft'],
@@ -3029,7 +3074,7 @@ export function buildProceduralPersonaFromPrompt(
       `Knows that only the Night Clerk and Registrar hold brass passkeys to the service shaft.`,
       `Personal background note: ${cleanSeed}`
     ],
-    personalInstructionSet: `Stay strictly in-character as ${name} (${archetype}). Only reference The Alderney Arms Hotel, ${roomNumber}, and your Starting Known Information. Never use modern internet or out-of-world knowledge.`,
+    personalInstructionSet: `Stay strictly in-character as ${name} (${archetype}). Maintain your locked ${voiceProfile.accent} accent, ${voiceProfile.vocalTone} vocal tone, and ${voiceProfile.cadenceStyle} throughout the entire playthrough. Only reference The Alderney Arms Hotel, ${roomNumber}, and your Starting Known Information. Never use modern internet or out-of-world knowledge.`,
     dailySchedule: [
       {
         phase: 'Morning',
@@ -4053,6 +4098,7 @@ export type AiTaskKey =
   | 'character_chat'
   | 'persona_generator'
   | 'ambient_bark'
+  | 'character_animation'
   | 'description_to_image'
   | 'composite_3d_spec'
   | 'meshy_image_to_3d'
@@ -4086,6 +4132,7 @@ export const AI_MODEL_REGISTRY: Record<AiTaskKey, AiModelRouteSpec> = {
     capabilitiesPreserved: [
       'Multi-turn conversation memory',
       'Offline lore sandbox enforcement',
+      'Locked voice/tone/accent & facial expression continuity',
       'Time-of-day & daily schedule awareness'
     ]
   },
@@ -4097,7 +4144,7 @@ export const AI_MODEL_REGISTRY: Record<AiTaskKey, AiModelRouteSpec> = {
     costTier: 'Lowest-Cost Flash-Lite',
     capabilitiesPreserved: [
       'Structured JSON schema output',
-      'Voice, demeanor, likes/dislikes synthesis',
+      'Voice, tone, accent, demeanor, likes/dislikes synthesis',
       '4-phase daily action schedule generation'
     ]
   },
@@ -4108,6 +4155,18 @@ export const AI_MODEL_REGISTRY: Record<AiTaskKey, AiModelRouteSpec> = {
     provider: 'Google',
     costTier: 'Lowest-Cost Flash-Lite',
     capabilitiesPreserved: ['Sub-second low-latency atmospheric text']
+  },
+  character_animation: {
+    taskKey: 'character_animation',
+    taskLabel: 'Google AI Studio Low-Frame Character & Facial Animation Synthesizer',
+    modelId: 'gemini-3.1-flash-lite',
+    provider: 'Google',
+    costTier: 'Lowest-Cost Flash-Lite',
+    capabilitiesPreserved: [
+      'Structured JSON low-frame skeletal Euler keyframe synthesis (6/8/12/24 FPS)',
+      'Synchronized 3D facial expression & micro-expression trajectory curves',
+      'Zero external rigging lock-in — compatible with external character rigs'
+    ]
   },
   description_to_image: {
     taskKey: 'description_to_image',
@@ -4166,11 +4225,14 @@ export const AI_MODEL_REGISTRY: Record<AiTaskKey, AiModelRouteSpec> = {
   },
   voice_tts: {
     taskKey: 'voice_tts',
-    taskLabel: 'Character Voice Text-to-Speech',
+    taskLabel: 'Character Voice Text-to-Speech (Locked Voice/Tone/Accent)',
     modelId: 'gemini-3.8-flash-lite-tts',
     provider: 'Google',
     costTier: 'Lowest-Cost Flash-Lite',
-    capabilitiesPreserved: ['Low-cost voice audio synthesis']
+    capabilitiesPreserved: [
+      'Low-cost 24kHz WAV voice synthesis via prebuiltVoiceConfig',
+      'Style-prompted vocal tone, regional accent & cadence persistence across playthrough'
+    ]
   },
   live_voice: {
     taskKey: 'live_voice',
@@ -4330,7 +4392,8 @@ export type LocalFolderCategory =
   | 'interactions'
   | 'time_events'
   | 'audio_sfx'
-  | 'audio_music';
+  | 'audio_music'
+  | 'asset_sets';
 
 export interface LocalFolderSpec {
   category: LocalFolderCategory;
@@ -4386,6 +4449,16 @@ export const LOCAL_WORKSPACE_FOLDERS: LocalFolderSpec[] = [
     filePrefix: 'asset3d',
     extension: '.asset3d.json',
     autoSavesOn: 'Forging a new AI 3D asset, duplicating, or customizing an object'
+  },
+  {
+    category: 'asset_sets',
+    relativePath: 'assets/asset_sets',
+    label: 'Saved Multi-Item Asset Sets (Separate from Blueprints)',
+    dataTypeLabel: 'Reusable Multi-Asset Sets (.assetset.json)',
+    description: 'Groups of multiple selected items (or single items) saved as a portable "Set" separate from Room Blueprints.',
+    filePrefix: 'assetset',
+    extension: '.assetset.json',
+    autoSavesOn: 'Saving a selected group of items as a Set'
   },
   {
     category: 'catalog_blueprints',
@@ -7300,7 +7373,7 @@ export function sampleDecimatedClipPose(
   isMoving: boolean,
   isSpeaking = false
 ): SkeletonPoseEuler {
-  const clip = appearance.meshyAnimations?.[gesture];
+  const clip = appearance.googleAiAnimations?.[gesture] || appearance.meshyAnimations?.[gesture];
   if (clip && Array.isArray(clip.decimatedKeyframes) && clip.decimatedKeyframes.length > 0 && !isMoving && !isSpeaking) {
     const cycle = Math.max(0.25, clip.cycleDurationSec || 2.0);
     const wrapped = ((steppedTimeSec % cycle) + cycle) % cycle;
@@ -8118,4 +8191,969 @@ export function searchAndFilterRoomBlueprints(
   });
 }
 
+// ============================================================================
+// GOOGLE AI STUDIO CHARACTER ANIMATION & FACIAL / VOICE IDENTITY SYSTEM
+// (`gemini-3.1-flash-lite` Low-Frame Keyframe Synthesis + `gemini-3.8-flash-lite-tts`
+//  Persistent Character Voice, Tone, Accent & Facial Expression Continuity)
+// ============================================================================
 
+export interface GoogleAiAnimationActionPreset {
+  gesture: ScheduledActivityGesture;
+  presetId: string;
+  actionName: string;
+  categoryLabel: string;
+  cycleDurationSec: number;
+  defaultFacialExpression: FacialExpressionType;
+  motionPromptDirective: string;
+  description: string;
+}
+
+export const GOOGLE_AI_ANIMATION_PRESETS: Record<ScheduledActivityGesture, GoogleAiAnimationActionPreset> = {
+  idle_observe: {
+    gesture: 'idle_observe',
+    presetId: 'gai_anim_idle_observe',
+    actionName: 'GoogleAI_Idle_Observe_Scan',
+    categoryLabel: 'Daily · Watchful Idle Scan',
+    cycleDurationSec: 2.5,
+    defaultFacialExpression: 'suspicious',
+    motionPromptDirective:
+      'Subtle breathing chest rise, slow watchful head pan across the hotel corridor, micro-shifts in shoulder stance.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame watchful idle scan with synchronized suspicious eye-gaze micro-shifts.'
+  },
+  pace_corridor: {
+    gesture: 'pace_corridor',
+    presetId: 'gai_anim_pace_corridor',
+    actionName: 'GoogleAI_Corridor_Patrol_Gait',
+    categoryLabel: 'Locomotion · Measured Corridor Stride',
+    cycleDurationSec: 1.5,
+    defaultFacialExpression: 'weary',
+    motionPromptDirective:
+      'Measured bipedal hotel corridor walking stride with natural arm counter-swing and attentive head pitch.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame bipedal corridor walk cycle with synchronized facial focus.'
+  },
+  inspect_ledger: {
+    gesture: 'inspect_ledger',
+    presetId: 'gai_anim_inspect_ledger',
+    actionName: 'GoogleAI_Inspect_Ledger_Audit',
+    categoryLabel: 'Investigation · Inspect Guest Ledger',
+    cycleDurationSec: 2.0,
+    defaultFacialExpression: 'side_eye_glare',
+    motionPromptDirective:
+      'Attentive upper-body lean over desk register, right forearm tracing entries, subtle head nod and brow furrow.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame ledger inspection sequence with analytical brow furrow.'
+  },
+  wall_listen: {
+    gesture: 'wall_listen',
+    presetId: 'gai_anim_wall_listen',
+    actionName: 'GoogleAI_Wall_Eavesdrop_Lean',
+    categoryLabel: 'Stealth · Wainscoting Eavesdrop',
+    cycleDurationSec: 2.5,
+    defaultFacialExpression: 'paranoid_twitch',
+    motionPromptDirective:
+      'Conspiratorial lateral head tilt toward hollow brick partition, raised hand near ear, tense stillness.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame eavesdropping posture with paranoid eyelid micro-tremor.'
+  },
+  parlor_social: {
+    gesture: 'parlor_social',
+    presetId: 'gai_anim_parlor_social',
+    actionName: 'GoogleAI_Parlor_Converse_Cadence',
+    categoryLabel: 'Social · Parlor Conversation',
+    cycleDurationSec: 2.0,
+    defaultFacialExpression: 'smirk',
+    motionPromptDirective:
+      'Expressive conversational forearm and wrist gestures, poised head tilt, guarded parlor demeanor.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame social conversing cadence with expressive facial inflection.'
+  },
+  sleepwalk_trance: {
+    gesture: 'sleepwalk_trance',
+    presetId: 'gai_anim_sleepwalk_trance',
+    actionName: 'GoogleAI_Sleepwalk_Somnambulist',
+    categoryLabel: 'Occult · Somnambulist Drift',
+    cycleDurationSec: 3.0,
+    defaultFacialExpression: 'hollow_stare',
+    motionPromptDirective:
+      'Hypnotic swaying torso drift, partially raised forearms, entranced head pitch toward basement shaft.',
+    description: 'Google AI Studio (gemini-3.1-flash-lite) low-frame somnambulist trance cycle with dilated hollow stare.'
+  }
+};
+
+export interface GoogleAiAnimationKeyframe extends DecimatedPoseKeyframe {
+  facialExpression?: FacialExpressionType;
+  browFurrowOffset?: number;
+  mouthApertureOffset?: number;
+}
+
+export interface GoogleAiCharacterAnimationClipSpec extends MeshyCharacterAnimationClipSpec {
+  engine: 'google_ai_studio';
+  modelId: 'gemini-3.1-flash-lite';
+  presetId: string;
+  motionPrompt: string;
+  dominantExpression: FacialExpressionType;
+  keyframes: GoogleAiAnimationKeyframe[];
+}
+
+export function buildGoogleAiAnimationPromptSpec(params: {
+  characterName: string;
+  archetype: string;
+  gesture: ScheduledActivityGesture;
+  globalFps?: GlobalAnimationFps;
+  customMotionPrompt?: string;
+  facialExpression?: FacialExpressionType;
+  voiceProfile?: CharacterVoiceProfile;
+}): {
+  modelId: 'gemini-3.1-flash-lite';
+  gesture: ScheduledActivityGesture;
+  targetFps: GlobalAnimationFps;
+  expectedKeyframeCount: number;
+  cycleDurationSec: number;
+  promptText: string;
+} {
+  const validFps = normalizeGlobalAnimationFps(params.globalFps);
+  const preset = GOOGLE_AI_ANIMATION_PRESETS[params.gesture] || GOOGLE_AI_ANIMATION_PRESETS.idle_observe;
+  const expectedKeyframeCount = Math.max(2, Math.round(preset.cycleDurationSec * validFps));
+  const expr = params.facialExpression || preset.defaultFacialExpression;
+  const customNote = (params.customMotionPrompt || '').trim();
+  const voiceNote = params.voiceProfile
+    ? `Locked Voice/Demeanor: ${params.voiceProfile.vocalTone} (${params.voiceProfile.accent} accent, ${params.voiceProfile.cadenceStyle}).`
+    : '';
+
+  const promptText = [
+    `Synthesize a low-frame 3D humanoid skeletal animation clip for "${params.characterName}" (${params.archetype}) in a late-1970s mystery hotel.`,
+    `Target Gesture: ${preset.actionName} (${preset.gesture}) · Cycle Duration: ${preset.cycleDurationSec}s · Step Rate: ${validFps} FPS (${expectedKeyframeCount} keyframes).`,
+    `Motion Directive: ${customNote || preset.motionPromptDirective}`,
+    `Synchronized 3D Facial Expression: ${expr}. ${voiceNote}`,
+    `Output upright external-rig-compatible Euler angles (radians) for pelvis, lumbar/thoracic spine, neck, head, clavicles, upper arms, forearms, hands, thighs, calves, and feet.`
+  ].join('\n');
+
+  return {
+    modelId: 'gemini-3.1-flash-lite',
+    gesture: params.gesture,
+    targetFps: validFps,
+    expectedKeyframeCount,
+    cycleDurationSec: preset.cycleDurationSec,
+    promptText
+  };
+}
+
+/**
+ * Synthesizes a Google AI Studio (`gemini-3.1-flash-lite`) low-frame character animation clip
+ * with optional AI-generated keyframe overrides and synchronized 3D facial expression tags.
+ */
+export function synthesizeGoogleAiCharacterAnimationClip(
+  appearance: CharacterAppearance,
+  gesture: ScheduledActivityGesture,
+  globalFps: GlobalAnimationFps = DEFAULT_GLOBAL_ANIMATION_FPS,
+  options: {
+    customMotionPrompt?: string;
+    facialExpression?: FacialExpressionType;
+    aiKeyframeModifiers?: Array<{
+      headX?: number;
+      headY?: number;
+      headZ?: number;
+      spineThoracicX?: number;
+      spineLumbarY?: number;
+      leftUpperArmX?: number;
+      rightUpperArmX?: number;
+      leftForearmX?: number;
+      rightForearmX?: number;
+      facialExpression?: FacialExpressionType;
+    }>;
+    taskId?: string;
+  } = {}
+): GoogleAiCharacterAnimationClipSpec {
+  const validFps = normalizeGlobalAnimationFps(globalFps);
+  const preset = GOOGLE_AI_ANIMATION_PRESETS[gesture] || GOOGLE_AI_ANIMATION_PRESETS.idle_observe;
+  const dominantExpression =
+    options.facialExpression ||
+    appearance.facialExpression ||
+    preset.defaultFacialExpression;
+
+  // Always use upright external-rig-ready posture (spineCurvature = 0) unless explicitly set
+  const cleanAppearance: CharacterAppearance = {
+    ...appearance,
+    spineCurvature: 0,
+    hasWalkingCane: false
+  };
+
+  const taskId = options.taskId || `gai_anim_${gesture}_${validFps}fps`;
+  const baseSpec = decimateAnimationKeyframes(
+    cleanAppearance,
+    gesture,
+    validFps,
+    `gai_rig_${gesture}`,
+    taskId,
+    60
+  );
+
+  const modifiers = Array.isArray(options.aiKeyframeModifiers) ? options.aiKeyframeModifiers : [];
+  const keyframes: GoogleAiAnimationKeyframe[] = baseSpec.decimatedKeyframes.map((kf, idx) => {
+    const mod = modifiers[idx % Math.max(1, modifiers.length)];
+    const clampRad = (val: number | undefined, fallback: number, limit = 1.35) =>
+      typeof val === 'number' && Number.isFinite(val)
+        ? Math.max(-limit, Math.min(limit, Number(val.toFixed(4))))
+        : fallback;
+
+    const mergedPose: SkeletonPoseEuler = mod
+      ? {
+          ...kf.pose,
+          headX: clampRad(mod.headX, kf.pose.headX, 0.65),
+          headY: clampRad(mod.headY, kf.pose.headY, 0.85),
+          headZ: clampRad(mod.headZ, kf.pose.headZ, 0.45),
+          spineThoracicX: clampRad(mod.spineThoracicX, kf.pose.spineThoracicX, 0.55),
+          spineLumbarY: clampRad(mod.spineLumbarY, kf.pose.spineLumbarY, 0.45),
+          leftUpperArmX: clampRad(mod.leftUpperArmX, kf.pose.leftUpperArmX, 1.35),
+          rightUpperArmX: clampRad(mod.rightUpperArmX, kf.pose.rightUpperArmX, 1.35),
+          leftForearmX: clampRad(mod.leftForearmX, kf.pose.leftForearmX, 1.45),
+          rightForearmX: clampRad(mod.rightForearmX, kf.pose.rightForearmX, 1.45),
+          caneGripActive: false
+        }
+      : { ...kf.pose, caneGripActive: false };
+
+    return {
+      frameIndex: kf.frameIndex,
+      timeSec: kf.timeSec,
+      pose: mergedPose,
+      facialExpression: mod?.facialExpression || dominantExpression
+    };
+  });
+
+  return {
+    ...baseSpec,
+    engine: 'google_ai_studio',
+    modelId: 'gemini-3.1-flash-lite',
+    presetId: preset.presetId,
+    actionName: preset.actionName,
+    motionPrompt: (options.customMotionPrompt || '').trim() || preset.motionPromptDirective,
+    dominantExpression,
+    decimatedKeyframes: keyframes,
+    keyframes
+  };
+}
+
+/**
+ * Canonical locked-in voice, vocal tone, regional accent, and baseline facial expression profiles
+ * for all core characters in The Alderney Arms Hotel. Ensures every character has a distinct
+ * voice/tone/accent maintained strictly throughout the entire playthrough.
+ */
+export const DEFAULT_CHARACTER_VOICE_PROFILES: Record<string, CharacterVoiceProfile> = {
+  agent_arthur: {
+    prebuiltVoiceName: 'Charon',
+    vocalTone: 'Hushed, gravel-edged, world-weary front-desk baritone',
+    accent: '1970s Old New York Mid-Atlantic',
+    cadenceStyle: 'Measured, deliberate pauses while cross-checking ledger timestamps',
+    pitchMultiplier: 0.88,
+    speakingRate: 0.92,
+    baselineExpression: 'weary',
+    persistAcrossPlaythrough: true
+  },
+  agent_eleanor: {
+    prebuiltVoiceName: 'Kore',
+    vocalTone: 'Poised, aristocratic, sharply observant contralto',
+    accent: 'New England Brahmin Transatlantic',
+    cadenceStyle: 'Clipped, articulate phrasing with guarded upper-crust composure',
+    pitchMultiplier: 1.06,
+    speakingRate: 0.95,
+    baselineExpression: 'suspicious',
+    persistAcrossPlaythrough: true
+  },
+  agent_barnaby: {
+    prebuiltVoiceName: 'Fenrir',
+    vocalTone: 'Reverent, ink-stained, conspiratorial academic bass',
+    accent: 'Oxford-Inflected Antiquarian',
+    cadenceStyle: 'Rhythmic, scholarly cadence that drops to a whisper on occult masonry',
+    pitchMultiplier: 0.84,
+    speakingRate: 0.90,
+    baselineExpression: 'paranoid_twitch',
+    persistAcrossPlaythrough: true
+  },
+  agent_clara: {
+    prebuiltVoiceName: 'Zephyr',
+    vocalTone: 'Breathless, velvet-gloved, theatrical socialite mezzo',
+    accent: 'Manhattan Upper East Side Vintage',
+    cadenceStyle: 'Expressive, dramatic inflections punctuated by knowing sighs',
+    pitchMultiplier: 1.12,
+    speakingRate: 1.04,
+    baselineExpression: 'smirk',
+    persistAcrossPlaythrough: true
+  },
+  agent_marcus: {
+    prebuiltVoiceName: 'Puck',
+    vocalTone: 'Restless, analytical, sleep-deprived structural tenor',
+    accent: 'Chicago Industrial Drafting-Room',
+    cadenceStyle: 'Crisp, blueprint-precise technical phrasing with nervous urgency',
+    pitchMultiplier: 0.96,
+    speakingRate: 1.06,
+    baselineExpression: 'side_eye_glare',
+    persistAcrossPlaythrough: true
+  },
+  agent_helper: {
+    prebuiltVoiceName: 'Zephyr',
+    vocalTone: 'Metallic, brass-horn phonograph resonance with warm vacuum-tube hum',
+    accent: '1920s Transatlantic Broadcast Modulation',
+    cadenceStyle: 'Rhythmic turntable-locked cadence with subtle static pauses',
+    pitchMultiplier: 0.92,
+    speakingRate: 0.88,
+    baselineExpression: 'cryptic_whisper',
+    persistAcrossPlaythrough: true
+  }
+};
+
+export function inferVoiceProfileFromArchetypeAndName(
+  name: string,
+  archetype: string,
+  seedText = ''
+): CharacterVoiceProfile {
+  const lowerName = (name || '').toLowerCase();
+  const lowerArch = (archetype || '').toLowerCase();
+  const lowerSeed = (seedText || '').toLowerCase();
+
+  if (lowerName.includes('arthur')) return { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_arthur };
+  if (lowerName.includes('eleanor')) return { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_eleanor };
+  if (lowerName.includes('barnaby') || lowerName.includes('finch')) {
+    return { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_barnaby };
+  }
+  if (lowerName.includes('clara')) return { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_clara };
+  if (lowerName.includes('marcus')) return { ...DEFAULT_CHARACTER_VOICE_PROFILES.agent_marcus };
+
+  if (lowerArch.includes('archivist') || lowerSeed.includes('occult')) {
+    return {
+      prebuiltVoiceName: 'Fenrir',
+      vocalTone: 'Hushed, resonant, scholarly baritone',
+      accent: 'Old-World Antiquarian Mid-Atlantic',
+      cadenceStyle: 'Measured, deliberate academic phrasing with conspiratorial pauses',
+      pitchMultiplier: 0.86,
+      speakingRate: 0.91,
+      baselineExpression: 'suspicious',
+      persistAcrossPlaythrough: true
+    };
+  }
+  if (lowerArch.includes('socialite') || lowerArch.includes('matron')) {
+    return {
+      prebuiltVoiceName: 'Kore',
+      vocalTone: 'Refined, velvet-edged, observant alto',
+      accent: '1970s Manhattan Transatlantic',
+      cadenceStyle: 'Poised, articulate, slightly theatrical delivery',
+      pitchMultiplier: 1.08,
+      speakingRate: 0.96,
+      baselineExpression: 'smirk',
+      persistAcrossPlaythrough: true
+    };
+  }
+  if (lowerArch.includes('bellhop')) {
+    return {
+      prebuiltVoiceName: 'Puck',
+      vocalTone: 'Quick-witted, watchful late-shift tenor',
+      accent: '1970s Lower East Side New York',
+      cadenceStyle: 'Brisk, street-smart, low-volume corridor delivery',
+      pitchMultiplier: 1.02,
+      speakingRate: 1.05,
+      baselineExpression: 'alarmed',
+      persistAcrossPlaythrough: true
+    };
+  }
+
+  return {
+    prebuiltVoiceName: 'Charon',
+    vocalTone: 'Measured, smoky noir baritone',
+    accent: '1970s Classic New York Noir',
+    cadenceStyle: 'Calm, observant, unhurried detective cadence',
+    pitchMultiplier: 0.90,
+    speakingRate: 0.94,
+    baselineExpression: 'neutral',
+    persistAcrossPlaythrough: true
+  };
+}
+
+/**
+ * Returns a character's locked `CharacterVoiceProfile`, preserving any customized voice/tone/accent
+ * across the entire playthrough.
+ */
+export function getOrCreateCharacterVoiceProfile(
+  agent: Pick<HotelAgentProfile, 'id' | 'name' | 'occupation' | 'voiceStyle' | 'voiceProfile'> & {
+    appearance?: Partial<CharacterAppearance>;
+  }
+): CharacterVoiceProfile {
+  if (agent.voiceProfile && agent.voiceProfile.prebuiltVoiceName) {
+    return {
+      ...agent.voiceProfile,
+      persistAcrossPlaythrough: true
+    };
+  }
+  if (agent.appearance?.voiceProfile && agent.appearance.voiceProfile.prebuiltVoiceName) {
+    return {
+      ...agent.appearance.voiceProfile,
+      persistAcrossPlaythrough: true
+    };
+  }
+  if (agent.id && DEFAULT_CHARACTER_VOICE_PROFILES[agent.id]) {
+    return { ...DEFAULT_CHARACTER_VOICE_PROFILES[agent.id] };
+  }
+  return inferVoiceProfileFromArchetypeAndName(
+    agent.name || 'Tenant',
+    agent.occupation || agent.appearance?.archetype || 'Detective Clerk',
+    agent.voiceStyle || ''
+  );
+}
+
+/**
+ * Resolves the character's locked `CharacterVoiceProfile` and context-driven 3D `FacialExpressionType`
+ * for a dialogue turn while strictly preserving the character's voice, vocal tone, and accent across the playthrough.
+ */
+export function resolveCharacterVoiceAndExpressionForTurn(
+  agent: HotelAgentProfile,
+  memoryEval?: Partial<InteractionMemoryEvaluation> | null,
+  replyText = ''
+): {
+  voiceProfile: CharacterVoiceProfile;
+  activeFacialExpression: FacialExpressionType;
+  ttsStyleDirective: string;
+} {
+  const voiceProfile = getOrCreateCharacterVoiceProfile(agent);
+  const lowerReply = (replyText || '').toLowerCase();
+  let activeFacialExpression: FacialExpressionType =
+    agent.activeFacialExpression ||
+    agent.appearance?.facialExpression ||
+    voiceProfile.baselineExpression ||
+    'neutral';
+
+  if (memoryEval) {
+    if ((memoryEval.triggeredDislikes && memoryEval.triggeredDislikes.length > 0) || (memoryEval.trustDelta ?? 0) <= -10) {
+      activeFacialExpression =
+        memoryEval.resultingDisposition === 'hostile' ? 'grimace' : 'side_eye_glare';
+    } else if (memoryEval.unansweredDaysWaiting && memoryEval.unansweredDaysWaiting >= 1) {
+      activeFacialExpression = 'suspicious';
+    } else if ((memoryEval.triggeredLikes && memoryEval.triggeredLikes.length > 0) || (memoryEval.trustDelta ?? 0) >= 8) {
+      activeFacialExpression = 'smirk';
+    }
+  }
+
+  if (lowerReply.includes('whisper') || lowerReply.includes('behind the wall') || lowerReply.includes('hush')) {
+    activeFacialExpression = 'cryptic_whisper';
+  } else if (lowerReply.includes('vanished') || lowerReply.includes('blood') || lowerReply.includes('scream')) {
+    activeFacialExpression = 'shocked';
+  } else if (lowerReply.includes('watch') || lowerReply.includes('careful') || lowerReply.includes('latch')) {
+    if (activeFacialExpression === 'neutral') {
+      activeFacialExpression = 'suspicious';
+    }
+  }
+
+  const ttsStyleDirective = `Speak with a ${voiceProfile.accent} accent in a ${voiceProfile.vocalTone} tone (${voiceProfile.cadenceStyle}), conveying a ${activeFacialExpression.replace(/_/g, ' ')} facial expression`;
+
+  return {
+    voiceProfile,
+    activeFacialExpression,
+    ttsStyleDirective
+  };
+}
+
+/**
+ * Builds the official Google AI Studio `gemini-3.8-flash-lite-tts` request payload
+ * using `prebuiltVoiceConfig.voiceName` and `speechMetadata.style` so the character's
+ * voice, tone, and accent remain locked across the entire playthrough.
+ */
+export function buildGeminiTtsRequestPayload(
+  agent: Pick<HotelAgentProfile, 'id' | 'name' | 'occupation' | 'voiceStyle' | 'voiceProfile' | 'activeFacialExpression'> & {
+    appearance?: Partial<CharacterAppearance>;
+  },
+  textToSpeak: string,
+  overrideExpression?: FacialExpressionType
+): {
+  model: 'gemini-3.8-flash-lite-tts';
+  contents: {
+    parts: Array<{
+      text: string;
+      speechMetadata: {
+        style: string;
+      };
+    }>;
+  };
+  config: {
+    responseModalities: ['AUDIO'];
+    speechConfig: {
+      voiceConfig: {
+        prebuiltVoiceConfig: {
+          voiceName: GeminiPrebuiltVoiceName;
+        };
+      };
+    };
+  };
+  voiceProfile: CharacterVoiceProfile;
+  activeFacialExpression: FacialExpressionType;
+} {
+  const voiceProfile = getOrCreateCharacterVoiceProfile(agent);
+  const activeFacialExpression: FacialExpressionType =
+    overrideExpression ||
+    agent.activeFacialExpression ||
+    agent.appearance?.facialExpression ||
+    voiceProfile.baselineExpression ||
+    'neutral';
+
+  const styleDirective = `Speak with a consistent ${voiceProfile.accent} accent in a ${voiceProfile.vocalTone} vocal tone (${voiceProfile.cadenceStyle}), maintaining ${agent.name}'s signature voice and a ${activeFacialExpression.replace(/_/g, ' ')} expression`;
+
+  return {
+    model: 'gemini-3.8-flash-lite-tts',
+    contents: {
+      parts: [
+        {
+          text: (textToSpeak || '').trim() || 'The corridor remains quiet.',
+          speechMetadata: {
+            style: styleDirective
+          }
+        }
+      ]
+    },
+    config: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: voiceProfile.prebuiltVoiceName
+          }
+        }
+      }
+    },
+    voiceProfile,
+    activeFacialExpression
+  };
+}
+
+// ============================================================================
+// SINGLE & MULTI-ITEM COPY (CTRL+C) / PASTE (CTRL+V) & REUSABLE ASSET SETS
+// (Separate from Room Blueprints)
+// ============================================================================
+
+export interface AssetClipboardItem {
+  name: string;
+  category: AssetCategory;
+  subType: string;
+  relPosition: [number, number, number]; // [dx, y, dz] relative to selection centroid
+  dimensions: [number, number, number];
+  rotationY: number;
+  color: string;
+  textureId: TexturePresetId;
+  isSecretPassage?: boolean;
+  hingeSwingMode?: HingeSwingMode;
+  isOpen?: boolean;
+  collidable: boolean;
+  compositeParts?: CompositeSubPart[];
+  tags?: string[];
+  soundPresetId?: string;
+}
+
+export interface AssetClipboardPayload {
+  copiedAt: string;
+  sourceFloor: FloorId;
+  originCenter: [number, number]; // [centerX, centerZ] of original selection
+  boundingSize: [number, number]; // [spanX, spanZ]
+  items: AssetClipboardItem[];
+}
+
+/**
+ * Reusable "Set" of multiple (or single) assets saved together as a portable prop/furniture/fixture grouping,
+ * completely separate from full-room `RoomBlueprint` definitions.
+ */
+export interface AssetSet {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  tags: string[];
+  boundingSize: [number, number];
+  items: AssetClipboardItem[];
+}
+
+export const INITIAL_ASSET_SETS: AssetSet[] = [
+  {
+    id: 'set_concierge_station_1978',
+    name: '1978 Concierge Desk & Banker Lamp Set',
+    description: 'Multi-item lobby station set combining a scarred walnut concierge desk, tarnished brass banker lamp, and oxblood runner rug.',
+    createdAt: '2026-10-31T10:00:00.000Z',
+    tags: ['concierge', 'desk_set', 'lobby', 'late_70s'],
+    boundingSize: [3.2, 2.8],
+    items: [
+      {
+        name: 'Scarred Walnut Concierge Desk',
+        category: 'furniture',
+        subType: 'concierge_desk',
+        relPosition: [0, 0.55, -0.5],
+        dimensions: [2.6, 1.1, 0.9],
+        rotationY: 0,
+        color: '#3b2314',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['concierge', 'furniture']
+      },
+      {
+        name: 'Tarnished Banker Desk Lamp',
+        category: 'lighting',
+        subType: 'brass_table_lamp',
+        relPosition: [-0.9, 1.2, -0.5],
+        dimensions: [0.4, 0.55, 0.4],
+        rotationY: 0,
+        color: '#5e4c2e',
+        textureId: 'aged_brass',
+        collidable: false,
+        tags: ['lamp', 'lighting']
+      },
+      {
+        name: 'Threadbare Oxblood Parlor Rug',
+        category: 'floor_tile',
+        subType: 'crimson_carpet_runner',
+        relPosition: [0, 0.03, 0.5],
+        dimensions: [3.2, 0.06, 2.0],
+        rotationY: 0,
+        color: '#4a181b',
+        textureId: 'velvet_crimson',
+        collidable: false,
+        tags: ['rug', 'carpet']
+      }
+    ]
+  },
+  {
+    id: 'set_investigator_evidence_table',
+    name: 'Investigator Evidence & Dictaphone Set',
+    description: 'Multi-item investigative prop set with corkboard evidence wall mount, leather notebook, and microcassette dictaphone.',
+    createdAt: '2026-10-31T11:00:00.000Z',
+    tags: ['investigation', 'clues', 'props_set', '1978'],
+    boundingSize: [2.0, 1.5],
+    items: [
+      {
+        name: "Investigator's Evidence Corkboard & Red Yarn",
+        category: 'furniture',
+        subType: 'evidence_corkboard_wall',
+        relPosition: [0, 1.3, -0.4],
+        dimensions: [1.5, 1.1, 0.15],
+        rotationY: 0,
+        color: '#713f12',
+        textureId: 'oak_parquet',
+        collidable: false,
+        tags: ['corkboard', 'evidence', 'game_feature_item']
+      },
+      {
+        name: "Investigator's Leather Notebook & Fountain Pen",
+        category: 'furniture',
+        subType: 'investigator_notebook_folio',
+        relPosition: [-0.35, 0.5, 0.2],
+        dimensions: [0.45, 0.12, 0.35],
+        rotationY: 0,
+        color: '#451a03',
+        textureId: 'oak_parquet',
+        collidable: false,
+        tags: ['notebook', 'clues', 'game_feature_item']
+      },
+      {
+        name: '1978 Microcassette Dictaphone & Tape Recorder',
+        category: 'appliance',
+        subType: 'microcassette_tape_player',
+        relPosition: [0.35, 0.5, 0.2],
+        dimensions: [0.4, 0.16, 0.3],
+        rotationY: 0,
+        color: '#27272a',
+        textureId: 'aged_brass',
+        collidable: false,
+        tags: ['cassette', 'audio', 'game_feature_item'],
+        soundPresetId: 'cassette_click'
+      }
+    ]
+  },
+  {
+    id: 'set_corridor_steam_utility',
+    name: 'Corridor Steam Radiator & Wardrobe Set',
+    description: 'Hallway & suite utility set pairing a clanking cast-iron steam radiator with a weathered dark oak wardrobe.',
+    createdAt: '2026-10-31T12:00:00.000Z',
+    tags: ['corridor', 'radiator', 'furniture_set', 'utility'],
+    boundingSize: [2.8, 1.2],
+    items: [
+      {
+        name: 'Clawfoot Steam Radiator',
+        category: 'appliance',
+        subType: 'vintage_radiator',
+        relPosition: [-0.8, 0.45, 0],
+        dimensions: [1.2, 0.9, 0.4],
+        rotationY: 0,
+        color: '#6e5a38',
+        textureId: 'aged_brass',
+        collidable: true,
+        tags: ['radiator', 'steam'],
+        soundPresetId: 'radiator_hiss'
+      },
+      {
+        name: 'Weathered Dark Oak Wardrobe',
+        category: 'furniture',
+        subType: 'oak_wardrobe',
+        relPosition: [0.8, 1.1, 0],
+        dimensions: [1.3, 2.2, 0.7],
+        rotationY: 0,
+        color: '#2b180a',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['wardrobe', 'storage']
+      }
+    ]
+  }
+];
+
+/**
+ * Pure helper to copy a single selected asset (`primaryId`) or a group of multiple selected assets (`selectedIds`)
+ * into an `AssetClipboardPayload` (triggered by Ctrl+C or UI Copy button).
+ */
+export function copySelectedAssetsToClipboard(
+  allAssets: PlacedAsset[],
+  selectedIds: string[],
+  primaryId: string | null
+): AssetClipboardPayload | null {
+  const effectiveIds =
+    selectedIds.length > 0
+      ? selectedIds
+      : primaryId
+      ? [primaryId]
+      : [];
+  if (effectiveIds.length === 0) return null;
+
+  const idSet = new Set(effectiveIds);
+  const selectedAssets = allAssets.filter((a) => idSet.has(a.id));
+  if (selectedAssets.length === 0) return null;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+
+  for (const a of selectedAssets) {
+    const [x, , z] = a.position;
+    const [w, , d] = a.dimensions;
+    minX = Math.min(minX, x - w / 2);
+    maxX = Math.max(maxX, x + w / 2);
+    minZ = Math.min(minZ, z - d / 2);
+    maxZ = Math.max(maxZ, z + d / 2);
+  }
+
+  const centerX = snapToGrid((minX + maxX) / 2, 0.5);
+  const centerZ = snapToGrid((minZ + maxZ) / 2, 0.5);
+  const spanX = Math.max(0.5, Math.round((maxX - minX) * 10) / 10);
+  const spanZ = Math.max(0.5, Math.round((maxZ - minZ) * 10) / 10);
+
+  const items: AssetClipboardItem[] = selectedAssets.map((a) => ({
+    name: a.name,
+    category: a.category,
+    subType: a.subType,
+    relPosition: [
+      snapToGrid(a.position[0] - centerX, 0.5),
+      a.position[1],
+      snapToGrid(a.position[2] - centerZ, 0.5)
+    ],
+    dimensions: [...a.dimensions] as [number, number, number],
+    rotationY: a.rotationY,
+    color: a.color,
+    textureId: a.textureId,
+    isSecretPassage: a.isSecretPassage,
+    hingeSwingMode: a.hingeSwingMode,
+    isOpen: Boolean(a.isOpen),
+    collidable: a.collidable,
+    compositeParts: a.compositeParts ? a.compositeParts.map((p) => ({ ...p })) : undefined,
+    tags: a.tags ? [...a.tags] : undefined,
+    soundPresetId: a.soundPresetId
+  }));
+
+  return {
+    copiedAt: new Date().toISOString(),
+    sourceFloor: selectedAssets[0].floor,
+    originCenter: [centerX, centerZ],
+    boundingSize: [spanX, spanZ],
+    items
+  };
+}
+
+/**
+ * Pure helper to paste an `AssetClipboardPayload` (single item or multi-item group) onto `targetFloor`
+ * (triggered by Ctrl+V or UI Paste button). Automatically offsets by `pasteStepCount * 1.0m` on X and Z
+ * unless `targetCenterOverride` is supplied, and returns the newly created assets and their selection IDs.
+ */
+export function pasteAssetsFromClipboard(
+  clipboard: AssetClipboardPayload | null,
+  targetFloor: FloorId,
+  pasteStepCount = 1,
+  targetCenterOverride?: [number, number],
+  roomNumber = 'Pasted Selection',
+  halfGrid = GRID_TILE_COUNT / 2 - 0.5
+): {
+  pastedAssets: PlacedAsset[];
+  pastedIds: string[];
+  primaryId: string | null;
+} {
+  if (!clipboard || !Array.isArray(clipboard.items) || clipboard.items.length === 0) {
+    return { pastedAssets: [], pastedIds: [], primaryId: null };
+  }
+
+  const stepDelta = Math.max(1, pasteStepCount) * 1.0;
+  const baseCenterX = targetCenterOverride
+    ? targetCenterOverride[0]
+    : clipboard.originCenter[0] + stepDelta;
+  const baseCenterZ = targetCenterOverride
+    ? targetCenterOverride[1]
+    : clipboard.originCenter[1] + stepDelta;
+
+  const stamp = Date.now();
+  const pastedAssets: PlacedAsset[] = clipboard.items.map((item, idx) => {
+    const worldX = snapToGrid(
+      Math.max(-halfGrid, Math.min(halfGrid, baseCenterX + item.relPosition[0])),
+      0.5
+    );
+    const worldZ = snapToGrid(
+      Math.max(-halfGrid, Math.min(halfGrid, baseCenterZ + item.relPosition[2])),
+      0.5
+    );
+    const yPos =
+      typeof item.relPosition[1] === 'number' && item.relPosition[1] > 0
+        ? item.relPosition[1]
+        : item.dimensions[1] / 2;
+
+    return {
+      id: `paste_${stamp}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      name: item.name,
+      category: item.category,
+      subType: item.subType,
+      floor: targetFloor,
+      roomNumber,
+      position: [worldX, yPos, worldZ],
+      dimensions: [...item.dimensions] as [number, number, number],
+      rotationY: item.rotationY,
+      color: item.color,
+      textureId: item.textureId,
+      isSecretPassage: item.isSecretPassage,
+      hingeSwingMode: item.hingeSwingMode,
+      isOpen: Boolean(item.isOpen),
+      collidable: item.collidable,
+      compositeParts: item.compositeParts ? item.compositeParts.map((p) => ({ ...p })) : undefined,
+      tags: item.tags ? [...item.tags] : undefined,
+      soundPresetId: item.soundPresetId
+    };
+  });
+
+  const pastedIds = pastedAssets.map((a) => a.id);
+  const primaryId = pastedIds.length > 0 ? pastedIds[pastedIds.length - 1] : null;
+  return { pastedAssets, pastedIds, primaryId };
+}
+
+/**
+ * Pure helper to save the currently selected asset(s) (single or multi-selected group) as a reusable `AssetSet`,
+ * completely separate from `RoomBlueprint`.
+ */
+export function createAssetSetFromSelection(params: {
+  name: string;
+  description?: string;
+  tags?: string[];
+  allAssets: PlacedAsset[];
+  selectedIds: string[];
+  primaryId: string | null;
+}): AssetSet | null {
+  const clipboard = copySelectedAssetsToClipboard(
+    params.allAssets,
+    params.selectedIds,
+    params.primaryId
+  );
+  if (!clipboard || clipboard.items.length === 0) return null;
+
+  const cleanName =
+    (params.name || '').trim() ||
+    (clipboard.items.length === 1
+      ? `${clipboard.items[0].name} Set`
+      : `Custom Multi-Item Set (${clipboard.items.length} items)`);
+
+  const rawTags =
+    params.tags && params.tags.length > 0
+      ? params.tags
+      : ['custom_set', clipboard.items.length > 1 ? 'multi_item' : 'single_item'];
+  const normalizedTags = Array.from(
+    new Set(rawTags.map((t) => normalizeBlueprintTag(t)).filter(Boolean))
+  );
+
+  const defaultDesc =
+    (params.description || '').trim() ||
+    `Saved Asset Set of ${clipboard.items.length} ${
+      clipboard.items.length === 1 ? 'item' : 'grouped items'
+    } (${clipboard.boundingSize[0]}m × ${clipboard.boundingSize[1]}m).`;
+
+  return {
+    id: `set_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    name: cleanName,
+    description: defaultDesc,
+    createdAt: new Date().toISOString(),
+    tags: normalizedTags,
+    boundingSize: clipboard.boundingSize,
+    items: clipboard.items
+  };
+}
+
+/**
+ * Pure helper to spawn/place a saved `AssetSet` onto `targetFloor` at `(offsetX, offsetZ)` and select all spawned items as a group.
+ */
+export function instantiateAssetSetOnFloor(
+  assetSet: AssetSet,
+  targetFloor: FloorId,
+  offsetX = 0,
+  offsetZ = 0,
+  halfGrid = GRID_TILE_COUNT / 2 - 0.5
+): {
+  spawnedAssets: PlacedAsset[];
+  spawnedIds: string[];
+  primaryId: string | null;
+} {
+  const pseudoClipboard: AssetClipboardPayload = {
+    copiedAt: assetSet.createdAt,
+    sourceFloor: targetFloor,
+    originCenter: [offsetX, offsetZ],
+    boundingSize: assetSet.boundingSize,
+    items: assetSet.items
+  };
+  const { pastedAssets, pastedIds, primaryId } = pasteAssetsFromClipboard(
+    pseudoClipboard,
+    targetFloor,
+    1,
+    [offsetX, offsetZ],
+    assetSet.name,
+    halfGrid
+  );
+  return {
+    spawnedAssets: pastedAssets,
+    spawnedIds: pastedIds,
+    primaryId
+  };
+}
+
+/**
+ * Pure search & tag filter for saved `AssetSet`s.
+ */
+export function searchAndFilterAssetSets(
+  sets: AssetSet[],
+  query: string,
+  activeTags: string[] = []
+): AssetSet[] {
+  const cleanQuery = (query || '').trim().toLowerCase();
+  const normalizedActiveTags = activeTags.map((t) => normalizeBlueprintTag(t)).filter(Boolean);
+
+  return sets.filter((setItem) => {
+    if (normalizedActiveTags.length > 0) {
+      const setTagSet = new Set((setItem.tags || []).map((t) => normalizeBlueprintTag(t)));
+      for (const reqTag of normalizedActiveTags) {
+        if (!setTagSet.has(reqTag)) return false;
+      }
+    }
+    if (!cleanQuery) return true;
+    const haystack = [
+      setItem.name,
+      setItem.description,
+      ...(setItem.tags || []),
+      ...setItem.items.map((i) => `${i.name} ${i.category} ${i.subType}`)
+    ]
+      .join(' ')
+      .toLowerCase();
+    return cleanQuery
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((tok) => {
+        const cleanTok = tok.startsWith('#') ? tok.slice(1) : tok;
+        return haystack.includes(cleanTok);
+      });
+  });
+}

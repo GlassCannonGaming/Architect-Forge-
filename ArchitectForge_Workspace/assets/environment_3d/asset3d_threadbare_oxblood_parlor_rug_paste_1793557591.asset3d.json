@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-01T18:26:31.530Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Threadbare Oxblood Parlor Rug",
+  "data": {
+    "id": "paste_1793557591519_2_50rg",
+    "name": "Threadbare Oxblood Parlor Rug",
+    "category": "floor_tile",
+    "subType": "crimson_carpet_runner",
+    "floor": "lobby",
+    "roomNumber": "1978 Concierge Desk & Banker Lamp Set",
+    "position": [
+      0,
+      0.03,
+      0.5
+    ],
+    "dimensions": [
+      3.2,
+      0.06,
+      2
+    ],
+    "rotationY": 0,
+    "color": "#4a181b",
+    "textureId": "velvet_crimson",
+    "isOpen": false,
+    "collidable": false,
+    "tags": [
+      "rug",
+      "carpet"
+    ]
+  }
+}

@@ -74,7 +74,14 @@ import {
   TOP_EDITOR_MODE_TABS,
   STUDIO_HEADER_BRAND_SPEC,
   getTaskbarWindowIdsForMode,
-  assignSoundToAssetOrBlueprint
+  assignSoundToAssetOrBlueprint,
+  AssetSet,
+  AssetClipboardPayload,
+  INITIAL_ASSET_SETS,
+  copySelectedAssetsToClipboard,
+  pasteAssetsFromClipboard,
+  createAssetSetFromSelection,
+  instantiateAssetSetOnFloor
 } from './game/rules';
 import {
   INITIAL_PLACED_ASSETS,
@@ -351,26 +358,50 @@ export default function App() {
     }
   }, [roomBlueprints]);
 
+  // Copy (Ctrl+C) / Paste (Ctrl+V) Clipboard & Reusable Multi-Item Asset Sets State (Separate from Room Blueprints)
+  const [assetClipboard, setAssetClipboard] = useState<AssetClipboardPayload | null>(null);
+  const [pasteStepCount, setPasteStepCount] = useState<number>(0);
+  const [assetSets, setAssetSets] = useState<AssetSet[]>(() => {
+    try {
+      const saved = localStorage.getItem('architectforge_asset_sets_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage error
+    }
+    return INITIAL_ASSET_SETS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('architectforge_asset_sets_v1', JSON.stringify(assetSets));
+    } catch {
+      // ignore storage error
+    }
+  }, [assetSets]);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Character Rig Creator State (defaults to Old Lady with 38° Bent Spine, Walnut Cane & Hollow Stare)
+  // Character Rig Creator State (upright external-rig-ready defaults + Google AI Studio animation & voice profile)
   const [customAppearance, setCustomAppearance] = useState<CharacterAppearance>({
-    archetype: 'Elderly Matron',
+    archetype: 'Detective Clerk',
     headShape: 'proportional_human',
     bodyProportionStyle: 'proportional_human',
-    skinColor: '#eed8c7',
+    skinColor: '#f3d9c4',
     eyeStyle: 'wide_amber',
-    hairStyle: 'silver_bun',
-    hairColor: '#d1d5db',
-    outfitColor: '#4b5563',
-    accentColor: '#b45309',
-    mouthStyle: 'nervous_frown',
-    facialExpression: 'hollow_stare',
-    spineCurvature: 38,
-    hasWalkingCane: true,
-    hasSpectacles: true,
-    heightScale: 0.94,
-    widthScale: 0.98,
+    hairStyle: 'swept_pompadour',
+    hairColor: '#451a03',
+    outfitColor: '#78350f',
+    accentColor: '#eab308',
+    mouthStyle: 'calm_neutral',
+    facialExpression: 'suspicious',
+    spineCurvature: 0,
+    hasWalkingCane: false,
+    hasSpectacles: false,
+    heightScale: 1.0,
+    widthScale: 1.0,
     headScale: 1.0
   });
 
@@ -1106,6 +1137,71 @@ export default function App() {
         return;
       }
 
+      // Copy single selected item or multi-selected group of items (Ctrl+C / Cmd+C)
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && !e.shiftKey && !e.altKey) {
+        const selText = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+        if (!selText) {
+          e.preventDefault();
+          const copied = copySelectedAssetsToClipboard(assets, selectedAssetIds, selectedAssetId);
+          if (copied && copied.items.length > 0) {
+            soundFX.playPlaceAsset();
+            setAssetClipboard(copied);
+            setPasteStepCount(0);
+            setStatusBanner(
+              copied.items.length === 1
+                ? `📋 Copied "${copied.items[0].name}" [Ctrl+C] — Press [Ctrl+V] to paste or save as a Set!`
+                : `📋 Copied group of ${copied.items.length} selected items (${copied.boundingSize[0]}m × ${copied.boundingSize[1]}m) [Ctrl+C] — Press [Ctrl+V] to paste or save as a Set!`
+            );
+          } else {
+            setStatusBanner(
+              'Select a single 3D asset or Shift+Click / Marquee-select multiple assets first, then press [Ctrl+C] to copy.'
+            );
+          }
+          return;
+        }
+      }
+
+      // Paste single item or multi-item group from studio clipboard onto active floor (Ctrl+V / Cmd+V)
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV' && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (assetClipboard && assetClipboard.items.length > 0) {
+          const nextStep = pasteStepCount + 1;
+          const { pastedAssets, pastedIds, primaryId } = pasteAssetsFromClipboard(
+            assetClipboard,
+            currentFloor,
+            nextStep,
+            undefined,
+            currentRoomLabel || 'Pasted Selection'
+          );
+          if (pastedAssets.length > 0) {
+            recordUndoSnapshot(
+              pastedAssets.length === 1
+                ? `Paste "${pastedAssets[0].name}"`
+                : `Paste group of ${pastedAssets.length} assets`
+            );
+            soundFX.playPlaceAsset();
+            setAssets((prev) => [...prev, ...pastedAssets]);
+            setSelectedAssetIds(pastedIds);
+            setSelectedAssetId(primaryId);
+            setActiveBlueprint(null);
+            setPasteStepCount(nextStep);
+            pastedAssets.forEach((pa) => {
+              saveItemToDedicatedFolder('environment_3d', pa.name, pa, pa.id);
+            });
+            setStatusBanner(
+              pastedAssets.length === 1
+                ? `📥 Pasted "${pastedAssets[0].name}" [Ctrl+V] at (${pastedAssets[0].position[0]}m, ${pastedAssets[0].position[2]}m)!`
+                : `📥 Pasted group of ${pastedAssets.length} items [Ctrl+V] — Group stays selected so you can drag, rotate, or save as a Set!`
+            );
+          }
+        } else {
+          setStatusBanner(
+            'Clipboard is empty — Select 1 or more 3D assets and press [Ctrl+C] first, then press [Ctrl+V] to paste.'
+          );
+        }
+        return;
+      }
+
       if (isActionKeyPressed('quick_edit', e.code, keybindings) && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         const qeLabel = getPrimaryActionKeyLabel('quick_edit', keybindings);
@@ -1258,7 +1354,13 @@ export default function App() {
     assets,
     mode,
     catalogAssets,
-    keybindings
+    keybindings,
+    assetClipboard,
+    pasteStepCount,
+    currentFloor,
+    currentRoomLabel,
+    recordUndoSnapshot,
+    saveItemToDedicatedFolder
   ]);
 
   // Place new asset blueprint on 128x128 grid (Addition -> tracked on undo stack)
@@ -1633,6 +1735,132 @@ export default function App() {
     },
     [saveItemToDedicatedFolder]
   );
+
+  // Copy single selected asset or multi-selected group of assets (UI button or Ctrl+C)
+  const handleCopySelectedAssets = useCallback(() => {
+    const copied = copySelectedAssetsToClipboard(assets, selectedAssetIds, selectedAssetId);
+    if (!copied || copied.items.length === 0) {
+      setStatusBanner(
+        'Select a single 3D object or Shift+Click / Marquee-select multiple objects first to copy [Ctrl+C].'
+      );
+      return;
+    }
+    soundFX.playPlaceAsset();
+    setAssetClipboard(copied);
+    setPasteStepCount(0);
+    setStatusBanner(
+      copied.items.length === 1
+        ? `📋 Copied "${copied.items[0].name}" [Ctrl+C] — Press [Ctrl+V] or click Paste to place a copy!`
+        : `📋 Copied group of ${copied.items.length} selected items (${copied.boundingSize[0]}m × ${copied.boundingSize[1]}m) [Ctrl+C] — Press [Ctrl+V] to paste or save as a Set!`
+    );
+  }, [assets, selectedAssetIds, selectedAssetId]);
+
+  // Paste copied single asset or multi-asset group onto active floor (UI button or Ctrl+V)
+  const handlePasteClipboardAssets = useCallback(() => {
+    if (!assetClipboard || assetClipboard.items.length === 0) {
+      setStatusBanner(
+        'Clipboard is empty — Copy a selected object or multi-item group with [Ctrl+C] first!'
+      );
+      return;
+    }
+    const nextStep = pasteStepCount + 1;
+    const { pastedAssets, pastedIds, primaryId } = pasteAssetsFromClipboard(
+      assetClipboard,
+      currentFloor,
+      nextStep,
+      undefined,
+      currentRoomLabel || 'Pasted Selection'
+    );
+    if (pastedAssets.length === 0) return;
+
+    recordUndoSnapshot(
+      pastedAssets.length === 1
+        ? `Paste "${pastedAssets[0].name}"`
+        : `Paste group of ${pastedAssets.length} assets`
+    );
+    soundFX.playPlaceAsset();
+    setAssets((prev) => [...prev, ...pastedAssets]);
+    setSelectedAssetIds(pastedIds);
+    setSelectedAssetId(primaryId);
+    setActiveBlueprint(null);
+    setPasteStepCount(nextStep);
+    pastedAssets.forEach((pa) => {
+      saveItemToDedicatedFolder('environment_3d', pa.name, pa, pa.id);
+    });
+    setStatusBanner(
+      pastedAssets.length === 1
+        ? `📥 Pasted "${pastedAssets[0].name}" [Ctrl+V] at (${pastedAssets[0].position[0]}m, ${pastedAssets[0].position[2]}m)!`
+        : `📥 Pasted group of ${pastedAssets.length} items [Ctrl+V] — Group is selected and ready to move or save as a Set!`
+    );
+  }, [
+    assetClipboard,
+    pasteStepCount,
+    currentFloor,
+    currentRoomLabel,
+    recordUndoSnapshot,
+    saveItemToDedicatedFolder
+  ]);
+
+  // Save current single or multi-item selection as a reusable "Set" (separate from Room Blueprints)
+  const handleSaveSelectionAsAssetSet = useCallback(
+    (name: string, description = '', tags: string[] = ['custom_set']) => {
+      const createdSet = createAssetSetFromSelection({
+        name,
+        description,
+        tags,
+        allAssets: assets,
+        selectedIds: selectedAssetIds,
+        primaryId: selectedAssetId
+      });
+      if (!createdSet) {
+        setStatusBanner(
+          'Select 1 or more 3D assets on the floor first to save them as a reusable Set.'
+        );
+        return;
+      }
+      soundFX.playPlaceAsset();
+      setAssetSets((prev) => [createdSet, ...prev]);
+      saveItemToDedicatedFolder('asset_sets', createdSet.name, createdSet, createdSet.id);
+      setStatusBanner(
+        `📚 Saved "${createdSet.name}" (${createdSet.items.length} ${
+          createdSet.items.length === 1 ? 'item' : 'grouped items'
+        }) as a reusable Asset Set (separate from Room Blueprints) to ./ArchitectForge_Workspace/assets/asset_sets/!`
+      );
+    },
+    [assets, selectedAssetIds, selectedAssetId, saveItemToDedicatedFolder]
+  );
+
+  // Place/spawn a saved Asset Set onto the active floor as a selected multi-item group
+  const handlePlaceAssetSet = useCallback(
+    (assetSet: AssetSet, offsetX = 0, offsetZ = 0) => {
+      const { spawnedAssets, spawnedIds, primaryId } = instantiateAssetSetOnFloor(
+        assetSet,
+        currentFloor,
+        offsetX,
+        offsetZ
+      );
+      if (spawnedAssets.length === 0) return;
+
+      recordUndoSnapshot(`Place Set "${assetSet.name}" (${spawnedAssets.length} items)`);
+      soundFX.playPlaceAsset();
+      setAssets((prev) => [...prev, ...spawnedAssets]);
+      setSelectedAssetIds(spawnedIds);
+      setSelectedAssetId(primaryId);
+      setActiveBlueprint(null);
+      spawnedAssets.forEach((sa) => {
+        saveItemToDedicatedFolder('environment_3d', sa.name, sa, sa.id);
+      });
+      setStatusBanner(
+        `📚 Placed Asset Set "${assetSet.name}" (${spawnedAssets.length} items) at (${offsetX}m, ${offsetZ}m) — All items in the Set are selected as a group!`
+      );
+    },
+    [currentFloor, recordUndoSnapshot, saveItemToDedicatedFolder]
+  );
+
+  const handleDeleteAssetSet = useCallback((id: string) => {
+    setAssetSets((prev) => prev.filter((s) => s.id !== id));
+    setStatusBanner('Removed Asset Set from Saved Sets library.');
+  }, []);
 
   // Download helper for JSON exports
   const triggerJsonDownload = (filename: string, payload: unknown) => {
@@ -2987,6 +3215,18 @@ export default function App() {
           onInteractKeyE={handleInteractWithAssetKeyE}
           onDuplicate={handleDuplicateAsset}
           onDeleteSelected={() => handleDeleteAsset(selectedAsset.id)}
+          onCopySelected={handleCopySelectedAssets}
+          onPasteClipboard={handlePasteClipboardAssets}
+          clipboardCount={assetClipboard?.items?.length || 0}
+          onSaveSelectionAsSet={(setName) =>
+            handleSaveSelectionAsAssetSet(
+              setName,
+              `Saved from Quick Edit [F] (${activeSelectionCount} ${
+                activeSelectionCount === 1 ? 'item' : 'grouped items'
+              }).`,
+              ['custom_set', activeSelectionCount > 1 ? 'multi_item' : 'single_item']
+            )
+          }
           onExtendWallRow={(wallAsset) => {
             const bp = createBlueprintFromAsset(wallAsset);
             setActiveBlueprint(bp);
@@ -3482,6 +3722,24 @@ export default function App() {
           aiForgeBusy={aiForgeBusy}
           loreSummary={loreSummary}
           customGeneratedTexUrl={customGeneratedTexUrl}
+          assetClipboard={assetClipboard}
+          onCopySelectedAssets={handleCopySelectedAssets}
+          onPasteClipboardAssets={handlePasteClipboardAssets}
+          assetSets={assetSets}
+          onSaveSelectionAsAssetSet={handleSaveSelectionAsAssetSet}
+          onPlaceAssetSet={handlePlaceAssetSet}
+          onDeleteAssetSet={handleDeleteAssetSet}
+          onExportAssetSet={(assetSet) => {
+            const safeName = assetSet.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            triggerJsonDownload(`asset_set_${safeName}.assetset.json`, {
+              schemaVersion: '1.0.0',
+              exportedFrom: 'ArchitectForge Asset Sets Library (Separate from Room Blueprints)',
+              exportedAt: new Date().toISOString(),
+              assetType: 'asset_set',
+              assetSet
+            });
+            setStatusBanner(`Exported Asset Set "asset_set_${safeName}.assetset.json"!`);
+          }}
         />
       </div>
     </main>
