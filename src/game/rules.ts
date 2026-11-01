@@ -7939,15 +7939,22 @@ export function inferDefaultAssetBlueprintTags(bp: Partial<SearchableBlueprintLi
     tagSet.add('hotel-updated');
     tagSet.add('1992-1995');
   }
+  if (combined.includes('elevator') || sub.includes('elevator')) {
+    tagSet.add('elevator');
+  }
   if (
-    bp.canUpdateInHotel === false ||
-    Boolean(bp.structuralConstraint) ||
-    sub.includes('stairwell') ||
-    sub.includes('chute') ||
-    sub.includes('elevator') ||
-    sub.includes('breaker_panel') ||
-    cat === 'wall' ||
-    cat === 'secret_wall'
+    bp.canUpdateInHotel !== true &&
+    (
+      bp.canUpdateInHotel === false ||
+      Boolean(bp.structuralConstraint) ||
+      sub.includes('stairwell') ||
+      sub.includes('chute') ||
+      sub === 'apt_elevator_sliding_doors' ||
+      sub.includes('elevator_shaft') ||
+      sub.includes('breaker_panel') ||
+      cat === 'wall' ||
+      cat === 'secret_wall'
+    )
   ) {
     tagSet.add('structural_fixed');
     tagSet.add('structural');

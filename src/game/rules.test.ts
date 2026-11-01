@@ -2681,5 +2681,144 @@ test('1992-1995 Hotel Updated Assets Ingestion: set_apt_updated_* sets, structur
   assert.equal(queue90s[0].prompt.includes('1992-1995'), true);
 });
 
+test('Subtest 43: 7x7 Tile Elevator Cab System: Sliding Doors, Cab Box Walls, Portal Wall, Ceiling Access Hatch, Emergency Phone, Button Panel COP, and Asset Sets', async () => {
+  const {
+    APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+    APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+    APARTMENT_UPDATED_HOTEL_ASSET_SETS,
+    INITIAL_ASSET_SETS,
+    isStructuralHotelAsset,
+    canAssetBeUpdatedInHotel,
+    upgradeAssetTo1990sHotelVersion,
+    downgradeAssetTo1978Version
+  } = await import('./rules');
+
+  // 1. Verify all 6 elevator blueprints exist in 1978 original catalog
+  const required1978ElevatorSubtypes = [
+    'apt_elevator_cab_sliding_doors',
+    'apt_elevator_cab_wall_solid',
+    'apt_elevator_cab_portal_wall',
+    'apt_elevator_ceiling_access_panel',
+    'apt_elevator_emergency_phone',
+    'apt_elevator_button_panel_cop',
+    'apt_elevator_floor_tile_7x7'
+  ];
+
+  for (const st of required1978ElevatorSubtypes) {
+    const bp = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === st);
+    assert.equal(Boolean(bp), true, `1978 blueprint ${st} must exist in catalog`);
+    assert.equal(bp!.era, '1970s');
+    assert.equal(bp!.canUpdateInHotel, true, `${st} cab component must be updatable in hotel`);
+    assert.equal(Boolean(bp!.paired1990sId), true, `${st} must have paired 1990s updated ID`);
+    assert.equal(Array.isArray(bp!.compositeParts), true);
+    assert.equal((bp!.compositeParts?.length || 0) >= 3, true);
+  }
+
+  // 2. Verify all 6 elevator blueprints exist in 1990s updated hotel catalog
+  const required1990sElevatorSubtypes = [
+    'apt_elevator_cab_sliding_doors_90s',
+    'apt_elevator_cab_wall_solid_90s',
+    'apt_elevator_cab_portal_wall_90s',
+    'apt_elevator_ceiling_access_panel_90s',
+    'apt_elevator_emergency_phone_90s',
+    'apt_elevator_button_panel_cop_90s',
+    'apt_elevator_floor_tile_7x7_90s'
+  ];
+
+  for (const st of required1990sElevatorSubtypes) {
+    const bp = APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.find((b) => b.subType === st);
+    assert.equal(Boolean(bp), true, `1990s blueprint ${st} must exist in 1990s catalog`);
+    assert.equal(bp!.era, '1990s');
+    assert.equal(Boolean(bp!.predecessor1978Id), true, `${st} must have predecessor 1978 ID`);
+    assert.equal(Array.isArray(bp!.compositeParts), true);
+  }
+
+  // 3. Verify specific functional properties:
+  // - Sliding doors have pocket_slide and sfx_door_latch
+  const doors1978 = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_cab_sliding_doors')!;
+  assert.equal(doors1978.category, 'door');
+  assert.equal(doors1978.soundPresetId, 'sfx_door_latch');
+  assert.equal(doors1978.tags?.includes('pocket_slide'), true);
+  assert.equal(doors1978.animationSpec?.includes('pocket slide'), true);
+
+  // - Button panel COP has sfx_bell_ring
+  const cop1978 = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_button_panel_cop')!;
+  assert.equal(cop1978.category, 'appliance');
+  assert.equal(cop1978.soundPresetId, 'sfx_bell_ring');
+
+  // - Emergency phone has sfx_telephone_ring
+  const phone1978 = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_emergency_phone')!;
+  assert.equal(phone1978.category, 'appliance');
+  assert.equal(phone1978.soundPresetId, 'sfx_telephone_ring');
+
+  // - Ceiling with emergency access panel is 7x7 tiles
+  const ceiling1978 = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_ceiling_access_panel')!;
+  assert.equal(ceiling1978.defaultDimensions[0], 7.0);
+  assert.equal(ceiling1978.defaultDimensions[2], 7.0);
+  assert.equal(ceiling1978.tags?.includes('access_panel'), true);
+  assert.equal(ceiling1978.tags?.includes('emergency_hatch'), true);
+
+  // - Box walls and portal wall are 7m wide
+  const wallSolid = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_cab_wall_solid')!;
+  assert.equal(wallSolid.defaultDimensions[0], 7.0);
+  const wallPortal = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_cab_portal_wall')!;
+  assert.equal(wallPortal.defaultDimensions[0], 7.0);
+
+  // 4. Verify 7x7 Tile Elevator Cab Asset Sets in INITIAL_ASSET_SETS
+  const set1978 = INITIAL_ASSET_SETS.find((s) => s.id === 'set_elevator_cab_7x7');
+  assert.equal(Boolean(set1978), true, 'set_elevator_cab_7x7 must exist in INITIAL_ASSET_SETS');
+  assert.deepEqual(set1978!.boundingSize, [7.0, 7.0], 'Must be exactly 7x7 tiles wide');
+  assert.equal(set1978!.items.length >= 8, true, 'Must include floor, 3 walls, portal wall, sliding doors, ceiling, COP, and phone');
+  assert.equal(set1978!.tags.includes('7x7'), true);
+  assert.equal(set1978!.tags.includes('elevator'), true);
+
+  const set1990s = INITIAL_ASSET_SETS.find((s) => s.id === 'set_apt_updated_elevator_cab_90s');
+  assert.equal(Boolean(set1990s), true, 'set_apt_updated_elevator_cab_90s must exist in INITIAL_ASSET_SETS');
+  assert.deepEqual(set1990s!.boundingSize, [7.0, 7.0], 'Must be exactly 7x7 tiles wide');
+  assert.equal(set1990s!.items.length >= 8, true);
+
+  // 5. Verify Bidirectional Upgrade & Downgrade for all elevator components
+  for (let i = 0; i < required1978ElevatorSubtypes.length; i++) {
+    const from1978 = required1978ElevatorSubtypes[i];
+    const to1990s = required1990sElevatorSubtypes[i];
+
+    const testAsset: PlacedAsset = {
+      id: `test_${from1978}_1`,
+      name: `Test ${from1978}`,
+      category: 'appliance',
+      subType: from1978,
+      floor: 'lobby',
+      position: [0, 1.0, 0],
+      dimensions: [1, 1, 1],
+      rotationY: 0,
+      color: '#5c4826',
+      textureId: 'aged_brass',
+      collidable: true,
+      era: '1970s',
+      canUpdateInHotel: true,
+      paired1990sId: to1990s
+    };
+
+    const upgradeRes = upgradeAssetTo1990sHotelVersion(testAsset, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(upgradeRes.success, true, `Upgrade of ${from1978} to ${to1990s} must succeed`);
+    assert.equal(upgradeRes.upgradedAsset.subType, to1990s);
+    assert.equal(upgradeRes.upgradedAsset.era, '1990s');
+
+    const downgradeRes = downgradeAssetTo1978Version(upgradeRes.upgradedAsset, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(downgradeRes.success, true, `Downgrade of ${to1990s} to ${from1978} must succeed`);
+    assert.equal(downgradeRes.downgradedAsset.subType, from1978);
+    assert.equal(downgradeRes.downgradedAsset.era, '1970s');
+  }
+
+  // 6. Verify Structural Hoistway vs Updatable Cab Distinction
+  // apt_elevator_sliding_doors (corridor hoistway) must be structural fixed
+  const hoistwayDoor = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === 'apt_elevator_sliding_doors')!;
+  assert.equal(isStructuralHotelAsset(hoistwayDoor.subType, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true);
+  // apt_elevator_cab_sliding_doors (cab interior) must NOT be structural fixed
+  assert.equal(isStructuralHotelAsset(doors1978.subType, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), false);
+  assert.equal(canAssetBeUpdatedInHotel(doors1978, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true);
+});
+
+
 
 

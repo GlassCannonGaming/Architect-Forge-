@@ -43,16 +43,28 @@ export function isStructuralHotelAsset(
   if (STRUCTURAL_HOTEL_ASSET_SUBTYPES.has(subType)) return true;
   const bp = allBlueprints.find((b) => b.subType === subType);
   if (bp) {
+    if (bp.canUpdateInHotel === true) return false;
     if (bp.canUpdateInHotel === false) return true;
     if (bp.structuralConstraint) return true;
     if (bp.tags && (bp.tags.includes('structural_fixed') || bp.tags.includes('structural'))) return true;
     if (bp.category === 'wall' || bp.category === 'secret_wall') return true;
   }
   const s = subType.toLowerCase();
+  // Interior cab components are updatable furnishings/fixtures
+  if (
+    s.startsWith('apt_elevator_cab_') ||
+    s.startsWith('apt_elevator_button_panel') ||
+    s.startsWith('apt_elevator_emergency_phone') ||
+    s.startsWith('apt_elevator_ceiling') ||
+    s.startsWith('apt_elevator_floor_tile')
+  ) {
+    return false;
+  }
   return (
     s.includes('stairwell') ||
     s.includes('chute') ||
-    s.includes('elevator') ||
+    s === 'apt_elevator_sliding_doors' ||
+    s.includes('elevator_shaft') ||
     s.includes('breaker_panel') ||
     s.includes('meter') ||
     s.includes('structural')
@@ -763,6 +775,165 @@ export const APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS: ApartmentAssetBlueprint[]
       { id: 'push_paddle', shape: 'box', offset: [0, 0.22, 0.32], size: [0.2, 0.15, 0.08], color: '#38bdf8', roughness: 0.3, metalness: 0.5 },
       { id: 'drain_grille', shape: 'box', offset: [0, -0.06, 0.32], size: [0.55, 0.05, 0.2], color: '#cbd5e1', roughness: 0.3, metalness: 0.9 }
     ]
+  },
+
+  // --------------------------------------------------------------------------
+  // 7. 1992-1995 HOTEL RENOVATED ELEVATOR CAB ASSETS (Stainless Steel & Laminate)
+  // --------------------------------------------------------------------------
+  {
+    subType: 'apt_elevator_cab_sliding_doors_90s',
+    name: '1990s Commercial Elevator Telescoping Sliding Doors',
+    category: 'door',
+    defaultDimensions: [2.2, 2.5, 0.12],
+    defaultColor: '#64748b',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    isSecretPassage: false,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_cab_sliding_doors',
+    animationSpec: '500ms smooth lateral pocket slide with motorized track hum',
+    soundPresetId: 'sfx_door_latch',
+    tags: ['elevator', 'cab', 'sliding_doors', 'door', 'stainless_steel', 'pocket_slide', 'hinged', 'interactive', '1990s', 'hotel-updated'],
+    description: '1990s commercial Dover-style brushed stainless steel elevator cab sliding doors with full-height infrared light curtain safety edge.',
+    compositeParts: [
+      { id: 'track_header', shape: 'box', offset: [0, 1.25, 0], size: [2.2, 0.12, 0.12], color: '#334155', roughness: 0.4, metalness: 0.8 },
+      { id: 'door_left', shape: 'box', offset: [-0.52, 0, 0.02], size: [1.08, 2.38, 0.04], color: '#64748b', roughness: 0.25, metalness: 0.9 },
+      { id: 'door_right', shape: 'box', offset: [0.52, 0, -0.02], size: [1.08, 2.38, 0.04], color: '#64748b', roughness: 0.25, metalness: 0.9 },
+      { id: 'safety_sensor', shape: 'box', offset: [0, 0, 0.03], size: [0.03, 2.38, 0.04], color: '#0f172a', roughness: 0.8, metalness: 0.2 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_cab_wall_solid_90s',
+    name: '1990s Elevator Cab Stainless & Laminate Wall (7m)',
+    category: 'wall',
+    defaultDimensions: [7.0, 2.8, 0.35],
+    defaultColor: '#475569',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_cab_wall_solid',
+    tags: ['elevator', 'cab', 'wall', 'box_wall', 'stainless', '1990s', 'hotel-updated'],
+    description: 'Renovated 7-meter commercial hotel elevator cab wall finished in brushed stainless steel panels, bleached oak accents, and tubular stainless handrail.',
+    compositeParts: [
+      { id: 'wall_slab', shape: 'box', offset: [0, 0, 0], size: [7.0, 2.8, 0.15], color: '#475569', roughness: 0.4, metalness: 0.6 },
+      { id: 'stainless_handrail', shape: 'cylinder', offset: [0, -0.4, 0.12], size: [0.04, 6.8, 0.04], rotation: [0, 0, Math.PI / 2], color: '#cbd5e1', roughness: 0.2, metalness: 0.95 },
+      { id: 'rail_bracket_l', shape: 'box', offset: [-2.4, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#94a3b8', roughness: 0.3, metalness: 0.9 },
+      { id: 'rail_bracket_c', shape: 'box', offset: [0, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#94a3b8', roughness: 0.3, metalness: 0.9 },
+      { id: 'rail_bracket_r', shape: 'box', offset: [2.4, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#94a3b8', roughness: 0.3, metalness: 0.9 },
+      { id: 'diamond_kickplate', shape: 'box', offset: [0, -1.25, 0.02], size: [7.0, 0.28, 0.04], color: '#64748b', roughness: 0.35, metalness: 0.85 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_cab_portal_wall_90s',
+    name: '1990s Elevator Cab Sliding Door Portal Wall (7m)',
+    category: 'wall',
+    defaultDimensions: [7.0, 2.8, 0.35],
+    defaultColor: '#475569',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_cab_portal_wall',
+    tags: ['elevator', 'cab', 'wall', 'portal_wall', 'door_frame', '1990s', 'hotel-updated'],
+    description: 'Renovated 7-meter front elevator cab wall with 2.2m central portal for sliding doors, stainless steel threshold sill, and digital 7-segment floor lantern.',
+    compositeParts: [
+      { id: 'jamb_left', shape: 'box', offset: [-2.35, 0, 0], size: [2.3, 2.8, 0.15], color: '#475569', roughness: 0.4, metalness: 0.6 },
+      { id: 'jamb_right', shape: 'box', offset: [2.35, 0, 0], size: [2.3, 2.8, 0.15], color: '#475569', roughness: 0.4, metalness: 0.6 },
+      { id: 'transom_header', shape: 'box', offset: [0, 1.25, 0], size: [7.0, 0.3, 0.18], color: '#334155', roughness: 0.35, metalness: 0.7 },
+      { id: 'threshold_sill', shape: 'box', offset: [0, -1.36, 0.05], size: [2.4, 0.06, 0.22], color: '#94a3b8', roughness: 0.25, metalness: 0.9 },
+      { id: 'digital_lantern', shape: 'box', offset: [0, 1.25, 0.1], size: [0.55, 0.18, 0.06], color: '#0f172a', roughness: 0.2, metalness: 0.4 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_ceiling_access_panel_90s',
+    name: '1990s Commercial Elevator Ceiling with Access Hatch (7x7)',
+    category: 'floor_tile',
+    defaultDimensions: [7.0, 0.25, 7.0],
+    defaultColor: '#334155',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_ceiling_access_panel',
+    tags: ['elevator', 'cab', 'ceiling', 'access_panel', 'emergency_hatch', '1990s', 'hotel-updated'],
+    description: '1990s modular commercial elevator ceiling featuring a flush 0.9m emergency escape hatch, halogen downlights, and commercial smoke sensor.',
+    compositeParts: [
+      { id: 'ceiling_grid', shape: 'box', offset: [0, 0, 0], size: [7.0, 0.12, 7.0], color: '#334155', roughness: 0.7, metalness: 0.3 },
+      { id: 'hatch_frame', shape: 'box', offset: [0, 0.01, 0], size: [1.15, 0.08, 1.15], color: '#64748b', roughness: 0.3, metalness: 0.8 },
+      { id: 'hatch_door', shape: 'box', offset: [0, 0.02, 0], size: [0.94, 0.06, 0.94], color: '#475569', roughness: 0.35, metalness: 0.75 },
+      { id: 'hatch_lock', shape: 'box', offset: [0, -0.03, 0.35], size: [0.12, 0.03, 0.08], color: '#94a3b8', roughness: 0.2, metalness: 0.9 },
+      { id: 'downlight_1', shape: 'cylinder', offset: [-2.0, -0.04, -2.0], size: [0.25, 0.02, 0.25], color: '#f1f5f9', roughness: 0.1, metalness: 0.5 },
+      { id: 'downlight_2', shape: 'cylinder', offset: [2.0, -0.04, -2.0], size: [0.25, 0.02, 0.25], color: '#f1f5f9', roughness: 0.1, metalness: 0.5 },
+      { id: 'downlight_3', shape: 'cylinder', offset: [-2.0, -0.04, 2.0], size: [0.25, 0.02, 0.25], color: '#f1f5f9', roughness: 0.1, metalness: 0.5 },
+      { id: 'downlight_4', shape: 'cylinder', offset: [2.0, -0.04, 2.0], size: [0.25, 0.02, 0.25], color: '#f1f5f9', roughness: 0.1, metalness: 0.5 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_emergency_phone_90s',
+    name: '1990s ADA Hands-Free Elevator Emergency Phone',
+    category: 'appliance',
+    defaultDimensions: [0.45, 0.65, 0.12],
+    defaultColor: '#64748b',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_emergency_phone',
+    soundPresetId: 'sfx_telephone_ring',
+    tags: ['elevator', 'emergency_phone', 'ada', 'handsfree', '1990s', 'hotel-updated'],
+    description: 'ADA-compliant 1990s flush-mount brushed stainless steel emergency elevator phone with push-to-call button, speaker grille, and braille signage.',
+    compositeParts: [
+      { id: 'faceplate', shape: 'box', offset: [0, 0, 0], size: [0.45, 0.65, 0.04], color: '#64748b', roughness: 0.25, metalness: 0.9 },
+      { id: 'push_call_btn', shape: 'cylinder', offset: [0, -0.12, 0.025], size: [0.05, 0.02, 0.05], color: '#991b1b', roughness: 0.3, metalness: 0.6 },
+      { id: 'speaker_grille', shape: 'box', offset: [0, 0.14, 0.022], size: [0.28, 0.18, 0.01], color: '#1e293b', roughness: 0.8, metalness: 0.3 },
+      { id: 'call_indicator_led', shape: 'cylinder', offset: [0, -0.02, 0.025], size: [0.015, 0.01, 0.015], color: '#10b981', roughness: 0.2, metalness: 0.5 },
+      { id: 'braille_plate', shape: 'box', offset: [0, -0.22, 0.022], size: [0.32, 0.08, 0.008], color: '#334155', roughness: 0.4, metalness: 0.7 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_button_panel_cop_90s',
+    name: '1990s Dover/Schindler Elevator Car Operating Panel (COP)',
+    category: 'appliance',
+    defaultDimensions: [0.42, 1.6, 0.12],
+    defaultColor: '#64748b',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_button_panel_cop',
+    soundPresetId: 'sfx_bell_ring',
+    tags: ['elevator', 'button_panel', 'cop', 'controls', 'interactive', '1990s', 'hotel-updated'],
+    description: '1990s commercial brushed stainless steel Car Operating Panel (COP) with green LED halo floor buttons, digital 7-segment floor display, and emergency door controls.',
+    compositeParts: [
+      { id: 'stainless_plate', shape: 'box', offset: [0, 0, 0], size: [0.42, 1.6, 0.04], color: '#64748b', roughness: 0.25, metalness: 0.9 },
+      { id: 'digital_display', shape: 'box', offset: [0, 0.62, 0.025], size: [0.32, 0.18, 0.02], color: '#0f172a', roughness: 0.2, metalness: 0.4 },
+      { id: 'buttons_left_col', shape: 'cylinder', offset: [-0.08, 0.12, 0.025], size: [0.03, 0.015, 0.03], color: '#94a3b8', roughness: 0.2, metalness: 0.8 },
+      { id: 'buttons_right_col', shape: 'cylinder', offset: [0.08, 0.12, 0.025], size: [0.03, 0.015, 0.03], color: '#94a3b8', roughness: 0.2, metalness: 0.8 },
+      { id: 'door_open_btn', shape: 'cylinder', offset: [-0.08, -0.32, 0.025], size: [0.03, 0.015, 0.03], color: '#10b981', roughness: 0.2, metalness: 0.8 },
+      { id: 'door_close_btn', shape: 'cylinder', offset: [0.08, -0.32, 0.025], size: [0.03, 0.015, 0.03], color: '#f59e0b', roughness: 0.2, metalness: 0.8 },
+      { id: 'alarm_btn', shape: 'cylinder', offset: [0, -0.44, 0.025], size: [0.035, 0.015, 0.035], color: '#991b1b', roughness: 0.3, metalness: 0.5 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_floor_tile_7x7_90s',
+    name: '1990s Commercial Hotel Elevator Carpet (7x7)',
+    category: 'floor_tile',
+    defaultDimensions: [7.0, 0.15, 7.0],
+    defaultColor: '#143d2b',
+    defaultTexture: 'velvet_crimson',
+    collidable: true,
+    era: '1990s',
+    canUpdateInHotel: true,
+    predecessor1978Id: 'apt_elevator_floor_tile_7x7',
+    tags: ['elevator', 'cab', 'floor', 'carpet', '1990s', 'hotel-updated'],
+    description: '7x7 tile wide commercial hotel elevator cab floor covered in heavy-traffic hunter-green low-pile carpet with stainless steel nosing.',
+    compositeParts: [
+      { id: 'subfloor', shape: 'box', offset: [0, 0, 0], size: [7.0, 0.12, 7.0], color: '#334155', roughness: 0.8, metalness: 0.2 },
+      { id: 'carpet_finish', shape: 'box', offset: [0, 0.065, 0], size: [6.9, 0.03, 6.9], color: '#143d2b', roughness: 0.9, metalness: 0.05 },
+      { id: 'stainless_nosing', shape: 'box', offset: [0, 0.07, 3.48], size: [7.0, 0.04, 0.06], color: '#94a3b8', roughness: 0.2, metalness: 0.9 }
+    ]
   }
 ];
 
@@ -774,6 +945,128 @@ export const APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS: ApartmentAssetBlueprint[]
  * ============================================================================
  */
 export const APARTMENT_UPDATED_HOTEL_ASSET_SETS: AssetSet[] = [
+  {
+    id: 'set_apt_updated_elevator_cab_90s',
+    name: '1990s Commercial Hotel Elevator Cab Set (7x7)',
+    description: 'Modernized 1990s Dover-style 7x7 tile hotel elevator cab with brushed stainless steel walls, ADA hands-free emergency speakerphone, digital COP button panel, and telescoping sliding doors.',
+    createdAt: '2026-11-01T14:15:00.000Z',
+    tags: ['apartment', '1990s', 'hotel-updated', '1992-1995', 'elevator', 'cab', '7x7', 'sliding_doors', 'emergency_phone', 'button_panel', 'access_panel', 'set'],
+    boundingSize: [7.0, 7.0],
+    items: [
+      {
+        name: '1990s Commercial Hotel Elevator Carpet (7x7)',
+        category: 'floor_tile',
+        subType: 'apt_elevator_floor_tile_7x7_90s',
+        relPosition: [0, 0.075, 0],
+        dimensions: [7.0, 0.15, 7.0],
+        rotationY: 0,
+        color: '#143d2b',
+        textureId: 'velvet_crimson',
+        collidable: true,
+        tags: ['elevator', 'floor', '7x7', '1990s']
+      },
+      {
+        name: '1990s Elevator Cab Stainless & Laminate Wall (Back)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid_90s',
+        relPosition: [0, 1.4, -3.35],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: 0,
+        color: '#475569',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall', '1990s']
+      },
+      {
+        name: '1990s Elevator Cab Stainless & Laminate Wall (Left)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid_90s',
+        relPosition: [-3.35, 1.4, 0],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: Math.PI / 2,
+        color: '#475569',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall', '1990s']
+      },
+      {
+        name: '1990s Elevator Cab Stainless & Laminate Wall (Right)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid_90s',
+        relPosition: [3.35, 1.4, 0],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: -Math.PI / 2,
+        color: '#475569',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall', '1990s']
+      },
+      {
+        name: '1990s Elevator Cab Sliding Door Portal Wall (Front)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_portal_wall_90s',
+        relPosition: [0, 1.4, 3.35],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: 0,
+        color: '#475569',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'wall', 'portal_wall', '1990s']
+      },
+      {
+        name: '1990s Commercial Elevator Telescoping Sliding Doors',
+        category: 'door',
+        subType: 'apt_elevator_cab_sliding_doors_90s',
+        relPosition: [0, 1.25, 3.35],
+        dimensions: [2.2, 2.5, 0.12],
+        rotationY: 0,
+        color: '#64748b',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        isSecretPassage: false,
+        soundPresetId: 'sfx_door_latch',
+        tags: ['elevator', 'sliding_doors', 'door', 'pocket_slide', '1990s']
+      },
+      {
+        name: '1990s Commercial Elevator Ceiling with Access Hatch (7x7)',
+        category: 'floor_tile',
+        subType: 'apt_elevator_ceiling_access_panel_90s',
+        relPosition: [0, 2.7, 0],
+        dimensions: [7.0, 0.25, 7.0],
+        rotationY: 0,
+        color: '#334155',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'ceiling', 'access_panel', 'emergency_hatch', '1990s']
+      },
+      {
+        name: '1990s Dover/Schindler Elevator Car Operating Panel (COP)',
+        category: 'appliance',
+        subType: 'apt_elevator_button_panel_cop_90s',
+        relPosition: [1.6, 1.35, 3.15],
+        dimensions: [0.42, 1.6, 0.12],
+        rotationY: Math.PI,
+        color: '#64748b',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        soundPresetId: 'sfx_bell_ring',
+        tags: ['elevator', 'button_panel', 'cop', 'controls', '1990s']
+      },
+      {
+        name: '1990s ADA Hands-Free Elevator Emergency Phone',
+        category: 'appliance',
+        subType: 'apt_elevator_emergency_phone_90s',
+        relPosition: [3.15, 1.35, 0],
+        dimensions: [0.45, 0.65, 0.12],
+        rotationY: -Math.PI / 2,
+        color: '#64748b',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        soundPresetId: 'sfx_telephone_ring',
+        tags: ['elevator', 'emergency_phone', 'ada', 'handsfree', '1990s']
+      }
+    ]
+  },
   {
     id: 'set_apt_updated_guest_room_90s',
     name: '1990s Renovated Hotel Guest Room Suite',
@@ -1251,7 +1544,16 @@ export const HOTEL_1978_TO_1990S_UPDATE_MAP: Record<string, string> = {
 
   // Flooring
   apt_lr_area_rug_pristine: 'apt_flooring_hotel_teal_carpet_90s',
-  apt_lr_area_rug_unkempt: 'apt_flooring_hotel_teal_carpet_90s'
+  apt_lr_area_rug_unkempt: 'apt_flooring_hotel_teal_carpet_90s',
+
+  // Elevator Cab Components (7x7 Hoistway)
+  apt_elevator_cab_sliding_doors: 'apt_elevator_cab_sliding_doors_90s',
+  apt_elevator_cab_wall_solid: 'apt_elevator_cab_wall_solid_90s',
+  apt_elevator_cab_portal_wall: 'apt_elevator_cab_portal_wall_90s',
+  apt_elevator_ceiling_access_panel: 'apt_elevator_ceiling_access_panel_90s',
+  apt_elevator_emergency_phone: 'apt_elevator_emergency_phone_90s',
+  apt_elevator_button_panel_cop: 'apt_elevator_button_panel_cop_90s',
+  apt_elevator_floor_tile_7x7: 'apt_elevator_floor_tile_7x7_90s'
 };
 
 /**
@@ -1290,7 +1592,16 @@ export const HOTEL_1990S_TO_1978_PREDECESSOR_MAP: Record<string, string> = {
   apt_hotel_towel_rack_chrome_90s: 'brass_towel_rack',
   apt_flooring_hotel_teal_carpet_90s: 'apt_lr_area_rug_pristine',
   apt_flooring_white_tile_90s: 'apt_popcorn_ceiling_tile',
-  apt_hotel_ice_machine_90s: 'apt_coin_op_washer_dryer'
+  apt_hotel_ice_machine_90s: 'apt_coin_op_washer_dryer',
+
+  // Elevator Cab Components (7x7 Hoistway)
+  apt_elevator_cab_sliding_doors_90s: 'apt_elevator_cab_sliding_doors',
+  apt_elevator_cab_wall_solid_90s: 'apt_elevator_cab_wall_solid',
+  apt_elevator_cab_portal_wall_90s: 'apt_elevator_cab_portal_wall',
+  apt_elevator_ceiling_access_panel_90s: 'apt_elevator_ceiling_access_panel',
+  apt_elevator_emergency_phone_90s: 'apt_elevator_emergency_phone',
+  apt_elevator_button_panel_cop_90s: 'apt_elevator_button_panel_cop',
+  apt_elevator_floor_tile_7x7_90s: 'apt_elevator_floor_tile_7x7'
 };
 
 /**

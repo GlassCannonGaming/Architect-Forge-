@@ -2000,6 +2000,165 @@ export const APARTMENT_1978_ORIGINAL_CATALOG_BLUEPRINTS: ApartmentAssetBlueprint
     conditionVariant: 'unkempt',
     tags: ['apartment', '1970s', 'coat_rack', 'entryway', 'furniture', 'unkempt', 'weathered'],
     description: 'Wobbly loose coat hooks holding a heavy, damp-smelling rain-soaked trench coat that drags on the floor.'
+  },
+
+  // --------------------------------------------------------------------------
+  // ELEVATOR CAB & 7X7 HOISTWAY ASSETS (1978 Vintage Brass & Walnut)
+  // --------------------------------------------------------------------------
+  {
+    subType: 'apt_elevator_cab_sliding_doors',
+    name: '1978 Elevator Cab Telescoping Sliding Doors',
+    category: 'door',
+    defaultDimensions: [2.2, 2.5, 0.12],
+    defaultColor: '#5c4826',
+    defaultTexture: 'aged_brass',
+    collidable: true,
+    isSecretPassage: false,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_cab_sliding_doors_90s',
+    animationSpec: '500ms smooth lateral pocket slide with motorized track hum',
+    soundPresetId: 'sfx_door_latch',
+    tags: ['elevator', 'cab', 'sliding_doors', 'door', 'brass', 'pocket_slide', 'hinged', 'interactive', '1970s'],
+    description: 'Heavy telescoping dual-leaf aged brass elevator cab doors with safety rubber bumper edge and overhead guide track rollers.',
+    compositeParts: [
+      { id: 'track', shape: 'box', offset: [0, 1.25, 0], size: [2.2, 0.12, 0.12], color: '#4a3818', roughness: 0.5, metalness: 0.7 },
+      { id: 'door_left', shape: 'box', offset: [-0.52, 0, 0.02], size: [1.08, 2.38, 0.04], color: '#5c4826', roughness: 0.45, metalness: 0.8 },
+      { id: 'door_right', shape: 'box', offset: [0.52, 0, -0.02], size: [1.08, 2.38, 0.04], color: '#5c4826', roughness: 0.45, metalness: 0.8 },
+      { id: 'bumper', shape: 'box', offset: [0, 0, 0.03], size: [0.04, 2.38, 0.05], color: '#18181b', roughness: 0.9, metalness: 0.1 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_cab_wall_solid',
+    name: '1978 Elevator Cab Solid Wall & Handrail (7m)',
+    category: 'wall',
+    defaultDimensions: [7.0, 2.8, 0.35],
+    defaultColor: '#3a2818',
+    defaultTexture: 'oak_parquet',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_cab_wall_solid_90s',
+    tags: ['elevator', 'cab', 'wall', 'box_wall', 'handrail', '1970s', 'architecture'],
+    description: 'Enclosed 7-meter elevator cab wall panel featuring dark walnut veneer wainscoting, solid brass protective handrail, and ribbed kickplate.',
+    compositeParts: [
+      { id: 'wall_slab', shape: 'box', offset: [0, 0, 0], size: [7.0, 2.8, 0.15], color: '#3a2818', roughness: 0.75, metalness: 0.1 },
+      { id: 'handrail', shape: 'cylinder', offset: [0, -0.4, 0.12], size: [0.04, 6.8, 0.04], rotation: [0, 0, Math.PI / 2], color: '#6b542c', roughness: 0.35, metalness: 0.85 },
+      { id: 'bracket_left', shape: 'box', offset: [-2.4, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#4a3818', roughness: 0.4, metalness: 0.8 },
+      { id: 'bracket_center', shape: 'box', offset: [0, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#4a3818', roughness: 0.4, metalness: 0.8 },
+      { id: 'bracket_right', shape: 'box', offset: [2.4, -0.4, 0.06], size: [0.06, 0.06, 0.12], color: '#4a3818', roughness: 0.4, metalness: 0.8 },
+      { id: 'kickplate', shape: 'box', offset: [0, -1.25, 0.02], size: [7.0, 0.28, 0.04], color: '#524320', roughness: 0.5, metalness: 0.7 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_cab_portal_wall',
+    name: '1978 Elevator Cab Sliding Door Portal Wall (7m)',
+    category: 'wall',
+    defaultDimensions: [7.0, 2.8, 0.35],
+    defaultColor: '#3a2818',
+    defaultTexture: 'oak_parquet',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_cab_portal_wall_90s',
+    tags: ['elevator', 'cab', 'wall', 'portal_wall', 'door_frame', '1970s', 'architecture'],
+    description: 'Front 7-meter elevator cab wall featuring a 2.2m central portal opening for sliding doors, brass threshold sill, and overhead indicator transom.',
+    compositeParts: [
+      { id: 'jamb_left', shape: 'box', offset: [-2.35, 0, 0], size: [2.3, 2.8, 0.15], color: '#3a2818', roughness: 0.75, metalness: 0.1 },
+      { id: 'jamb_right', shape: 'box', offset: [2.35, 0, 0], size: [2.3, 2.8, 0.15], color: '#3a2818', roughness: 0.75, metalness: 0.1 },
+      { id: 'transom_header', shape: 'box', offset: [0, 1.25, 0], size: [7.0, 0.3, 0.18], color: '#3a2818', roughness: 0.7, metalness: 0.1 },
+      { id: 'threshold_sill', shape: 'box', offset: [0, -1.36, 0.05], size: [2.4, 0.06, 0.22], color: '#6b542c', roughness: 0.4, metalness: 0.85 },
+      { id: 'lantern_indicator', shape: 'box', offset: [0, 1.25, 0.1], size: [0.55, 0.18, 0.06], color: '#786438', roughness: 0.3, metalness: 0.7, emissive: '#855826' }
+    ]
+  },
+  {
+    subType: 'apt_elevator_ceiling_access_panel',
+    name: '1978 Elevator Ceiling with Emergency Access Hatch (7x7)',
+    category: 'floor_tile',
+    defaultDimensions: [7.0, 0.25, 7.0],
+    defaultColor: '#2c2824',
+    defaultTexture: 'industrial_concrete',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_ceiling_access_panel_90s',
+    tags: ['elevator', 'cab', 'ceiling', 'access_panel', 'emergency_hatch', '1970s', 'ceiling'],
+    description: 'Heavy steel 7x7 tile elevator cab ceiling featuring a recessed 0.9m emergency escape hatch with padlock hasps, dual release handles, and recessed lighting fixtures.',
+    compositeParts: [
+      { id: 'ceiling_slab', shape: 'box', offset: [0, 0, 0], size: [7.0, 0.12, 7.0], color: '#2c2824', roughness: 0.85, metalness: 0.2 },
+      { id: 'hatch_frame', shape: 'box', offset: [0, 0.01, 0], size: [1.15, 0.08, 1.15], color: '#475569', roughness: 0.5, metalness: 0.7 },
+      { id: 'hatch_door', shape: 'box', offset: [0, 0.02, 0], size: [0.94, 0.06, 0.94], color: '#3a342c', roughness: 0.6, metalness: 0.6 },
+      { id: 'hatch_handle_1', shape: 'cylinder', offset: [-0.25, -0.04, 0], size: [0.02, 0.18, 0.02], rotation: [0, 0, Math.PI / 2], color: '#6b542c', roughness: 0.35, metalness: 0.85 },
+      { id: 'hatch_handle_2', shape: 'cylinder', offset: [0.25, -0.04, 0], size: [0.02, 0.18, 0.02], rotation: [0, 0, Math.PI / 2], color: '#6b542c', roughness: 0.35, metalness: 0.85 },
+      { id: 'light_troffer_nw', shape: 'box', offset: [-2.2, -0.03, -2.2], size: [0.85, 0.04, 0.85], color: '#d8cbb5', roughness: 0.2, metalness: 0.2, emissive: '#786438' },
+      { id: 'light_troffer_ne', shape: 'box', offset: [2.2, -0.03, -2.2], size: [0.85, 0.04, 0.85], color: '#d8cbb5', roughness: 0.2, metalness: 0.2, emissive: '#786438' },
+      { id: 'light_troffer_sw', shape: 'box', offset: [-2.2, -0.03, 2.2], size: [0.85, 0.04, 0.85], color: '#d8cbb5', roughness: 0.2, metalness: 0.2, emissive: '#786438' },
+      { id: 'light_troffer_se', shape: 'box', offset: [2.2, -0.03, 2.2], size: [0.85, 0.04, 0.85], color: '#d8cbb5', roughness: 0.2, metalness: 0.2, emissive: '#786438' }
+    ]
+  },
+  {
+    subType: 'apt_elevator_emergency_phone',
+    name: '1978 Elevator In-Cab Emergency Call Phone',
+    category: 'appliance',
+    defaultDimensions: [0.45, 0.65, 0.22],
+    defaultColor: '#7a1a1f',
+    defaultTexture: 'aged_brass',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_emergency_phone_90s',
+    soundPresetId: 'sfx_telephone_ring',
+    tags: ['elevator', 'emergency_phone', 'phone', 'safety', 'audio-linked', '1970s'],
+    description: "Flush-mounted steel elevator emergency phone cabinet with hinged lockable door, 'EMERGENCY TELEPHONE - LIFT HANDSET' stencil, and armored cord handset.",
+    compositeParts: [
+      { id: 'cabinet_box', shape: 'box', offset: [0, 0, 0], size: [0.45, 0.65, 0.18], color: '#7a1a1f', roughness: 0.55, metalness: 0.4 },
+      { id: 'door_faceplate', shape: 'box', offset: [0, 0, 0.09], size: [0.42, 0.62, 0.03], color: '#8b262a', roughness: 0.45, metalness: 0.5 },
+      { id: 'latch_handle', shape: 'cylinder', offset: [0.16, 0, 0.11], size: [0.02, 0.08, 0.02], color: '#6b542c', roughness: 0.35, metalness: 0.85 },
+      { id: 'handset_body', shape: 'box', offset: [-0.05, 0, 0.03], size: [0.12, 0.32, 0.08], color: '#1c1917', roughness: 0.7, metalness: 0.2 },
+      { id: 'placard_plate', shape: 'box', offset: [0, 0.22, 0.105], size: [0.32, 0.09, 0.01], color: '#e2e8f0', roughness: 0.3, metalness: 0.1 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_button_panel_cop',
+    name: '1978 Elevator Car Operating Button Panel (COP)',
+    category: 'appliance',
+    defaultDimensions: [0.42, 1.6, 0.12],
+    defaultColor: '#5c4826',
+    defaultTexture: 'aged_brass',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_button_panel_cop_90s',
+    soundPresetId: 'sfx_bell_ring',
+    tags: ['elevator', 'button_panel', 'cop', 'controls', 'interactive', 'audio-linked', '1970s'],
+    description: 'Vertical brushed architectural bronze Car Operating Panel (COP) with jeweled floor push buttons (B, L, 1, 2, 3, 4, 5, Door Open, Door Close), emergency alarm bell, and top floor indicator dial.',
+    compositeParts: [
+      { id: 'bronze_plate', shape: 'box', offset: [0, 0, 0], size: [0.42, 1.6, 0.05], color: '#5c4826', roughness: 0.4, metalness: 0.85 },
+      { id: 'floor_dial', shape: 'box', offset: [0, 0.62, 0.03], size: [0.32, 0.22, 0.04], color: '#292524', roughness: 0.3, metalness: 0.4 },
+      { id: 'button_col_left', shape: 'cylinder', offset: [-0.08, 0.12, 0.035], size: [0.03, 0.02, 0.03], color: '#d97706', roughness: 0.2, metalness: 0.6 },
+      { id: 'button_col_right', shape: 'cylinder', offset: [0.08, 0.12, 0.035], size: [0.03, 0.02, 0.03], color: '#d97706', roughness: 0.2, metalness: 0.6 },
+      { id: 'alarm_bell_btn', shape: 'cylinder', offset: [0, -0.42, 0.04], size: [0.04, 0.03, 0.04], color: '#dc2626', roughness: 0.3, metalness: 0.5 },
+      { id: 'keyed_switch', shape: 'cylinder', offset: [0, -0.58, 0.035], size: [0.02, 0.02, 0.02], color: '#6b542c', roughness: 0.3, metalness: 0.85 }
+    ]
+  },
+  {
+    subType: 'apt_elevator_floor_tile_7x7',
+    name: '1978 Elevator Cab Checker Marble Floor Tile (7x7)',
+    category: 'floor_tile',
+    defaultDimensions: [7.0, 0.15, 7.0],
+    defaultColor: '#695e4d',
+    defaultTexture: 'checker_marble',
+    collidable: true,
+    era: '1970s',
+    canUpdateInHotel: true,
+    paired1990sId: 'apt_elevator_floor_tile_7x7_90s',
+    tags: ['elevator', 'cab', 'floor', 'checker_marble', '1970s', 'architecture'],
+    description: '7x7 tile wide elevator cab floor slab laid in vintage checkerboard marble with heavy brass threshold perimeter binding.',
+    compositeParts: [
+      { id: 'base_slab', shape: 'box', offset: [0, 0, 0], size: [7.0, 0.12, 7.0], color: '#334155', roughness: 0.9, metalness: 0.1 },
+      { id: 'marble_surface', shape: 'box', offset: [0, 0.065, 0], size: [6.9, 0.03, 6.9], color: '#695e4d', roughness: 0.3, metalness: 0.2 },
+      { id: 'brass_edging', shape: 'box', offset: [0, 0.07, 3.48], size: [7.0, 0.04, 0.06], color: '#6b542c', roughness: 0.35, metalness: 0.85 }
+    ]
   }
 ];
 
@@ -2015,6 +2174,128 @@ export const APARTMENT_BUILDING_CATALOG_BLUEPRINTS: ApartmentAssetBlueprint[] = 
  * ============================================================================
  */
 export const APARTMENT_1978_ROOM_ASSET_SETS: AssetSet[] = [
+  {
+    id: 'set_elevator_cab_7x7',
+    name: '7x7 Tile Elevator Cab & Hoistway Set',
+    description: 'Complete 7x7 tile enclosed elevator cab with solid walls, sliding door portal wall, telescoping sliding doors, ceiling with emergency access hatch, emergency call phone, and Car Operating Panel.',
+    createdAt: '2026-11-01T14:00:00.000Z',
+    tags: ['elevator', 'cab', '7x7', 'sliding_doors', 'emergency_phone', 'button_panel', 'access_panel', '1970s', 'set'],
+    boundingSize: [7.0, 7.0],
+    items: [
+      {
+        name: '1978 Elevator Cab Checker Marble Floor Tile (7x7)',
+        category: 'floor_tile',
+        subType: 'apt_elevator_floor_tile_7x7',
+        relPosition: [0, 0.075, 0],
+        dimensions: [7.0, 0.15, 7.0],
+        rotationY: 0,
+        color: '#695e4d',
+        textureId: 'checker_marble',
+        collidable: true,
+        tags: ['elevator', 'floor', '7x7']
+      },
+      {
+        name: '1978 Elevator Cab Solid Wall & Handrail (Back)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid',
+        relPosition: [0, 1.4, -3.35],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: 0,
+        color: '#3a2818',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall']
+      },
+      {
+        name: '1978 Elevator Cab Solid Wall & Handrail (Left)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid',
+        relPosition: [-3.35, 1.4, 0],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: Math.PI / 2,
+        color: '#3a2818',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall']
+      },
+      {
+        name: '1978 Elevator Cab Solid Wall & Handrail (Right)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_wall_solid',
+        relPosition: [3.35, 1.4, 0],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: -Math.PI / 2,
+        color: '#3a2818',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['elevator', 'wall', 'box_wall']
+      },
+      {
+        name: '1978 Elevator Cab Sliding Door Portal Wall (Front)',
+        category: 'wall',
+        subType: 'apt_elevator_cab_portal_wall',
+        relPosition: [0, 1.4, 3.35],
+        dimensions: [7.0, 2.8, 0.35],
+        rotationY: 0,
+        color: '#3a2818',
+        textureId: 'oak_parquet',
+        collidable: true,
+        tags: ['elevator', 'wall', 'portal_wall']
+      },
+      {
+        name: '1978 Elevator Cab Telescoping Sliding Doors',
+        category: 'door',
+        subType: 'apt_elevator_cab_sliding_doors',
+        relPosition: [0, 1.25, 3.35],
+        dimensions: [2.2, 2.5, 0.12],
+        rotationY: 0,
+        color: '#5c4826',
+        textureId: 'aged_brass',
+        collidable: true,
+        isSecretPassage: false,
+        soundPresetId: 'sfx_door_latch',
+        tags: ['elevator', 'sliding_doors', 'door', 'pocket_slide']
+      },
+      {
+        name: '1978 Elevator Ceiling with Emergency Access Hatch (7x7)',
+        category: 'floor_tile',
+        subType: 'apt_elevator_ceiling_access_panel',
+        relPosition: [0, 2.7, 0],
+        dimensions: [7.0, 0.25, 7.0],
+        rotationY: 0,
+        color: '#2c2824',
+        textureId: 'industrial_concrete',
+        collidable: true,
+        tags: ['elevator', 'ceiling', 'access_panel', 'emergency_hatch']
+      },
+      {
+        name: '1978 Elevator Car Operating Button Panel (COP)',
+        category: 'appliance',
+        subType: 'apt_elevator_button_panel_cop',
+        relPosition: [1.6, 1.35, 3.15],
+        dimensions: [0.42, 1.6, 0.12],
+        rotationY: Math.PI,
+        color: '#5c4826',
+        textureId: 'aged_brass',
+        collidable: true,
+        soundPresetId: 'sfx_bell_ring',
+        tags: ['elevator', 'button_panel', 'cop', 'controls']
+      },
+      {
+        name: '1978 Elevator In-Cab Emergency Call Phone',
+        category: 'appliance',
+        subType: 'apt_elevator_emergency_phone',
+        relPosition: [3.15, 1.35, 0],
+        dimensions: [0.45, 0.65, 0.22],
+        rotationY: -Math.PI / 2,
+        color: '#7a1a1f',
+        textureId: 'aged_brass',
+        collidable: true,
+        soundPresetId: 'sfx_telephone_ring',
+        tags: ['elevator', 'emergency_phone', 'phone', 'safety']
+      }
+    ]
+  },
   {
     id: 'set_apt_hallway_utility_1978',
     name: '1978 Apartment Hallway & Utility Cluster',
