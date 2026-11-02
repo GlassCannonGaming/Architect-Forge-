@@ -162,3 +162,49 @@
   background-color: #0f172a;
   color: #f8fafc;
 }
+
+/* Subtle Horror / Thriller Flicker Effect for Unkempt & Aged Assets Keyed to Global Animation FPS */
+@keyframes unkempt-horror-flicker {
+  0%, 100% {
+    opacity: 1;
+    filter: brightness(1) contrast(1);
+  }
+  18% {
+    opacity: 0.94;
+    filter: brightness(0.95) contrast(1.03) sepia(0.06);
+  }
+  22% {
+    opacity: 0.84;
+    filter: brightness(0.86) contrast(1.08) sepia(0.14);
+  }
+  26% {
+    opacity: 0.98;
+    filter: brightness(1.02) contrast(1.01);
+  }
+  54% {
+    opacity: 0.95;
+    filter: brightness(0.96) contrast(1.02);
+  }
+  58% {
+    opacity: 0.81;
+    filter: brightness(0.83) contrast(1.1) sepia(0.18);
+  }
+  63% {
+    opacity: 0.97;
+    filter: brightness(0.99) contrast(1.01);
+  }
+  84% {
+    opacity: 0.89;
+    filter: brightness(0.91) contrast(1.05) sepia(0.1);
+  }
+}
+
+.unkempt-aged-flicker {
+  animation-name: unkempt-horror-flicker;
+  animation-duration: var(--flicker-duration, 2s);
+  animation-timing-function: steps(var(--flicker-steps, 16), end);
+  animation-iteration-count: infinite;
+  animation-delay: var(--flicker-delay, 0s);
+  will-change: opacity, filter;
+}
+

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-02T16:09:40.752Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Weathered Dark Oak Wardrobe [Updated Late-70s] [Pristine]",
+  "data": {
+    "id": "bp_inst_1793635768625_2",
+    "name": "Weathered Dark Oak Wardrobe [Updated Late-70s] [Pristine]",
+    "category": "furniture",
+    "subType": "oak_wardrobe",
+    "floor": "floor2",
+    "roomNumber": "Suite 202 Secret Partition Study",
+    "position": [
+      -2,
+      1.1,
+      0.5
+    ],
+    "dimensions": [
+      1.3,
+      2.2,
+      0.7
+    ],
+    "rotationY": 1.5707963267948966,
+    "color": "#20110a",
+    "textureId": "oak_parquet",
+    "isOpen": false,
+    "collidable": true,
+    "tags": [
+      "pristine"
+    ],
+    "conditionVariant": "pristine",
+    "era": "1970s",
+    "predecessor1978Id": "oak_wardrobe"
+  }
+}

@@ -7,7 +7,20 @@ interface AssetThumbnailSvgProps {
 }
 
 export const AssetThumbnailSvg: React.FC<AssetThumbnailSvgProps> = ({ blueprint, active }) => {
-  const { subType, category, defaultColor } = blueprint;
+  if (!blueprint) {
+    return <div className="relative w-full h-16 rounded-xl bg-stone-900/60" />;
+  }
+  const subType = blueprint.subType || '';
+  const category = blueprint.category || 'furniture';
+  const defaultColor = blueprint.defaultColor || '#592820';
+  const safeDims: [number, number, number] =
+    Array.isArray(blueprint.defaultDimensions) && blueprint.defaultDimensions.length >= 2
+      ? [
+          Number(blueprint.defaultDimensions[0]) || 1,
+          Number(blueprint.defaultDimensions[1]) || 1,
+          Number(blueprint.defaultDimensions[2]) || 1
+        ]
+      : [1, 1, 1];
 
   return (
     <div
@@ -287,7 +300,7 @@ export const AssetThumbnailSvg: React.FC<AssetThumbnailSvgProps> = ({ blueprint,
 
       {/* Dimensions Pill in Bottom-Right Corner */}
       <span className="absolute bottom-1 right-1.5 px-1.5 py-0.2 bg-stone-950/85 text-amber-200/90 text-[9px] font-mono rounded-full border border-stone-700/80">
-        {blueprint.defaultDimensions[0]}×{blueprint.defaultDimensions[1]}m
+        {safeDims[0]}×{safeDims[1]}m
       </span>
     </div>
   );

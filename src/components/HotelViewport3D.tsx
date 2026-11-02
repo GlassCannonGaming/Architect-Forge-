@@ -14,6 +14,8 @@ import {
   computeWallRowPlacements,
   WallRowPlacement,
   computeFirstPersonCameraDisplacement,
+  computeBuildCameraMovementStep,
+  computeFirstPersonCharacterMovementStep,
   computeCameraPanDelta,
   extractMoodLightEmittersFromAssets,
   computePerRoomMoodLightState,
@@ -35,7 +37,10 @@ import {
   DEFAULT_GLOBAL_ANIMATION_FPS,
   computeCharacterAnimationLodState,
   evaluateHybridLowFrameRigState,
-  STUDIO_DARK_UI_WHITE_CANVAS_SPEC
+  sampleUnkemptFlickerIntensity,
+  STUDIO_DARK_UI_WHITE_CANVAS_SPEC,
+  computeBuildPlacementPosition,
+  DEFAULT_SNAP_GRID_SIZE
 } from '../game/rules';
 import {
   buildAssetMeshGroup,
@@ -69,7 +74,7 @@ interface HotelViewport3DProps {
   onFlashlightRevealChange?: (revealText: string | null, revealedCount: number) => void;
   onSelectAsset: (assetId: string | null, shiftKey?: boolean) => void;
   onMarqueeSelectAssets: (assetIds: string[], additiveShift?: boolean) => void;
-  onPlaceBlueprintAt: (x: number, z: number) => void;
+  onPlaceBlueprintAt: (x: number, z: number, rotationY?: number) => void;
   onPlaceBlueprintRow?: (
     segments: WallRowPlacement[],
     blueprintOverride?: AssetBlueprint
@@ -86,6 +91,8 @@ interface HotelViewport3DProps {
   footstepsEnabled?: boolean;
   keybindings?: KeybindingsMap;
   globalAnimationFps?: GlobalAnimationFps;
+  snapGridSize?: number;
+  snapToAssetPlacement?: boolean;
 }
 
 // Pre-allocated scratch math helpers outside the animation loop (Zero GC)
@@ -130,7 +137,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
   gameTimeMinutes = 19 * 60 + 30,
   footstepsEnabled = true,
   keybindings = DEFAULT_KEYBINDINGS,
-  globalAnimationFps = DEFAULT_GLOBAL_ANIMATION_FPS
+  globalAnimationFps = DEFAULT_GLOBAL_ANIMATION_FPS,
+  snapGridSize = DEFAULT_SNAP_GRID_SIZE,
+  snapToAssetPlacement = true
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [marqueeBox, setMarqueeBox] = useState<{
@@ -187,7 +196,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
     gameTimeMinutes,
     footstepsEnabled,
     keybindings,
-    globalAnimationFps
+    globalAnimationFps,
+    snapGridSize,
+    snapToAssetPlacement
   });
 
   useEffect(() => {
@@ -223,7 +234,9 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       gameTimeMinutes,
       footstepsEnabled,
       keybindings,
-      globalAnimationFps
+      globalAnimationFps,
+      snapGridSize,
+      snapToAssetPlacement
     };
   });
 
@@ -242,6 +255,7 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
   const playerPoseRef = useRef({
     x: 0,
     y: 0,
+    vy: 0,
     z: 4.0,
     yaw: 0,
     pitch: -0.04,
@@ -1011,9 +1025,10 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         if (st.activeBlueprint) {
           const hitPoint = new THREE.Vector3();
           if (_raycaster.ray.intersectPlane(_groundPlane, hitPoint)) {
-            const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5);
-            const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5);
+            const gridStep = st.snapGridSize ?? DEFAULT_SNAP_GRID_SIZE;
             if (st.activeBlueprint.category === 'wall') {
+              const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), gridStep);
+              const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), gridStep);
               // Initiate Wall Row Drag!
               isWallRowDragging = true;
               wallRowStartPos = { x: gx, z: gz };
@@ -1030,7 +1045,20 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
               ghostPreviewMesh.visible = false;
               return;
             } else {
-              st.onPlaceBlueprintAt(gx, gz);
+              const placementSnap = computeBuildPlacementPosition({
+                rawX: hitPoint.x,
+                rawZ: hitPoint.z,
+                dimensions: st.activeBlueprint.defaultDimensions,
+                rotationY: 0,
+                category: st.activeBlueprint.category,
+                subType: st.activeBlueprint.subType,
+                floor: st.currentFloor,
+                floorAssets: st.assets,
+                gridStep,
+                snapToAssetEnabled: Boolean(st.snapToAssetPlacement),
+                halfGrid: HALF_GRID
+              });
+              st.onPlaceBlueprintAt(placementSnap.x, placementSnap.z, placementSnap.rotationY);
               ghostPreviewMesh.visible = false;
               return;
             }
@@ -1106,6 +1134,8 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
             st.onSelectAsset(obj.userData.asset.id, e.shiftKey);
             if (obj.userData.asset.isSecretPassage || obj.userData.asset.category === 'door') {
               st.onToggleAssetOpen(obj.userData.asset);
+            } else {
+              st.onInteractKeyE(obj.userData.asset);
             }
             return;
           }
@@ -1164,9 +1194,10 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         const hitPlane = _raycaster.ray.intersectPlane(_groundPlane, hitPoint);
 
         // Dynamic Wall Row Drag Placement: Update live preview segments along dominant axis
+        const gridStep = st.snapGridSize ?? DEFAULT_SNAP_GRID_SIZE;
         if (isWallRowDragging && wallRowStartPos && activeWallRowBlueprint && hitPlane) {
-          const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5);
-          const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5);
+          const gx = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), gridStep);
+          const gz = snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), gridStep);
           const segs = computeWallRowPlacements(
             wallRowStartPos.x,
             wallRowStartPos.z,
@@ -1182,12 +1213,26 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
         if (st.activeBlueprint && hitPlane) {
           const [bw, bh, bd] = st.activeBlueprint.defaultDimensions;
+          const placementSnap = computeBuildPlacementPosition({
+            rawX: hitPoint.x,
+            rawZ: hitPoint.z,
+            dimensions: st.activeBlueprint.defaultDimensions,
+            rotationY: 0,
+            category: st.activeBlueprint.category,
+            subType: st.activeBlueprint.subType,
+            floor: st.currentFloor,
+            floorAssets: st.assets,
+            gridStep,
+            snapToAssetEnabled: Boolean(st.snapToAssetPlacement),
+            halfGrid: HALF_GRID
+          });
           ghostPreviewMesh.visible = true;
           ghostPreviewMesh.scale.set(bw, bh, bd);
+          ghostPreviewMesh.rotation.set(0, placementSnap.rotationY, 0);
           ghostPreviewMesh.position.set(
-            snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.x)), 0.5),
+            placementSnap.x,
             bh / 2,
-            snapToGrid(Math.max(-HALF_GRID, Math.min(HALF_GRID, hitPoint.z)), 0.5)
+            placementSnap.z
           );
         } else {
           ghostPreviewMesh.visible = false;
@@ -1427,32 +1472,19 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         isolatedAssetGroup.position.set(0, 0.72, 0);
         isolatedAssetGroup.rotation.y = isolatedRotation;
       } else if (st.mode === 'architect' || st.mode === 'soundboard') {
-        // Classic First-Person Controls (User-Defined Keybindings with Camera-Oriented Forward/Strafe)
+        // Build / Camera Mode: Keys control the 3D camera (WASD/Arrows pan, Space/PgUp up, Ctrl/C/PgDn down, Shift sprint)
         const kb = st.keybindings || DEFAULT_KEYBINDINGS;
-        let forwardInput = 0;
-        let rightInput = 0;
-        let upInput = 0;
+        const camStep = computeBuildCameraMovementStep({
+          theta: architectOrbit.theta,
+          dt,
+          keysHeld,
+          bindings: kb
+        });
 
-        if (isActionKeyHeld('move_forward', keysHeld, kb)) forwardInput += 1;
-        if (isActionKeyHeld('move_backward', keysHeld, kb)) forwardInput -= 1;
-        if (isActionKeyHeld('move_right', keysHeld, kb)) rightInput += 1;
-        if (isActionKeyHeld('move_left', keysHeld, kb)) rightInput -= 1;
-        if (isActionKeyHeld('camera_up', keysHeld, kb)) upInput += 1;
-        if (isActionKeyHeld('camera_down', keysHeld, kb)) upInput -= 1;
-
-        if (forwardInput !== 0 || rightInput !== 0 || upInput !== 0) {
-          const moveSpeed = (isActionKeyHeld('sprint_camera', keysHeld, kb) ? 24.0 : 12.0) * dt;
-          const { dx, dy, dz } = computeFirstPersonCameraDisplacement(
-            architectOrbit.theta,
-            forwardInput,
-            rightInput,
-            upInput,
-            moveSpeed
-          );
-
-          architectOrbit.targetX = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetX + dx));
-          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY + dy));
-          architectOrbit.targetZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetZ + dz));
+        if (camStep.dx !== 0 || camStep.dy !== 0 || camStep.dz !== 0) {
+          architectOrbit.targetX = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetX + camStep.dx));
+          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY + camStep.dy));
+          architectOrbit.targetZ = Math.max(-HALF_GRID, Math.min(HALF_GRID, architectOrbit.targetZ + camStep.dz));
         }
 
         const desiredX =
@@ -1469,61 +1501,71 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         camera.position.lerp(_vec3A.set(desiredX, desiredY, desiredZ), dampFactor);
         camera.lookAt(architectOrbit.targetX, architectOrbit.targetY, architectOrbit.targetZ);
       } else if (st.mode === 'walkthrough') {
+        // First-Person Mode: Keys move the physical character along the floor (WASD move/strafe, Ctrl/C crouch, Space jump with gravity)
         const kb = st.keybindings || DEFAULT_KEYBINDINGS;
         const pose = playerPoseRef.current;
-        const turnSpeed = 1.95 * dt;
-        if (isActionKeyHeld('turn_left', keysHeld, kb)) pose.yaw += turnSpeed;
-        if (isActionKeyHeld('turn_right', keysHeld, kb)) pose.yaw -= turnSpeed;
 
-        // Stealth Crouch stance: active while holding bound stealth_crouch key(s) or when HUD crouch toggle is active
-        const isCrouching =
-          crouchToggledRef.current || isActionKeyHeld('stealth_crouch', keysHeld, kb);
+        const charStep = computeFirstPersonCharacterMovementStep({
+          yaw: pose.yaw,
+          eyeHeight: pose.eyeHeight,
+          y: pose.y,
+          vy: pose.vy,
+          dt,
+          keysHeld,
+          crouchToggled: crouchToggledRef.current,
+          bindings: kb
+        });
 
-        const targetEyeHeight = isCrouching ? 1.02 : 1.62;
-        pose.eyeHeight += (targetEyeHeight - pose.eyeHeight) * Math.min(1, 12 * dt);
+        pose.yaw = charStep.nextYaw;
+        pose.eyeHeight = charStep.nextEyeHeight;
+        pose.y = charStep.nextY;
+        pose.vy = charStep.nextVy;
+        const isCrouching = charStep.isCrouching;
 
-        let forwardInput = 0;
-        let strafeInput = 0;
-        if (isActionKeyHeld('move_forward', keysHeld, kb)) forwardInput += 1;
-        if (isActionKeyHeld('move_backward', keysHeld, kb)) forwardInput -= 1;
-        // In Walk mode, ArrowLeft/ArrowRight default to turning unless explicitly only bound to strafing
-        const strafeLeftHeld = (kb.move_left || []).some(
-          (code) => keysHeld.has(code) && !(kb.turn_left || []).includes(code)
-        );
-        const strafeRightHeld = (kb.move_right || []).some(
-          (code) => keysHeld.has(code) && !(kb.turn_right || []).includes(code)
-        );
-        if (strafeLeftHeld) strafeInput -= 1;
-        if (strafeRightHeld) strafeInput += 1;
-
-        if (forwardInput !== 0 || strafeInput !== 0 || keysHeld.has('Space') || keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) {
-          const speed = (isCrouching ? 2.45 : 4.5) * dt;
-          if (keysHeld.has('Space')) pose.y += speed;
-          if (keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) pose.y -= speed;
-
-          const forwardX = -Math.sin(pose.yaw);
-          const forwardZ = -Math.cos(pose.yaw);
-          const rightX = Math.cos(pose.yaw);
-          const rightZ = -Math.sin(pose.yaw);
-
-          const dx = (forwardX * forwardInput + rightX * strafeInput) * speed;
-          const dz = (forwardZ * forwardInput + rightZ * strafeInput) * speed;
-
-          if (!checkPlayerCollision(pose.x + dx, pose.z, st.currentFloor, st.assets)) {
-            pose.x += dx;
+        if (charStep.dx !== 0 || charStep.dz !== 0) {
+          let movedX = 0;
+          let movedZ = 0;
+          if (!checkPlayerCollision(pose.x + charStep.dx, pose.z, st.currentFloor, st.assets)) {
+            pose.x += charStep.dx;
+            movedX = charStep.dx;
           }
-          if (!checkPlayerCollision(pose.x, pose.z + dz, st.currentFloor, st.assets)) {
-            pose.z += dz;
+          if (!checkPlayerCollision(pose.x, pose.z + charStep.dz, st.currentFloor, st.assets)) {
+            pose.z += charStep.dz;
+            movedZ = charStep.dz;
           }
 
-          pose.bobPhase += Math.hypot(dx, dz) * (isCrouching ? 2.8 : 3.5);
+          const stepMovedDist = Math.hypot(movedX, movedZ);
+          if (stepMovedDist > 0.0001) {
+            const prevBob = pose.bobPhase;
+            pose.bobPhase += stepMovedDist * (isCrouching ? 2.8 : charStep.isSprinting ? 4.1 : 3.5);
+
+            // Surface-specific footstep audio when grounded and not crouching
+            if (charStep.isGrounded && !isCrouching && st.footstepsEnabled && elapsed - lastFootstepTime > 0.22) {
+              const cross = didCrossStrideFootstepPhase(prevBob, pose.bobPhase);
+              if (cross.triggered) {
+                lastFootstepTime = elapsed;
+                const surf = resolveFloorSurfaceMaterialAtPosition(
+                  pose.x,
+                  pose.z,
+                  st.currentFloor,
+                  st.assets
+                );
+                audioEngine.playSurfaceFootstep(surf, {
+                  stepIndex: cross.stepIndex,
+                  isCrouching: false,
+                  footstepsEnabled: st.footstepsEnabled
+                });
+              }
+            }
+          }
         }
 
         const bobOffset = Math.sin(pose.bobPhase) * (isCrouching ? 0.009 : 0.02);
-        camera.position.set(pose.x, pose.eyeHeight + pose.y + bobOffset, pose.z);
+        const currentCamY = pose.eyeHeight + pose.y + bobOffset;
+        camera.position.set(pose.x, currentCamY, pose.z);
 
         const lookTargetX = pose.x - Math.sin(pose.yaw) * 4;
-        const lookTargetY = pose.eyeHeight + pose.pitch * 3 + bobOffset * 0.5;
+        const lookTargetY = pose.eyeHeight + pose.y + pose.pitch * 3 + bobOffset * 0.5;
         const lookTargetZ = pose.z - Math.cos(pose.yaw) * 4;
         camera.lookAt(_vec3B.set(lookTargetX, lookTargetY, lookTargetZ));
 
@@ -1532,11 +1574,11 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
         flashlightSpot.visible = isFlashlightActive;
         flashlightConeMesh.visible = isFlashlightActive;
         if (isFlashlightActive) {
-          flashlightSpot.position.set(pose.x, pose.eyeHeight - 0.14 + bobOffset, pose.z);
+          flashlightSpot.position.set(pose.x, currentCamY - 0.14, pose.z);
           flashlightTarget.position.set(lookTargetX, lookTargetY, lookTargetZ);
           flashlightTarget.updateMatrixWorld();
 
-          flashlightConeMesh.position.set(pose.x, pose.eyeHeight - 0.2 + bobOffset, pose.z);
+          flashlightConeMesh.position.set(pose.x, currentCamY - 0.2, pose.z);
           flashlightConeMesh.lookAt(lookTargetX, lookTargetY, lookTargetZ);
         }
       } else {
@@ -1628,14 +1670,6 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
 
       // Smooth 500ms Hinge Rotation / Pocket-Slide Animation for Doors & Secret Passages (Proposals 1 & 2)
       const wallClockMs = Date.now();
-      
-      // Architect Build Mode Camera Vertical Control
-      if (st.mode === 'architect') {
-        const speed = 0.2;
-        if (keysHeld.has('ControlLeft') || keysHeld.has('ControlRight')) {
-          architectOrbit.targetY = Math.max(-2, Math.min(45, architectOrbit.targetY - speed));
-        }
-      }
 
       const updateGroupHinges = (grp: THREE.Group) => {
         for (let i = 0; i < grp.children.length; i++) {
@@ -1674,6 +1708,33 @@ export const HotelViewport3D: React.FC<HotelViewport3DProps> = ({
       };
       updateGroupHinges(dynamicAssetsGroup);
       updateGroupHinges(isolatedAssetGroup);
+
+      // Subtle Horror / Thriller Flicker Modulation for Unkempt & Aged 3D Assets Keyed to Global Animation FPS
+      const updateUnkemptFlickerOnGroup = (grp: THREE.Group) => {
+        for (let i = 0; i < grp.children.length; i++) {
+          const child = grp.children[i];
+          if (child.userData?.isUnkemptOrAged && child.userData?.assetId) {
+            const sample = sampleUnkemptFlickerIntensity(
+              elapsed,
+              st.globalAnimationFps || DEFAULT_GLOBAL_ANIMATION_FPS,
+              child.userData.assetId
+            );
+            child.traverse((node) => {
+              const mesh = node as THREE.Mesh;
+              if (mesh.isMesh && mesh.material) {
+                const mat = mesh.material as THREE.MeshStandardMaterial;
+                if (mesh.userData?.isTvScreen && child.userData?.asset?.isActivated) {
+                  mat.emissiveIntensity = 1.35 * sample.brightnessMultiplier;
+                } else if (mat.emissive && mat.emissiveIntensity > 0) {
+                  mat.emissiveIntensity = sample.isDip ? 0.16 : 0.45 * sample.brightnessMultiplier;
+                }
+              }
+            });
+          }
+        }
+      };
+      updateUnkemptFlickerOnGroup(dynamicAssetsGroup);
+      updateUnkemptFlickerOnGroup(isolatedAssetGroup);
 
       // Periodically project the primary selected asset's 3D position to 2D screen coordinates
       // so the [F] Quick Edit floating window sits immediately to the right of the asset

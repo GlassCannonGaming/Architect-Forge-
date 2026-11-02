@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-02T16:09:40.745Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Water-Stained Wainscot Wall [Updated Late-70s] [Pristine]",
+  "data": {
+    "id": "bp_inst_1793635768625_0",
+    "name": "Water-Stained Wainscot Wall [Updated Late-70s] [Pristine]",
+    "category": "wall",
+    "subType": "wall_plaster_wainscot",
+    "floor": "floor2",
+    "roomNumber": "Suite 202 Secret Partition Study",
+    "position": [
+      -2,
+      1.5,
+      -1.5
+    ],
+    "dimensions": [
+      3,
+      3,
+      0.3
+    ],
+    "rotationY": 0,
+    "color": "#5e5749",
+    "textureId": "plaster_cream",
+    "isOpen": false,
+    "collidable": true,
+    "tags": [
+      "pristine"
+    ],
+    "conditionVariant": "pristine",
+    "era": "1970s",
+    "predecessor1978Id": "wall_plaster_wainscot"
+  }
+}

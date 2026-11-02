@@ -5,7 +5,8 @@ import type {
   AssetClipboardItem,
   AssetSet,
   PlacedAsset,
-  SearchableBlueprintLike
+  SearchableBlueprintLike,
+  AssetConditionVariant
 } from './rules';
 import {
   APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
@@ -22,7 +23,7 @@ import {
 
 export interface ApartmentAssetBlueprint extends SearchableBlueprintLike {
   pairedVariantId?: string;
-  conditionVariant?: 'pristine' | 'unkempt';
+  conditionVariant?: AssetConditionVariant;
   compositeParts?: CompositeSubPart[];
   era?: '1970s' | '1980s' | '1990s' | 'timeless';
   canUpdateInHotel?: boolean;
@@ -2893,7 +2894,7 @@ export function buildGeminiApartmentAssetPromptQueue(
   subType: string;
   name: string;
   modelId: string;
-  condition: 'pristine' | 'unkempt' | 'standard';
+  condition: AssetConditionVariant | 'standard';
   prompt: string;
 }> {
   return APARTMENT_BUILDING_CATALOG_BLUEPRINTS.map((bp) => ({

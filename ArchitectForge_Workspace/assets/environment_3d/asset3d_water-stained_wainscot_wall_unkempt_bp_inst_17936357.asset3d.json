@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-02T16:09:36.147Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Water-Stained Wainscot Wall [Unkempt]",
+  "data": {
+    "id": "bp_inst_1793635768625_0",
+    "name": "Water-Stained Wainscot Wall [Unkempt]",
+    "category": "wall",
+    "subType": "wall_plaster_wainscot",
+    "floor": "floor2",
+    "roomNumber": "Suite 202 Secret Partition Study",
+    "position": [
+      -2,
+      1.5,
+      -1.5
+    ],
+    "dimensions": [
+      3,
+      3,
+      0.3
+    ],
+    "rotationY": 0,
+    "color": "#5e5749",
+    "textureId": "plaster_cream",
+    "isOpen": false,
+    "collidable": true,
+    "tags": [
+      "unkempt",
+      "aged",
+      "weathered"
+    ],
+    "conditionVariant": "unkempt",
+    "era": "1970s"
+  }
+}

@@ -2,9 +2,13 @@ import * as THREE from 'three';
 import {
   PlacedAsset,
   TexturePresetId,
+  AssetConditionVariant,
   CharacterAppearance,
   buildProcedural3DSpecFromPrompt,
   weatherAssetToLate70sStyle,
+  resolveAssetConditionVariant,
+  isUnkemptOrAgedAsset,
+  computeAssetInteractionVisualState,
   computeAssetHingeAnimationState,
   SkeletonPoseEuler,
   FacialRigParams,
@@ -37,10 +41,12 @@ const SPECIALIZED_70S_SUBTYPES = new Set<string>([
 
 export function getProceduralMaterialTextures(
   preset: TexturePresetId,
-  maxAnisotropy = 4
+  maxAnisotropy = 4,
+  conditionVariant: AssetConditionVariant = 'pristine'
 ): { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
-  if (textureCache.has(preset)) {
-    return textureCache.get(preset)!;
+  const cacheKey = `${preset}__${conditionVariant}`;
+  if (textureCache.has(cacheKey)) {
+    return textureCache.get(cacheKey)!;
   }
 
   const canvas = document.createElement('canvas');
@@ -154,6 +160,38 @@ export function getProceduralMaterialTextures(
     ctx.fillRect(0, 196, 256, 60); // Dark walnut wainscoting band at bottom
   }
 
+  // Condition Variant Procedural Weathering Re-Texture Pass ('pristine' | 'unkempt' | 'updated')
+  if (conditionVariant === 'unkempt') {
+    // Heavy grime, soot streaks, damp water rings & pitted surface relief
+    ctx.fillStyle = 'rgba(18, 14, 10, 0.32)';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = 'rgba(10, 8, 6, 0.38)';
+    ctx.fillRect(18, 0, 28, 256);
+    ctx.fillRect(112, 34, 46, 222);
+    ctx.fillRect(198, 0, 24, 190);
+    ctx.strokeStyle = 'rgba(8, 6, 4, 0.48)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(42, 16);
+    ctx.lineTo(68, 95);
+    ctx.lineTo(54, 188);
+    ctx.stroke();
+
+    bCtx.fillStyle = '#383838';
+    bCtx.fillRect(18, 24, 44, 96);
+    bCtx.fillRect(134, 88, 68, 114);
+  } else if (conditionVariant === 'updated') {
+    // 1990s Hotel Commercial Renovation: cleaner satin finish, muted cool-teal/mauve hospitality sheen
+    ctx.fillStyle = 'rgba(220, 232, 236, 0.14)';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = 'rgba(42, 107, 108, 0.22)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(6, 6, 244, 244);
+
+    bCtx.fillStyle = '#888888';
+    bCtx.fillRect(8, 8, 240, 240);
+  }
+
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
   map.wrapS = THREE.RepeatWrapping;
@@ -167,7 +205,7 @@ export function getProceduralMaterialTextures(
   bumpMap.anisotropy = maxAnisotropy;
 
   const entry = { map, bumpMap };
-  textureCache.set(preset, entry);
+  textureCache.set(cacheKey, entry);
   return entry;
 }
 
@@ -198,31 +236,63 @@ export function buildAssetMeshGroup(
   maxAnisotropy = 4,
   isSelected = false
 ): THREE.Group {
-  const asset = weatherAssetToLate70sStyle(rawAsset);
+  const conditionVariant = resolveAssetConditionVariant(rawAsset);
+  const asset = weatherAssetToLate70sStyle(rawAsset, rawAsset.conditionVariant);
+  const interactionState = computeAssetInteractionVisualState(asset);
+  const unkemptAged = isUnkemptOrAgedAsset(asset);
+
   const group = new THREE.Group();
-  group.userData = { assetId: asset.id, asset };
+  group.userData = {
+    assetId: asset.id,
+    asset,
+    conditionVariant,
+    isUnkemptOrAged: unkemptAged,
+    interactionState
+  };
 
   const [w, h, d] = asset.dimensions;
-  const { map, bumpMap } = getProceduralMaterialTextures(asset.textureId, maxAnisotropy);
+  const { map, bumpMap } = getProceduralMaterialTextures(
+    asset.textureId,
+    maxAnisotropy,
+    conditionVariant
+  );
+
+  const baseRoughness =
+    conditionVariant === 'unkempt'
+      ? 0.94
+      : conditionVariant === 'updated'
+      ? 0.54
+      : asset.textureId === 'aged_brass'
+      ? 0.42
+      : 0.82;
+
+  const baseMetalness =
+    conditionVariant === 'unkempt'
+      ? 0.06
+      : conditionVariant === 'updated'
+      ? 0.24
+      : asset.textureId === 'aged_brass'
+      ? 0.68
+      : 0.1;
 
   const primaryMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(asset.color || '#8a8170'),
     map,
     bumpMap,
-    bumpScale: 0.035,
-    roughness: asset.textureId === 'aged_brass' ? 0.42 : 0.85,
-    metalness: asset.textureId === 'aged_brass' ? 0.68 : 0.1
+    bumpScale: conditionVariant === 'unkempt' ? 0.055 : conditionVariant === 'updated' ? 0.018 : 0.035,
+    roughness: baseRoughness,
+    metalness: baseMetalness
   });
 
   const trimWoodMat = new THREE.MeshStandardMaterial({
-    color: 0x26160c,
-    roughness: 0.68,
+    color: conditionVariant === 'updated' ? 0x1e242b : 0x26160c,
+    roughness: conditionVariant === 'unkempt' ? 0.85 : 0.68,
     metalness: 0.12
   });
 
   const brassAccentMat = new THREE.MeshStandardMaterial({
-    color: 0x6b5634,
-    roughness: 0.38,
+    color: conditionVariant === 'updated' ? 0x64748b : 0x6b5634,
+    roughness: conditionVariant === 'unkempt' ? 0.62 : 0.38,
     metalness: 0.75
   });
 
@@ -233,6 +303,8 @@ export function buildAssetMeshGroup(
       : SPECIALIZED_70S_SUBTYPES.has(asset.subType)
       ? buildProcedural3DSpecFromPrompt(asset.name || asset.subType).parts
       : undefined;
+
+  let hasDedicatedScreenPart = false;
 
   // Custom AI / Meshy / Resolved Late-70s Composite Parts
   if (resolvedCompositeParts && resolvedCompositeParts.length > 0) {
@@ -250,14 +322,40 @@ export function buildAssetMeshGroup(
       } else {
         geo = new THREE.BoxGeometry(sx, sy, sz);
       }
+
+      const partNameLower = (part.id || '').toLowerCase();
+      const isScreenPart =
+        partNameLower.includes('screen') ||
+        partNameLower.includes('crt') ||
+        partNameLower.includes('tube') ||
+        partNameLower.includes('display') ||
+        partNameLower.includes('glass');
+
+      let partColorHex = part.color;
+      let partEmissiveHex = part.emissive || '#000000';
+      let partEmissiveIntensity = part.emissive ? 0.45 : 0;
+
+      if (interactionState.interactionKind === 'tv_screen' && isScreenPart) {
+        hasDedicatedScreenPart = true;
+        if (interactionState.isActivated) {
+          partColorHex = '#ffffff';
+          partEmissiveHex = '#ffffff';
+          partEmissiveIntensity = 1.45;
+        }
+      } else if (interactionState.isActivated && part.emissive) {
+        partEmissiveHex = interactionState.screenEmissiveHex;
+        partEmissiveIntensity = interactionState.emissiveIntensity;
+      }
+
       const pMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(part.color),
+        color: new THREE.Color(partColorHex),
         roughness: part.roughness,
         metalness: part.metalness,
-        emissive: part.emissive ? new THREE.Color(part.emissive) : new THREE.Color(0x000000),
-        emissiveIntensity: part.emissive ? 0.45 : 0
+        emissive: new THREE.Color(partEmissiveHex),
+        emissiveIntensity: partEmissiveIntensity
       });
       const mesh = new THREE.Mesh(geo, pMat);
+      mesh.userData = { isTvScreen: isScreenPart && interactionState.interactionKind === 'tv_screen' };
       mesh.position.set(part.offset[0], part.offset[1] - h / 2, part.offset[2]);
       if (part.rotation) {
         mesh.rotation.set(part.rotation[0], part.rotation[1], part.rotation[2]);
@@ -400,12 +498,13 @@ export function buildAssetMeshGroup(
     rightPedestal.position.set(w * 0.36, -h * 0.18, 0);
     const lampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.08, 0.36, 10), brassAccentMat);
     lampStem.position.set(0, h * 0.32, -0.1);
+    const isLampOn = asset.isActivated !== false;
     const lampShade = new THREE.Mesh(
       new THREE.ConeGeometry(0.24, 0.18, 14),
       new THREE.MeshStandardMaterial({
-        color: new THREE.Color(asset.color),
-        emissive: new THREE.Color(0x6e562f),
-        emissiveIntensity: 0.55,
+        color: new THREE.Color(isLampOn ? '#fef3c7' : asset.color),
+        emissive: new THREE.Color(isLampOn ? '#fde68a' : '#2a2214'),
+        emissiveIntensity: isLampOn ? 1.15 : 0.15,
         roughness: 0.35,
         metalness: 0.25
       })
@@ -419,14 +518,61 @@ export function buildAssetMeshGroup(
     borderMesh.position.y = -0.008;
     group.add(borderMesh, rugMesh);
   } else {
-    // Appliances (Radiator, Icebox, Switchboard) with multi-part silhouettes
+    // Appliances (TVs, Radiator, Icebox, Switchboard) with multi-part silhouettes
     const hull = new THREE.Mesh(new THREE.BoxGeometry(w * 0.92, h * 0.88, d * 0.9), primaryMat);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.1, d), brassAccentMat);
     cap.position.y = h * 0.44;
     const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.08, 12), brassAccentMat);
     dial.rotation.x = Math.PI / 2;
-    dial.position.set(0, h * 0.18, d * 0.46);
+    dial.position.set(w * 0.28, h * 0.18, d * 0.46);
     group.add(hull, cap, dial);
+  }
+
+  // Dedicated Front Screen Glass Panel for TV / Monitor Assets (Turns bright white "ON" when interacted with!)
+  if (
+    (interactionState.interactionKind === 'tv_screen' ||
+      interactionState.interactionKind === 'computer_monitor') &&
+    !hasDedicatedScreenPart
+  ) {
+    const isTv = interactionState.interactionKind === 'tv_screen';
+    const screenColor = interactionState.isActivated
+      ? isTv
+        ? '#ffffff'
+        : '#34d399'
+      : '#111827';
+    const screenEmissive = interactionState.isActivated
+      ? isTv
+        ? '#ffffff'
+        : '#10b981'
+      : '#000000';
+    const screenMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(screenColor),
+      emissive: new THREE.Color(screenEmissive),
+      emissiveIntensity: interactionState.isActivated ? 1.45 : 0.05,
+      roughness: 0.16,
+      metalness: 0.22
+    });
+    const screenPanel = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.max(0.24, w * 0.72), Math.max(0.2, h * 0.58), 0.04),
+      screenMat
+    );
+    screenPanel.name = 'interactiveScreenPanel';
+    screenPanel.userData = { isTvScreen: true };
+    screenPanel.position.set(-w * 0.05, h * 0.04, d * 0.46);
+    group.add(screenPanel);
+  }
+
+  // Emit interactive PointLight glow when a TV ("white on"), lamp, computer, or appliance is activated
+  if (interactionState.isActivated && interactionState.emitsLight) {
+    const activeLight = new THREE.PointLight(
+      new THREE.Color(interactionState.lightColorHex),
+      interactionState.interactionKind === 'tv_screen' ? 1.35 : 0.9,
+      interactionState.interactionKind === 'tv_screen' ? 5.5 : 4.2,
+      1.6
+    );
+    activeLight.position.set(0, h * 0.15, d * 0.65);
+    activeLight.name = 'interactiveStateLight';
+    group.add(activeLight);
   }
 
   // Selection outline wireframe box in ArchitectForge mode

@@ -1,5 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { HingeSwingMode, PlacedAsset, TexturePresetId } from '../game/rules';
+import {
+  AssetConditionVariant,
+  computeAssetInteractionVisualState,
+  computeUnkemptFlickerCssSpec,
+  DEFAULT_GLOBAL_ANIMATION_FPS,
+  getAssetVisualDesignVariants,
+  GlobalAnimationFps,
+  HingeSwingMode,
+  isStructuralHotelAsset,
+  isUnkemptOrAgedAsset,
+  PlacedAsset,
+  resolveAssetConditionVariant,
+  safeExecuteCatalogOrVariantCallback,
+  swapAssetConditionVariant,
+  swapAssetVisualDesign,
+  TexturePresetId
+} from '../game/rules';
+import { AssetBlueprint } from '../game/hotelData';
 
 interface QuickEditWindowFProps {
   primaryAsset: PlacedAsset;
@@ -23,6 +40,11 @@ interface QuickEditWindowFProps {
   onPasteClipboard?: () => void;
   clipboardCount?: number;
   onSaveSelectionAsSet?: (setName: string) => void;
+  catalogAssets?: AssetBlueprint[];
+  onUpdateAsset?: (updated: PlacedAsset, message?: string) => void;
+  onSwapConditionVariant?: (variant: AssetConditionVariant) => void;
+  onSwapVisualDesign?: (targetSubType: string | 'next') => void;
+  globalAnimationFps?: GlobalAnimationFps;
 }
 
 const SWATCH_COLORS = [
@@ -60,7 +82,12 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
   onCopySelected,
   onPasteClipboard,
   clipboardCount = 0,
-  onSaveSelectionAsSet
+  onSaveSelectionAsSet,
+  catalogAssets = [],
+  onUpdateAsset,
+  onSwapConditionVariant,
+  onSwapVisualDesign,
+  globalAnimationFps = DEFAULT_GLOBAL_ANIMATION_FPS
 }) => {
   const [customPos, setCustomPos] = useState<{ x: number; y: number } | null>(null);
   const [minimized, setMinimized] = useState<boolean>(false);
@@ -70,13 +97,123 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
   // Reset custom drag offset if primary asset changes
   useEffect(() => {
     setCustomPos(null);
-  }, [primaryAsset.id]);
+  }, [primaryAsset?.id]);
 
-  const baseLeft = Math.max(16, Math.min(window.innerWidth - 310, screenPosition.x));
-  const baseTop = Math.max(82, Math.min(window.innerHeight - 380, screenPosition.y));
+  if (!primaryAsset || typeof primaryAsset !== 'object') {
+    return null;
+  }
+
+  const safeDims: [number, number, number] =
+    Array.isArray(primaryAsset.dimensions) && primaryAsset.dimensions.length === 3
+      ? [
+          Number(primaryAsset.dimensions[0]) || 1,
+          Number(primaryAsset.dimensions[1]) || 1,
+          Number(primaryAsset.dimensions[2]) || 1
+        ]
+      : [1, 1, 1];
+
+  const baseLeft = Math.max(16, Math.min(window.innerWidth - 310, screenPosition?.x ?? 24));
+  const baseTop = Math.max(82, Math.min(window.innerHeight - 380, screenPosition?.y ?? 96));
 
   const left = customPos ? customPos.x : baseLeft;
   const top = customPos ? customPos.y : baseTop;
+
+  const activeConditionVariant = safeExecuteCatalogOrVariantCallback(
+    () => resolveAssetConditionVariant(primaryAsset),
+    'pristine',
+    'QuickEdit.resolveAssetConditionVariant'
+  );
+  const unkemptOrAged = safeExecuteCatalogOrVariantCallback(
+    () => isUnkemptOrAgedAsset(primaryAsset),
+    false,
+    'QuickEdit.isUnkemptOrAgedAsset'
+  );
+  const flickerSpec = safeExecuteCatalogOrVariantCallback(
+    () => computeUnkemptFlickerCssSpec(globalAnimationFps, primaryAsset.id),
+    { animationDurationSec: '0.5s', stepCount: 6, animationDelaySec: '0s', fps: globalAnimationFps },
+    'QuickEdit.computeUnkemptFlickerCssSpec'
+  );
+  const interactionState = safeExecuteCatalogOrVariantCallback(
+    () => computeAssetInteractionVisualState(primaryAsset),
+    {
+      isInteractive: true,
+      interactionKind: 'general_prop',
+      isActivated: Boolean(primaryAsset.isActivated),
+      screenState: 'none',
+      screenColorHex: primaryAsset.color || '#8a8170',
+      screenEmissiveHex: '#000000',
+      screenEmissiveIntensity: 0,
+      emissiveIntensity: 0,
+      emitsLight: false,
+      lightColorHex: '#fde68a',
+      lightIntensity: 0,
+      lightDistance: 0,
+      statusLabel: 'STANDBY',
+      statusSummary: 'STANDBY',
+      actionPromptLabel: 'Interact [E]'
+    },
+    'QuickEdit.computeAssetInteractionVisualState'
+  );
+  const visualDesignVariants = safeExecuteCatalogOrVariantCallback(
+    () => getAssetVisualDesignVariants(primaryAsset.subType, catalogAssets),
+    [],
+    'QuickEdit.getAssetVisualDesignVariants'
+  );
+
+  const safeBatchModify = (patch: Parameters<typeof onBatchModify>[0]) => {
+    safeExecuteCatalogOrVariantCallback(
+      () => {
+        onBatchModify(patch);
+      },
+      undefined,
+      'QuickEdit.onBatchModify'
+    );
+  };
+
+  const handleApplyConditionVariant = (targetVariant: AssetConditionVariant) => {
+    safeExecuteCatalogOrVariantCallback(
+      () => {
+        if (onSwapConditionVariant) {
+          onSwapConditionVariant(targetVariant);
+          return;
+        }
+        const res = swapAssetConditionVariant(primaryAsset, targetVariant, catalogAssets);
+        if (onUpdateAsset) {
+          onUpdateAsset(res.swappedAsset, res.message);
+        } else {
+          onBatchModify({
+            color: res.swappedAsset.color,
+            textureId: res.swappedAsset.textureId
+          });
+        }
+      },
+      undefined,
+      `QuickEdit.handleApplyConditionVariant(${targetVariant})`
+    );
+  };
+
+  const handleSwapVisualDesign = (targetSubType: string | 'next') => {
+    safeExecuteCatalogOrVariantCallback(
+      () => {
+        if (onSwapVisualDesign) {
+          onSwapVisualDesign(targetSubType);
+          return;
+        }
+        const res = swapAssetVisualDesign(primaryAsset, targetSubType, catalogAssets);
+        if (onUpdateAsset) {
+          onUpdateAsset(res.swappedAsset, res.message);
+        } else {
+          onBatchModify({
+            color: res.swappedAsset.color,
+            textureId: res.swappedAsset.textureId,
+            dimensions: res.swappedAsset.dimensions
+          });
+        }
+      },
+      undefined,
+      `QuickEdit.handleSwapVisualDesign(${targetSubType})`
+    );
+  };
 
   const handleTitlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -110,7 +247,15 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
       role="dialog"
       aria-label="Quick Asset Editor [F]"
       data-testid="quick-edit-window-f"
-      style={{ left: `${left}px`, top: `${top}px` }}
+      style={
+        {
+          left: `${left}px`,
+          top: `${top}px`,
+          '--flicker-duration': flickerSpec.animationDurationSec,
+          '--flicker-steps': flickerSpec.stepCount,
+          '--flicker-delay': flickerSpec.animationDelaySec
+        } as React.CSSProperties
+      }
       className="studio-dark-window fixed z-40 w-72 pointer-events-auto bg-slate-900/95 backdrop-blur-md border-2 border-[#38bdf8] rounded-3xl shadow-2xl overflow-hidden text-slate-100 transition-shadow"
     >
       {/* Draggable Window Title Bar with Minimize & Close [F] (Dark Mode) */}
@@ -124,13 +269,19 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             F
           </span>
           <div className="truncate">
-            <div className="text-xs font-extrabold text-slate-100 truncate">
+            <div
+              className={`text-xs font-extrabold text-slate-100 truncate ${
+                unkemptOrAged ? 'unkempt-aged-flicker' : ''
+              }`}
+            >
               {selectedCount > 1
                 ? `${selectedCount} Assets Selected`
                 : primaryAsset.name}
             </div>
-            <div className="text-[10px] font-medium text-[#38bdf8]">
-              Quick Edit Window · Drag to Move
+            <div className="text-[10px] font-medium text-[#38bdf8] truncate">
+              {unkemptOrAged
+                ? `🕯️ Atmospheric Flicker (${globalAnimationFps} FPS) · Drag to Move`
+                : 'Quick Edit Window · Drag to Move'}
             </div>
           </div>
         </div>
@@ -165,14 +316,14 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onBatchModify({ scaleMultiplier: 0.85 })}
+                  onClick={() => safeBatchModify({ scaleMultiplier: 0.85 })}
                   className="px-2 py-0.5 rounded-full bg-white hover:bg-[#e0f2fe] border border-slate-300 text-[10px] font-bold text-slate-700"
                 >
                   -15%
                 </button>
                 <button
                   type="button"
-                  onClick={() => onBatchModify({ scaleMultiplier: 1.15 })}
+                  onClick={() => safeBatchModify({ scaleMultiplier: 1.15 })}
                   className="px-2 py-0.5 rounded-full bg-white hover:bg-[#e0f2fe] border border-slate-300 text-[10px] font-bold text-slate-700"
                 >
                   +15%
@@ -189,13 +340,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                   step={0.2}
                   min={0.3}
                   max={24}
-                  value={primaryAsset.dimensions[0]}
+                  value={safeDims[0]}
                   onChange={(e) =>
-                    onBatchModify({
+                    safeBatchModify({
                       dimensions: [
                         parseFloat(e.target.value) || 1,
-                        primaryAsset.dimensions[1],
-                        primaryAsset.dimensions[2]
+                        safeDims[1],
+                        safeDims[2]
                       ]
                     })
                   }
@@ -210,13 +361,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                   step={0.2}
                   min={0.05}
                   max={12}
-                  value={primaryAsset.dimensions[1]}
+                  value={safeDims[1]}
                   onChange={(e) =>
-                    onBatchModify({
+                    safeBatchModify({
                       dimensions: [
-                        primaryAsset.dimensions[0],
+                        safeDims[0],
                         parseFloat(e.target.value) || 1,
-                        primaryAsset.dimensions[2]
+                        safeDims[2]
                       ]
                     })
                   }
@@ -231,12 +382,12 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                   step={0.2}
                   min={0.2}
                   max={24}
-                  value={primaryAsset.dimensions[2]}
+                  value={safeDims[2]}
                   onChange={(e) =>
-                    onBatchModify({
+                    safeBatchModify({
                       dimensions: [
-                        primaryAsset.dimensions[0],
-                        primaryAsset.dimensions[1],
+                        safeDims[0],
+                        safeDims[1],
                         parseFloat(e.target.value) || 1
                       ]
                     })
@@ -256,8 +407,8 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
               <input
                 type="color"
                 aria-label="Quick Edit Custom Color"
-                value={primaryAsset.color}
-                onChange={(e) => onBatchModify({ color: e.target.value })}
+                value={primaryAsset.color || '#592820'}
+                onChange={(e) => safeBatchModify({ color: e.target.value })}
                 className="w-5 h-5 rounded-full cursor-pointer border border-slate-300 bg-transparent"
               />
             </div>
@@ -268,9 +419,9 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                   key={swatch}
                   type="button"
                   aria-label={`Color Swatch ${swatch}`}
-                  onClick={() => onBatchModify({ color: swatch })}
+                  onClick={() => safeBatchModify({ color: swatch })}
                   className={`w-5 h-5 rounded-full border transition-transform ${
-                    primaryAsset.color.toLowerCase() === swatch.toLowerCase()
+                    (primaryAsset.color || '').toLowerCase() === swatch.toLowerCase()
                       ? 'ring-2 ring-[#10b981] scale-115 border-white'
                       : 'border-slate-300 hover:scale-110'
                   }`}
@@ -284,7 +435,7 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
               value={primaryAsset.textureId}
               onChange={(e) => {
                 e.currentTarget.blur();
-                onBatchModify({ textureId: e.target.value as TexturePresetId });
+                safeBatchModify({ textureId: e.target.value as TexturePresetId });
               }}
               className="mt-1 w-full bg-white border border-slate-300 rounded-full px-2.5 py-1 text-[11px] font-semibold text-slate-700"
             >
@@ -309,7 +460,7 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                 <input
                   type="checkbox"
                   checked={Boolean(primaryAsset.isSecretPassage || primaryAsset.category === 'secret_wall')}
-                  onChange={(e) => onBatchModify({ isSecretPassage: e.target.checked })}
+                  onChange={(e) => safeBatchModify({ isSecretPassage: e.target.checked })}
                   className="accent-amber-600 rounded"
                 />
                 <span>Secret Passage</span>
@@ -330,7 +481,7 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                     key={m.id}
                     type="button"
                     data-testid={`hinge-mode-${m.id}`}
-                    onClick={() => onBatchModify({ hingeSwingMode: m.id })}
+                    onClick={() => safeBatchModify({ hingeSwingMode: m.id })}
                     className={`py-1 px-1.5 rounded-full text-[10px] font-bold transition-all ${
                       isSelected
                         ? 'bg-amber-600 text-white shadow-2xs'
@@ -344,11 +495,116 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             </div>
           </div>
 
-          {/* 3. COMMON EDITING ACTIONS */}
+          {/* 2C. UNIVERSAL "PRISTINE / UNKEMPT / UPDATED (90S)" CONDITION VARIANT TOGGLE FOR ALL ASSETS */}
+          <div
+            data-testid="quick-edit-updated-90s-panel"
+            className={`bg-violet-950/50 border border-violet-700/60 rounded-2xl p-2 space-y-1.5 ${
+              unkemptOrAged ? 'unkempt-aged-flicker' : ''
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-violet-300">
+                🎭 Pristine / Unkempt / Updated
+              </span>
+              <span
+                data-testid="quick-edit-condition-badge"
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-900 border border-violet-700/60 text-violet-200"
+              >
+                {isStructuralHotelAsset(primaryAsset.subType, catalogAssets)
+                  ? `🏛️ Shell · ${activeConditionVariant.toUpperCase()}`
+                  : activeConditionVariant === 'updated'
+                  ? '🏨 Updated (90s Set)'
+                  : activeConditionVariant === 'unkempt'
+                  ? '🏚️ Unkempt (70s Grime)'
+                  : '✨ Pristine (1978)'}
+              </span>
+            </div>
+
+            <div
+              data-testid="quick-edit-condition-variant-toggle"
+              className="grid grid-cols-3 gap-1"
+            >
+              <button
+                type="button"
+                data-testid="quick-edit-condition-pristine-btn"
+                onClick={() => handleApplyConditionVariant('pristine')}
+                className={`py-1 px-1.5 rounded-full text-[10px] font-bold transition-all ${
+                  activeConditionVariant === 'pristine'
+                    ? 'bg-emerald-600 text-white shadow-2xs ring-1 ring-emerald-300'
+                    : 'bg-slate-900/80 text-slate-300 border border-slate-700 hover:border-emerald-500/60'
+                }`}
+              >
+                ✨ Pristine
+              </button>
+              <button
+                type="button"
+                data-testid="quick-edit-condition-unkempt-btn"
+                onClick={() => handleApplyConditionVariant('unkempt')}
+                className={`py-1 px-1.5 rounded-full text-[10px] font-bold transition-all ${
+                  activeConditionVariant === 'unkempt'
+                    ? 'bg-amber-700 text-white shadow-2xs ring-1 ring-amber-300'
+                    : 'bg-slate-900/80 text-slate-300 border border-slate-700 hover:border-amber-500/60'
+                }`}
+              >
+                🏚️ Unkempt
+              </button>
+              <button
+                type="button"
+                data-testid="quick-edit-condition-updated-btn"
+                onClick={() => handleApplyConditionVariant('updated')}
+                className={`py-1 px-1.5 rounded-full text-[10px] font-bold transition-all ${
+                  activeConditionVariant === 'updated'
+                    ? 'bg-violet-600 text-white shadow-2xs ring-1 ring-violet-300'
+                    : 'bg-slate-900/80 text-slate-300 border border-slate-700 hover:border-violet-500/60'
+                }`}
+              >
+                🏨 Updated
+              </button>
+            </div>
+
+            {visualDesignVariants.length > 1 && (
+              <div
+                data-testid="quick-edit-visual-design-panel"
+                className="pt-1 border-t border-violet-800/50 space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-violet-300">
+                    🎨 Visual Design ({visualDesignVariants.length} Meshy.ai 3D Models)
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="quick-edit-cycle-visual-design-btn"
+                    onClick={() => handleSwapVisualDesign('next')}
+                    className="px-2 py-0.5 rounded-full bg-violet-700/80 hover:bg-violet-600 text-white text-[9px] font-bold"
+                  >
+                    ⟳ Next Design
+                  </button>
+                </div>
+                <select
+                  aria-label="Quick Edit Visual Design Variant"
+                  data-testid="quick-edit-visual-design-select"
+                  value={primaryAsset.subType}
+                  onChange={(e) => {
+                    e.currentTarget.blur();
+                    handleSwapVisualDesign(e.target.value);
+                  }}
+                  className="w-full bg-slate-900/90 border border-violet-700/60 rounded-full px-2 py-0.5 text-[10px] font-semibold text-violet-100"
+                >
+                  {visualDesignVariants.map((design, idx) => (
+                    <option key={design.subType} value={design.subType}>
+                      Design {idx + 1}: {design.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* 3. COMMON EDITING & INTERACTIVE STATE ACTIONS */}
           <div className="grid grid-cols-2 gap-1.5 pt-0.5">
             <button
               type="button"
-              onClick={() => onBatchModify({ rotationDeltaY: Math.PI / 2 })}
+              onClick={() => safeBatchModify({ rotationDeltaY: Math.PI / 2 })}
               className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-full text-[11px] font-bold text-slate-700"
             >
               ↻ Rotate 90°
@@ -356,23 +612,46 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
             <button
               type="button"
               data-testid="quick-edit-interact-e-btn"
-              onClick={() => onInteractKeyE(primaryAsset)}
-              className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 rounded-full text-[11px] font-bold text-amber-900"
+              onClick={() =>
+                safeExecuteCatalogOrVariantCallback(
+                  () => onInteractKeyE(primaryAsset),
+                  undefined,
+                  'QuickEdit.onInteractKeyE'
+                )
+              }
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all truncate ${
+                primaryAsset.isActivated
+                  ? 'bg-emerald-600 text-white ring-1 ring-white'
+                  : 'bg-amber-100 hover:bg-amber-200 text-amber-900'
+              }`}
+              title={interactionState.statusSummary}
             >
               {primaryAsset.isSecretPassage || primaryAsset.category === 'door' || primaryAsset.category === 'secret_wall'
                 ? `${primaryAsset.isOpen ? 'Close' : 'Open'} 500ms [E]`
-                : 'Interact [E]'}
+                : interactionState.actionPromptLabel}
             </button>
             <button
               type="button"
-              onClick={() => onDuplicate(primaryAsset)}
+              onClick={() =>
+                safeExecuteCatalogOrVariantCallback(
+                  () => onDuplicate(primaryAsset),
+                  undefined,
+                  'QuickEdit.onDuplicate'
+                )
+              }
               className="px-2.5 py-1 bg-[#e0f2fe] hover:bg-[#bae6fd] rounded-full text-[11px] font-bold text-[#0369a1]"
             >
               Duplicate
             </button>
             <button
               type="button"
-              onClick={onDeleteSelected}
+              onClick={() =>
+                safeExecuteCatalogOrVariantCallback(
+                  () => onDeleteSelected(),
+                  undefined,
+                  'QuickEdit.onDeleteSelected'
+                )
+              }
               className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 rounded-full text-[11px] font-bold text-rose-700"
             >
               Delete ({selectedCount})
@@ -381,7 +660,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
               <button
                 type="button"
                 data-testid="quick-edit-copy-btn"
-                onClick={onCopySelected}
+                onClick={() =>
+                  safeExecuteCatalogOrVariantCallback(
+                    () => onCopySelected(),
+                    undefined,
+                    'QuickEdit.onCopySelected'
+                  )
+                }
                 className="px-2.5 py-1 bg-sky-100 hover:bg-sky-200 rounded-full text-[11px] font-bold text-sky-900"
               >
                 📋 Copy ({selectedCount}) [Ctrl+C]
@@ -392,7 +677,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                 type="button"
                 data-testid="quick-edit-paste-btn"
                 disabled={clipboardCount === 0}
-                onClick={onPasteClipboard}
+                onClick={() =>
+                  safeExecuteCatalogOrVariantCallback(
+                    () => onPasteClipboard(),
+                    undefined,
+                    'QuickEdit.onPasteClipboard'
+                  )
+                }
                 className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 disabled:opacity-40 rounded-full text-[11px] font-bold text-emerald-900"
               >
                 📥 Paste ({clipboardCount}) [Ctrl+V]
@@ -411,15 +702,21 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
                 <button
                   type="button"
                   data-testid="quick-edit-save-set-btn"
-                  onClick={() => {
-                    onSaveSelectionAsSet(
-                      setNameDraft.trim() ||
-                        (selectedCount === 1
-                          ? `${primaryAsset.name} Set`
-                          : `${primaryAsset.name} + ${selectedCount - 1} Items Set`)
-                    );
-                    setSetNameDraft('');
-                  }}
+                  onClick={() =>
+                    safeExecuteCatalogOrVariantCallback(
+                      () => {
+                        onSaveSelectionAsSet(
+                          setNameDraft.trim() ||
+                            (selectedCount === 1
+                              ? `${primaryAsset.name} Set`
+                              : `${primaryAsset.name} + ${selectedCount - 1} Items Set`)
+                        );
+                        setSetNameDraft('');
+                      },
+                      undefined,
+                      'QuickEdit.onSaveSelectionAsSet'
+                    )
+                  }
                   className="px-2 py-0.5 rounded-full bg-gradient-to-r from-[#10b981] to-[#059669] text-white text-[10px] font-extrabold shrink-0"
                 >
                   + Save Set
@@ -430,7 +727,13 @@ export const QuickEditWindowF: React.FC<QuickEditWindowFProps> = ({
               <button
                 type="button"
                 data-testid="extend-wall-row-btn"
-                onClick={() => onExtendWallRow(primaryAsset)}
+                onClick={() =>
+                  safeExecuteCatalogOrVariantCallback(
+                    () => onExtendWallRow(primaryAsset),
+                    undefined,
+                    'QuickEdit.onExtendWallRow'
+                  )
+                }
                 title="Activate Wall Drag Tool using this wall's style and dimensions"
                 className="col-span-2 px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-full text-[11px] font-bold shadow-xs flex items-center justify-center gap-1.5"
               >

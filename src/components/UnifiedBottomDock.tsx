@@ -25,12 +25,21 @@ import {
   AssetClipboardPayload,
   searchAndFilterAssetSets,
   togglePlacedAssetConditionVariant,
+  resolveAssetConditionVariant,
+  swapAssetConditionVariant,
+  isUnkemptOrAgedAsset,
   isStructuralHotelAsset,
   canAssetBeUpdatedInHotel,
   getUpdated1990sVariantSubtype,
   getPredecessor1978Subtype,
   upgradeAssetTo1990sHotelVersion,
-  downgradeAssetTo1978Version
+  downgradeAssetTo1978Version,
+  getAssetVisualDesignVariants,
+  swapAssetVisualDesign,
+  AssetConditionVariant,
+  SNAP_GRID_SIZE_OPTIONS,
+  DEFAULT_SNAP_GRID_SIZE,
+  safeExecuteCatalogOrVariantCallback
 } from '../game/rules';
 import { AssetBlueprint } from '../game/hotelData';
 import {
@@ -78,6 +87,10 @@ interface UnifiedBottomDockProps {
   surfaceSnapEnabled: boolean;
   onToggleSurfaceSnap: () => void;
   onSnapSelectedToSurfaceNow: () => void;
+  snapGridSize?: number;
+  onChangeSnapGridSize?: (size: number) => void;
+  onSwapConditionVariant?: (variant: AssetConditionVariant) => void;
+  onSwapVisualDesign?: (targetSubType: string | 'next') => void;
   // Room Blueprints Library Props
   roomBlueprints: RoomBlueprint[];
   onSaveRoomBlueprint: (
@@ -174,6 +187,10 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
   surfaceSnapEnabled,
   onToggleSurfaceSnap,
   onSnapSelectedToSurfaceNow,
+  snapGridSize = DEFAULT_SNAP_GRID_SIZE,
+  onChangeSnapGridSize,
+  onSwapConditionVariant,
+  onSwapVisualDesign,
   roomBlueprints,
   onSaveRoomBlueprint,
   onUpdateRoomBlueprint,
@@ -340,18 +357,17 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
         className="hidden"
       />
 
-      {/* 1. FLOOR LAYERS STACK WINDOW (Available in Build & Walkthrough modes) */}
-      {mode !== 'character' && mode !== 'soundboard' && (
-        <StudioWindowFrame
-          windowState={windows.layers}
-          badgeText={`${floorLayers.length} Floors`}
-          onFocus={onFocusWindow}
-          onMove={onMoveWindow}
-          onResize={onResizeWindow}
-          onToggleMinimize={onToggleMinimizeWindow}
-          onToggleMaximize={onToggleMaximizeWindow}
-          onClose={onCloseWindow}
-        >
+      {/* 1. FLOOR LAYERS STACK WINDOW (Available in all modes via WINDOWS taskbar) */}
+      <StudioWindowFrame
+        windowState={windows.layers || createDefaultStudioWindows().layers}
+        badgeText={`${floorLayers.length} Floors`}
+        onFocus={onFocusWindow}
+        onMove={onMoveWindow}
+        onResize={onResizeWindow}
+        onToggleMinimize={onToggleMinimizeWindow}
+        onToggleMaximize={onToggleMaximizeWindow}
+        onClose={onCloseWindow}
+      >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[11px] font-bold text-slate-600">Step Elevation:</span>
@@ -461,14 +477,13 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
             Clear Active Layer
           </button>
         </div>
-        </StudioWindowFrame>
-      )}
+      </StudioWindowFrame>
 
       {mode !== 'character' && mode !== 'soundboard' && (
         <>
           {/* 2. ROOM BLUEPRINTS LIBRARY WINDOW (Save, Tag, Search & Load Entire Room Layouts as JSON) */}
           <StudioWindowFrame
-            windowState={windows.blueprints}
+            windowState={windows.blueprints || createDefaultStudioWindows().blueprints}
             badgeText={`${filteredRoomBlueprints.length}/${roomBlueprints.length} Saved`}
             onFocus={onFocusWindow}
             onMove={onMoveWindow}
@@ -777,7 +792,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
           {/* 3. BUILD MODE TOOLS WINDOW */}
           <StudioWindowFrame
-            windowState={windows.tools}
+            windowState={windows.tools || createDefaultStudioWindows().tools}
             badgeText="128×128 Grid"
             onFocus={onFocusWindow}
             onMove={onMoveWindow}
@@ -794,10 +809,8 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                   e.currentTarget.blur();
                   const nextTab = e.target.value as 'catalog' | 'sets' | 'ai3d' | 'texture' | 'lore' | 'models';
                   setArchitectTab(nextTab);
-                  if (nextTab === 'catalog' || nextTab === 'sets') {
-                    onOpenWindow?.('catalog');
-                    onFocusWindow('catalog');
-                  }
+                  onOpenWindow?.('catalog');
+                  onFocusWindow('catalog');
                 }}
                 className="w-full bg-[#f0f9ff] border border-[#bae6fd] rounded-2xl px-2.5 py-1.5 text-xs font-bold text-[#0369a1]"
               >
@@ -844,6 +857,69 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                   AI Generated Assets ({catalogAssets.filter((b) => b.isGenerated || b.category === 'custom_ai').length})
                 </option>
               </select>
+
+              {/* SNAP-TO-ASSET PLACEMENT & VARIABLE SNAP-TO-GRID SIZE CONTROLS */}
+              <div
+                data-testid="tools-snap-grid-controls"
+                className="flex flex-col gap-1 bg-gradient-to-r from-[#f0f9ff] to-[#ecfdf5] border border-[#bae6fd] rounded-2xl p-2"
+              >
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-800 truncate">
+                      🧲 Snap-to-Asset Placement
+                    </span>
+                    <span className="text-[9px] text-slate-600 truncate">
+                      {surfaceSnapEnabled
+                        ? 'Flush align to nearby assets & walls'
+                        : 'Grid-only placement'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={surfaceSnapEnabled}
+                    data-testid="tools-snap-to-asset-toggle"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onToggleSurfaceSnap();
+                    }}
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold transition-all shrink-0 ${
+                      surfaceSnapEnabled
+                        ? 'bg-gradient-to-r from-[#10b981] to-[#059669] text-white shadow-2xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                    }`}
+                  >
+                    {surfaceSnapEnabled ? 'ON · Flush' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-1 pt-0.5 border-t border-sky-200/70">
+                  <span className="text-[9px] font-extrabold text-slate-700 shrink-0">
+                    📐 Snap Grid:
+                  </span>
+                  <div className="flex items-center gap-0.5 flex-wrap justify-end">
+                    {SNAP_GRID_SIZE_OPTIONS.map((stepVal) => {
+                      const isActive = Math.abs(snapGridSize - stepVal) < 0.001;
+                      const label = stepVal === 0 ? 'Free' : `${stepVal}m`;
+                      return (
+                        <button
+                          key={stepVal}
+                          type="button"
+                          data-testid={`tools-snap-grid-size-btn-${stepVal}`}
+                          onClick={() => onChangeSnapGridSize?.(stepVal)}
+                          className={`px-1.5 py-0.5 rounded-full text-[9px] font-mono font-extrabold transition-all ${
+                            isActive
+                              ? 'bg-[#0284c7] text-white shadow-2xs'
+                              : 'bg-white hover:bg-sky-50 text-slate-700 border border-slate-300'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
 
               <div className="flex flex-col gap-1 pt-0.5">
                 <button
@@ -932,10 +1008,19 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                 <button
                   type="button"
                   data-testid="wall-row-tool-btn"
-                  onClick={() => {
-                    const wallBp = catalogAssets.find((b) => b.category === 'wall') || catalogAssets[0];
-                    onSelectBlueprint(wallBp);
-                  }}
+                  onClick={() =>
+                    safeExecuteCatalogOrVariantCallback(
+                      () => {
+                        const wallBp =
+                          catalogAssets.find((b) => b && b.category === 'wall') ||
+                          catalogAssets[0] ||
+                          null;
+                        onSelectBlueprint(wallBp);
+                      },
+                      undefined,
+                      'Tools.wallRowTool'
+                    )
+                  }
                   className={`w-full px-3 py-1 rounded-full text-xs font-bold text-left flex items-center justify-between transition-all ${
                     activeBlueprint?.category === 'wall'
                       ? 'bg-amber-600 text-white shadow-xs ring-2 ring-amber-300'
@@ -1563,94 +1648,119 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                             className="inline-flex items-center gap-0.5 px-1.5 py-0.1 rounded-full bg-white border border-slate-300 text-slate-700 text-[8px] font-mono font-semibold"
                           >
                             #{tag}
-                            {onUpdateCatalogBlueprint && (
+                              {onUpdateCatalogBlueprint && (
+                                <button
+                                  type="button"
+                                  aria-label={`Remove tag ${tag} from blueprint`}
+                                  onClick={() =>
+                                    safeExecuteCatalogOrVariantCallback(
+                                      () => {
+                                        const nextBp = removeTagFromBlueprint(activeBlueprint, tag);
+                                        onUpdateCatalogBlueprint(nextBp);
+                                        onSelectBlueprint(nextBp);
+                                      },
+                                      undefined,
+                                      'Catalog.removeTagFromBlueprint'
+                                    )
+                                  }
+                                  className="ml-0.5 text-slate-400 hover:text-rose-600 font-bold"
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {onUpdateCatalogBlueprint && (
+                            <div className="inline-flex items-center gap-1">
+                              <input
+                                type="text"
+                                data-testid="active-blueprint-add-tag-input"
+                                value={catalogNewTagInput}
+                                onChange={(e) => setCatalogNewTagInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && catalogNewTagInput.trim()) {
+                                    e.preventDefault();
+                                    safeExecuteCatalogOrVariantCallback(
+                                      () => {
+                                        const nextBp = addTagToBlueprint(
+                                          activeBlueprint,
+                                          catalogNewTagInput
+                                        );
+                                        onUpdateCatalogBlueprint(nextBp);
+                                        onSelectBlueprint(nextBp);
+                                        setCatalogNewTagInput('');
+                                      },
+                                      undefined,
+                                      'Catalog.addTagToBlueprintKeyDown'
+                                    );
+                                  }
+                                }}
+                                aria-label="Add Tag to Selected Blueprint"
+                                placeholder="+tag..."
+                                className="w-16 bg-white border border-slate-300 rounded-full px-1.5 py-0.1 text-[9px] font-mono text-slate-800"
+                              />
                               <button
                                 type="button"
-                                aria-label={`Remove tag ${tag} from blueprint`}
-                                onClick={() => {
-                                  const nextBp = removeTagFromBlueprint(activeBlueprint, tag);
-                                  onUpdateCatalogBlueprint(nextBp);
-                                  onSelectBlueprint(nextBp);
-                                }}
-                                className="ml-0.5 text-slate-400 hover:text-rose-600 font-bold"
-                              >
-                                ×
-                              </button>
-                            )}
-                          </span>
-                        ))}
-                        {onUpdateCatalogBlueprint && (
-                          <div className="inline-flex items-center gap-1">
-                            <input
-                              type="text"
-                              data-testid="active-blueprint-add-tag-input"
-                              value={catalogNewTagInput}
-                              onChange={(e) => setCatalogNewTagInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && catalogNewTagInput.trim()) {
-                                  e.preventDefault();
-                                  const nextBp = addTagToBlueprint(
-                                    activeBlueprint,
-                                    catalogNewTagInput
-                                  );
-                                  onUpdateCatalogBlueprint(nextBp);
-                                  onSelectBlueprint(nextBp);
-                                  setCatalogNewTagInput('');
+                                data-testid="active-blueprint-add-tag-btn"
+                                onClick={() =>
+                                  safeExecuteCatalogOrVariantCallback(
+                                    () => {
+                                      if (!catalogNewTagInput.trim()) return;
+                                      const nextBp = addTagToBlueprint(
+                                        activeBlueprint,
+                                        catalogNewTagInput
+                                      );
+                                      onUpdateCatalogBlueprint(nextBp);
+                                      onSelectBlueprint(nextBp);
+                                      setCatalogNewTagInput('');
+                                    },
+                                    undefined,
+                                    'Catalog.addTagToBlueprintBtn'
+                                  )
                                 }
-                              }}
-                              aria-label="Add Tag to Selected Blueprint"
-                              placeholder="+tag..."
-                              className="w-16 bg-white border border-slate-300 rounded-full px-1.5 py-0.1 text-[9px] font-mono text-slate-800"
-                            />
-                            <button
-                              type="button"
-                              data-testid="active-blueprint-add-tag-btn"
-                              onClick={() => {
-                                if (!catalogNewTagInput.trim()) return;
-                                const nextBp = addTagToBlueprint(
-                                  activeBlueprint,
-                                  catalogNewTagInput
-                                );
-                                onUpdateCatalogBlueprint(nextBp);
-                                onSelectBlueprint(nextBp);
-                                setCatalogNewTagInput('');
-                              }}
-                              className="px-1.5 py-0.1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-[9px] font-bold"
-                            >
-                              + Tag
-                            </button>
-                          </div>
-                        )}
+                                className="px-1.5 py-0.1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-[9px] font-bold"
+                              >
+                                + Tag
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {filteredCatalog.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center text-center bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 text-xs text-slate-500">
-                      <span className="font-bold text-slate-700">
-                        No catalog blueprints match your search or tag filters
-                      </span>
-                      <span className="text-[11px] mt-0.5">
-                        Try clearing filters or generate a custom 3D model with Meshy.ai Image-to-3D.
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 gap-2 pr-1 pb-1">
-                      {filteredCatalog.map((bp) => {
-                        const active = activeBlueprint?.subType === bp.subType;
-                        const topTags = (bp.tags || []).slice(0, 2);
-                        return (
-                          <button
-                            key={bp.subType}
-                            type="button"
-                            data-testid={`catalog-card-${bp.subType}`}
-                            onClick={() => onSelectBlueprint(active ? null : bp)}
-                            className={`group flex flex-col rounded-2xl p-1.5 text-left transition-all border ${
-                              active
-                                ? 'bg-[#ecfdf5] border-[#10b981] shadow-md scale-[1.01]'
-                                : 'bg-white hover:bg-[#f8fafc] border-slate-200 hover:border-[#38bdf8] shadow-2xs'
-                            }`}
-                          >
+                    {filteredCatalog.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center text-center bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 text-xs text-slate-500">
+                        <span className="font-bold text-slate-700">
+                          No catalog blueprints match your search or tag filters
+                        </span>
+                        <span className="text-[11px] mt-0.5">
+                          Try clearing filters or generate a custom 3D model with Meshy.ai Image-to-3D.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2 pr-1 pb-1">
+                        {filteredCatalog.map((bp) => {
+                          if (!bp || !bp.subType) return null;
+                          const active = activeBlueprint?.subType === bp.subType;
+                          const topTags = (bp.tags || []).slice(0, 2);
+                          return (
+                            <button
+                              key={bp.subType}
+                              type="button"
+                              data-testid={`catalog-card-${bp.subType}`}
+                              onClick={() =>
+                                safeExecuteCatalogOrVariantCallback(
+                                  () => onSelectBlueprint(active ? null : bp),
+                                  undefined,
+                                  `Catalog.selectBlueprint(${bp.subType})`
+                                )
+                              }
+                              className={`group flex flex-col rounded-2xl p-1.5 text-left transition-all border ${
+                                active
+                                  ? 'bg-[#ecfdf5] border-[#10b981] shadow-md scale-[1.01]'
+                                  : 'bg-white hover:bg-[#f8fafc] border-slate-200 hover:border-[#38bdf8] shadow-2xs'
+                              }`}
+                            >
                             <AssetThumbnailSvg blueprint={bp} active={active} />
                             <div className="mt-1 px-0.5">
                               <div className="text-[11px] font-bold text-slate-800 truncate">
@@ -1675,11 +1785,17 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                                     <span
                                       className={`px-1 py-0.1 rounded-full text-[8px] font-extrabold ${
                                         bp.conditionVariant === 'unkempt'
-                                          ? 'bg-orange-100 text-orange-900 border border-orange-200'
+                                          ? 'bg-orange-100 text-orange-900 border border-orange-200 unkempt-aged-flicker'
+                                          : bp.conditionVariant === 'updated'
+                                          ? 'bg-teal-100 text-teal-900 border border-teal-200'
                                           : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
                                       }`}
                                     >
-                                      {bp.conditionVariant === 'unkempt' ? 'Unkempt' : 'Pristine'}
+                                      {bp.conditionVariant === 'unkempt'
+                                        ? 'Unkempt'
+                                        : bp.conditionVariant === 'updated'
+                                        ? 'Updated'
+                                        : 'Pristine'}
                                     </span>
                                   )}
                                   {topTags.length > 0 && (
@@ -1969,7 +2085,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
           {/* 5. 3D OBJECT INSPECTOR WINDOW */}
           <StudioWindowFrame
-            windowState={windows.inspector}
+            windowState={windows.inspector || createDefaultStudioWindows().inspector}
             badgeText={
               surfaceSnapEnabled
                 ? selectedAsset
@@ -1987,50 +2103,79 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
             onClose={onCloseWindow}
           >
             <div className="flex flex-col gap-1.5">
-              {/* Surface Snapping Toggle Bar inside the Inspector Window */}
-              <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-[#f0f9ff] to-[#ecfdf5] border border-[#bae6fd] rounded-2xl px-2.5 py-1.5">
-                <div className="flex flex-col min-w-0">
-                  <span className="text-[11px] font-extrabold text-slate-800 leading-tight whitespace-nowrap">
-                    🧲 Surface Snapping
-                  </span>
-                  <span className="text-[10px] text-slate-500 leading-tight truncate">
-                    {surfaceSnapEnabled
-                      ? 'Flush to closest wall/surface'
-                      : 'Standard 0.5m grid step'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={surfaceSnapEnabled}
-                    aria-label="Toggle Surface Snapping"
-                    data-testid="surface-snap-toggle"
-                    onClick={(e) => {
-                      e.currentTarget.blur();
-                      onToggleSurfaceSnap();
-                    }}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold transition-all shadow-2xs whitespace-nowrap ${
-                      surfaceSnapEnabled
-                        ? 'bg-gradient-to-r from-[#10b981] to-[#059669] text-white'
-                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
-                    }`}
-                  >
-                    {surfaceSnapEnabled ? 'ON · Flush' : 'OFF · Grid'}
-                  </button>
-                  {selectedAsset && (
+              {/* Surface & Asset Placement Snapping + Variable Grid Size Bar inside the Inspector Window */}
+              <div className="flex flex-col gap-1.5 bg-gradient-to-r from-[#f0f9ff] to-[#ecfdf5] border border-[#bae6fd] rounded-2xl px-2.5 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[11px] font-extrabold text-slate-800 leading-tight whitespace-nowrap">
+                      🧲 Snap-to-Asset &amp; Surface Snap
+                    </span>
+                    <span className="text-[10px] text-slate-500 leading-tight truncate">
+                      {surfaceSnapEnabled
+                        ? `Flush to closest asset/wall · ${snapGridSize === 0 ? 'Free' : `${snapGridSize}m`} grid`
+                        : `Grid step: ${snapGridSize === 0 ? 'Free (0m)' : `${snapGridSize}m`}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
+                      role="switch"
+                      aria-checked={surfaceSnapEnabled}
+                      aria-label="Toggle Surface Snapping"
+                      data-testid="surface-snap-toggle"
                       onClick={(e) => {
                         e.currentTarget.blur();
-                        onSnapSelectedToSurfaceNow();
+                        onToggleSurfaceSnap();
                       }}
-                      title="Immediately snap selected object flush against the nearest wall or surface on this floor"
-                      className="px-2 py-1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-[10px] font-extrabold shadow-2xs whitespace-nowrap"
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold transition-all shadow-2xs whitespace-nowrap ${
+                        surfaceSnapEnabled
+                          ? 'bg-gradient-to-r from-[#10b981] to-[#059669] text-white'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                      }`}
                     >
-                      Align Flush
+                      {surfaceSnapEnabled ? 'ON · Flush' : 'OFF · Grid'}
                     </button>
-                  )}
+                    {selectedAsset && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onSnapSelectedToSurfaceNow();
+                        }}
+                        title="Immediately snap selected object flush against the nearest wall or surface on this floor"
+                        className="px-2 py-1 rounded-full bg-[#0284c7] hover:bg-[#0369a1] text-white text-[10px] font-extrabold shadow-2xs whitespace-nowrap"
+                      >
+                        Align Flush
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-sky-200/70">
+                  <label
+                    htmlFor="inspector-snap-grid-size-select"
+                    className="text-[10px] font-extrabold text-slate-700 shrink-0"
+                  >
+                    📐 Grid Size:
+                  </label>
+                  <select
+                    id="inspector-snap-grid-size-select"
+                    aria-label="Select Build Mode Snap Grid Size"
+                    data-testid="inspector-snap-grid-size-select"
+                    value={snapGridSize}
+                    onChange={(e) => {
+                      e.currentTarget.blur();
+                      onChangeSnapGridSize?.(parseFloat(e.target.value));
+                    }}
+                    className="bg-white border border-slate-300 rounded-full px-2 py-0.5 text-[10px] font-mono font-bold text-slate-800"
+                  >
+                    <option value={0.1}>0.1m (Micro Precision)</option>
+                    <option value={0.25}>0.25m (Quarter-Tile)</option>
+                    <option value={0.5}>0.5m (Half-Tile Default)</option>
+                    <option value={1}>1.0m (Full-Tile)</option>
+                    <option value={2}>2.0m (Architectural Bay)</option>
+                    <option value={0}>0m (Free / Unsnapped)</option>
+                  </select>
                 </div>
               </div>
 
@@ -2069,10 +2214,15 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       aria-label="Selected Object Name"
                       value={selectedAsset.name}
                       onChange={(e) =>
-                        onUpdateAsset({
-                          ...selectedAsset,
-                          name: e.target.value
-                        })
+                        safeExecuteCatalogOrVariantCallback(
+                          () =>
+                            onUpdateAsset({
+                              ...selectedAsset,
+                              name: e.target.value
+                            }),
+                          undefined,
+                          'Inspector.updateName'
+                        )
                       }
                       className="flex-1 bg-white border border-slate-300 rounded-full px-2.5 py-0.5 text-xs font-bold text-slate-800"
                     />
@@ -2081,66 +2231,186 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       aria-label="Surface Tint Color"
                       value={selectedAsset.color}
                       onChange={(e) =>
-                        onUpdateAsset({
-                          ...selectedAsset,
-                          color: e.target.value
-                        })
+                        safeExecuteCatalogOrVariantCallback(
+                          () =>
+                            onUpdateAsset({
+                              ...selectedAsset,
+                              color: e.target.value
+                            }),
+                          undefined,
+                          'Inspector.updateColor'
+                        )
                       }
                       className="w-6 h-6 rounded-full cursor-pointer border border-slate-300 bg-transparent"
                     />
                   </div>
 
-                  {/* Dual Condition Variant Switcher (Pristine Vintage ↔ Atmospheric Weathered/Unkempt) */}
+                  {/* Universal 3-Way Condition Variant Switcher (Pristine / Unkempt / Updated 90s) */}
                   {(() => {
-                    const pairedSubtype =
-                      selectedAsset.pairedVariantId ||
-                      catalogAssets.find((b) => b.subType === selectedAsset.subType)?.pairedVariantId;
-                    if (!pairedSubtype) return null;
-                    const targetBp = catalogAssets.find((b) => b.subType === pairedSubtype);
-                    const currentCondition =
-                      selectedAsset.conditionVariant ||
-                      (selectedAsset.name.toLowerCase().includes('unkempt') || selectedAsset.tags?.includes('unkempt')
-                        ? 'unkempt'
-                        : 'pristine');
-                    const targetCondition = currentCondition === 'pristine' ? 'unkempt' : 'pristine';
+                    const currentCondition = safeExecuteCatalogOrVariantCallback(
+                      () => resolveAssetConditionVariant(selectedAsset),
+                      'pristine',
+                      'Inspector.resolveAssetConditionVariant'
+                    );
+                    const isUnkempt = safeExecuteCatalogOrVariantCallback(
+                      () => isUnkemptOrAgedAsset(selectedAsset),
+                      false,
+                      'Inspector.isUnkemptOrAgedAsset'
+                    );
+
+                    const applyInspectorCondition = (variant: AssetConditionVariant) => {
+                      safeExecuteCatalogOrVariantCallback(
+                        () => {
+                          if (onSwapConditionVariant) {
+                            onSwapConditionVariant(variant);
+                            return;
+                          }
+                          const res = swapAssetConditionVariant(
+                            selectedAsset,
+                            variant,
+                            catalogAssets
+                          );
+                          onUpdateAsset(res.swappedAsset);
+                        },
+                        undefined,
+                        `Inspector.swapAssetConditionVariant(${variant})`
+                      );
+                    };
 
                     return (
                       <div
                         data-testid="inspector-condition-variant-section"
-                        className="flex items-center justify-between gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                        className={`flex flex-col gap-1.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl px-2.5 py-1.5 shadow-2xs ${
+                          isUnkempt ? 'unkempt-aged-flicker' : ''
+                        }`}
                       >
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-extrabold text-amber-900">
-                              🎭 Condition:
-                            </span>
-                            <span
-                              className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
-                                currentCondition === 'unkempt'
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              }`}
-                            >
-                              {currentCondition === 'unkempt' ? 'Weathered / Unkempt' : 'Pristine Vintage'}
-                            </span>
-                          </div>
-                          <span className="text-[9px] text-slate-500 truncate">
-                            {targetBp ? `Next: ${targetBp.name}` : `Swap to ${targetCondition} version`}
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-[10px] font-extrabold text-amber-900">
+                            🎭 Condition / Era Variant:
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                              currentCondition === 'unkempt'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : currentCondition === 'updated'
+                                ? 'bg-teal-100 text-teal-800 border border-teal-300'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}
+                          >
+                            {currentCondition === 'unkempt'
+                              ? 'Weathered / Unkempt'
+                              : currentCondition === 'updated'
+                              ? 'Updated (90s Set)'
+                              : 'Pristine Vintage'}
                           </span>
                         </div>
 
+                        <div className="grid grid-cols-3 gap-1">
+                          <button
+                            type="button"
+                            data-testid="inspector-condition-pristine-btn"
+                            onClick={() => applyInspectorCondition('pristine')}
+                            className={`py-0.5 px-2 rounded-full text-[9px] font-extrabold transition-all ${
+                              currentCondition === 'pristine'
+                                ? 'bg-emerald-600 text-white shadow-2xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-emerald-50'
+                            }`}
+                          >
+                            ✨ Pristine
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="inspector-condition-unkempt-btn"
+                            onClick={() => applyInspectorCondition('unkempt')}
+                            className={`py-0.5 px-2 rounded-full text-[9px] font-extrabold transition-all ${
+                              currentCondition === 'unkempt'
+                                ? 'bg-amber-700 text-white shadow-2xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-amber-50'
+                            }`}
+                          >
+                            🏚️ Unkempt
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="inspector-condition-updated-btn"
+                            onClick={() => applyInspectorCondition('updated')}
+                            className={`py-0.5 px-2 rounded-full text-[9px] font-extrabold transition-all ${
+                              currentCondition === 'updated'
+                                ? 'bg-teal-600 text-white shadow-2xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-teal-50'
+                            }`}
+                          >
+                            🏨 Updated (90s)
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Multi-Model Visual Design Switcher for Asset Types with Multiple 3D Models */}
+                  {(() => {
+                    const designVariants = safeExecuteCatalogOrVariantCallback(
+                      () =>
+                        getAssetVisualDesignVariants(
+                          selectedAsset.subType,
+                          catalogAssets
+                        ),
+                      [],
+                      'Inspector.getAssetVisualDesignVariants'
+                    );
+                    if (designVariants.length <= 1) return null;
+                    const currentIdx = designVariants.findIndex(
+                      (d) => d.subType === selectedAsset.subType
+                    );
+                    const applyInspectorVisualDesign = (targetSubType: string | 'next') => {
+                      safeExecuteCatalogOrVariantCallback(
+                        () => {
+                          if (onSwapVisualDesign) {
+                            onSwapVisualDesign(targetSubType);
+                            return;
+                          }
+                          const res = swapAssetVisualDesign(
+                            selectedAsset,
+                            targetSubType,
+                            catalogAssets
+                          );
+                          onUpdateAsset(res.swappedAsset);
+                        },
+                        undefined,
+                        `Inspector.swapAssetVisualDesign(${targetSubType})`
+                      );
+                    };
+                    return (
+                      <div
+                        data-testid="inspector-visual-design-section"
+                        className="flex items-center justify-between gap-1.5 bg-gradient-to-r from-indigo-950/90 to-slate-900 border border-indigo-500/40 rounded-xl px-2.5 py-1.5 shadow-2xs"
+                      >
+                        <span className="text-[10px] font-extrabold text-indigo-300 shrink-0">
+                          🎨 Visual Design ({currentIdx >= 0 ? currentIdx + 1 : 1}/{designVariants.length}):
+                        </span>
+                        <select
+                          aria-label="Select Asset Visual Design Model"
+                          data-testid="inspector-visual-design-select"
+                          value={selectedAsset.subType}
+                          onChange={(e) => {
+                            e.currentTarget.blur();
+                            applyInspectorVisualDesign(e.target.value);
+                          }}
+                          className="flex-1 min-w-0 bg-slate-950 border border-indigo-500/50 rounded-lg px-2 py-0.5 text-[10px] font-bold text-indigo-100 truncate"
+                        >
+                          {designVariants.map((variant, idx) => (
+                            <option key={variant.subType} value={variant.subType}>
+                              Design {idx + 1}: {variant.name} ({variant.era === '1990s' ? '90s' : '70s'})
+                            </option>
+                          ))}
+                        </select>
                         <button
                           type="button"
-                          data-testid="inspector-toggle-condition-variant-btn"
-                          onClick={() => {
-                            const swapped = togglePlacedAssetConditionVariant(selectedAsset, catalogAssets);
-                            if (swapped) {
-                              onUpdateAsset(swapped);
-                            }
-                          }}
-                          className="px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
+                          data-testid="inspector-cycle-visual-design-btn"
+                          onClick={() => applyInspectorVisualDesign('next')}
+                          className="px-2 py-0.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-extrabold shrink-0"
                         >
-                          <span>↻ Swap to {targetCondition === 'unkempt' ? 'Unkempt' : 'Pristine'}</span>
+                          ↻ Next
                         </button>
                       </div>
                     );
@@ -2148,11 +2418,15 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
                   {/* 1990s Hotel Renovation & Structural Immutability Controls */}
                   {(() => {
-                    const isStructural =
-                      isStructuralHotelAsset(selectedAsset.subType) ||
-                      selectedAsset.canUpdateInHotel === false ||
-                      selectedAsset.tags?.includes('structural_fixed') ||
-                      selectedAsset.tags?.includes('structural');
+                    const isStructural = safeExecuteCatalogOrVariantCallback(
+                      () =>
+                        isStructuralHotelAsset(selectedAsset.subType, catalogAssets) ||
+                        selectedAsset.canUpdateInHotel === false ||
+                        Boolean(selectedAsset.tags?.includes('structural_fixed')) ||
+                        Boolean(selectedAsset.tags?.includes('structural')),
+                      false,
+                      'Inspector.isStructuralHotelAsset'
+                    );
 
                     if (isStructural) {
                       return (
@@ -2179,15 +2453,23 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
 
                     const is1990s =
                       selectedAsset.era === '1990s' ||
-                      selectedAsset.subType.endsWith('_90s') ||
+                      (selectedAsset.subType || '').endsWith('_90s') ||
                       selectedAsset.tags?.includes('1990s') ||
                       selectedAsset.tags?.includes('hotel-updated');
-                    const paired1990sSubtype = getUpdated1990sVariantSubtype(selectedAsset.subType);
-                    const predecessor1978Subtype = getPredecessor1978Subtype(selectedAsset.subType);
+                    const paired1990sSubtype = safeExecuteCatalogOrVariantCallback(
+                      () => getUpdated1990sVariantSubtype(selectedAsset.subType, catalogAssets),
+                      null,
+                      'Inspector.getUpdated1990sVariantSubtype'
+                    );
+                    const predecessor1978Subtype = safeExecuteCatalogOrVariantCallback(
+                      () => getPredecessor1978Subtype(selectedAsset.subType, catalogAssets),
+                      null,
+                      'Inspector.getPredecessor1978Subtype'
+                    );
 
                     if (is1990s) {
                       const predecessorBp = predecessor1978Subtype
-                        ? catalogAssets.find((b) => b.subType === predecessor1978Subtype)
+                        ? catalogAssets.find((b) => b && b.subType === predecessor1978Subtype)
                         : null;
                       return (
                         <div
@@ -2213,12 +2495,21 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                           <button
                             type="button"
                             data-testid="inspector-downgrade-era-btn"
-                            onClick={() => {
-                              const res = downgradeAssetTo1978Version(selectedAsset, catalogAssets);
-                              if (res.success) {
-                                onUpdateAsset(res.downgradedAsset);
-                              }
-                            }}
+                            onClick={() =>
+                              safeExecuteCatalogOrVariantCallback(
+                                () => {
+                                  const res = downgradeAssetTo1978Version(
+                                    selectedAsset,
+                                    catalogAssets
+                                  );
+                                  if (res.success) {
+                                    onUpdateAsset(res.downgradedAsset);
+                                  }
+                                },
+                                undefined,
+                                'Inspector.downgradeAssetTo1978Version'
+                              )
+                            }
                             className="px-2.5 py-1 rounded-full bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
                           >
                             <span>⏪ Revert to 1978 Version</span>
@@ -2228,7 +2519,9 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                     }
 
                     if (paired1990sSubtype) {
-                      const target90sBp = catalogAssets.find((b) => b.subType === paired1990sSubtype);
+                      const target90sBp = catalogAssets.find(
+                        (b) => b && b.subType === paired1990sSubtype
+                      );
                       return (
                         <div
                           data-testid="inspector-era-upgrade-section"
@@ -2253,12 +2546,21 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                           <button
                             type="button"
                             data-testid="inspector-upgrade-era-btn"
-                            onClick={() => {
-                              const res = upgradeAssetTo1990sHotelVersion(selectedAsset, catalogAssets);
-                              if (res.success) {
-                                onUpdateAsset(res.upgradedAsset);
-                              }
-                            }}
+                            onClick={() =>
+                              safeExecuteCatalogOrVariantCallback(
+                                () => {
+                                  const res = upgradeAssetTo1990sHotelVersion(
+                                    selectedAsset,
+                                    catalogAssets
+                                  );
+                                  if (res.success) {
+                                    onUpdateAsset(res.upgradedAsset);
+                                  }
+                                },
+                                undefined,
+                                'Inspector.upgradeAssetTo1990sHotelVersion'
+                              )
+                            }
                             className="px-2.5 py-1 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold text-[10px] shadow-xs shrink-0 flex items-center gap-1"
                           >
                             <span>⏩ Upgrade to 1990s Hotel Version</span>
@@ -2276,7 +2578,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       <input
                         type="number"
                         aria-label="Object X Position"
-                        step={0.5}
+                        step={snapGridSize > 0 ? snapGridSize : 0.1}
                         min={-63.5}
                         max={63.5}
                         value={selectedAsset.position[0]}
@@ -2298,7 +2600,7 @@ export const UnifiedBottomDock: React.FC<UnifiedBottomDockProps> = ({
                       <input
                         type="number"
                         aria-label="Object Z Position"
-                        step={0.5}
+                        step={snapGridSize > 0 ? snapGridSize : 0.1}
                         min={-63.5}
                         max={63.5}
                         value={selectedAsset.position[2]}

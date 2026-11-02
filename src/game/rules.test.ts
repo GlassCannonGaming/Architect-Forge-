@@ -1896,10 +1896,11 @@ test('Top Editor Navigation & Title Section Spec: Sound Board as 3rd option, cen
   assert.equal(STUDIO_HEADER_BRAND_SPEC.rightBadgeType, 'walkthrough_eye_button');
   assert.equal(STUDIO_HEADER_BRAND_SPEC.rightBadgeTargetMode, 'walkthrough');
 
-  // 3. Sound Board mode taskbar and window layout
+  // 3. Sound Board mode taskbar and window layout (Sound Board button removed from WINDOWS taskbar)
   const sbWindows = getTaskbarWindowIdsForMode('soundboard');
-  assert.equal(sbWindows[0], 'audio');
+  assert.equal(sbWindows.includes('audio'), false);
   assert.equal(sbWindows.includes('blueprints'), false);
+  assert.equal(sbWindows.includes('layers'), true);
   const defaultWins = createDefaultStudioWindows();
   assert.equal(defaultWins.audio.shortTitle, '🎵 Sound Board');
 });
@@ -2819,6 +2820,894 @@ test('Subtest 43: 7x7 Tile Elevator Cab System: Sliding Doors, Cab Box Walls, Po
   assert.equal(canAssetBeUpdatedInHotel(doors1978, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true);
 });
 
+// ============================================================================
+// SUBTEST 44: CONTEXT-SENSITIVE MOVEMENT CONTROLS (BUILD CAMERA VS FIRST-PERSON)
+// & FULL 1990S HOTEL ASSET IMPORT + MESHY.AI ROUTING
+// ============================================================================
+test('Subtest 44: Context-Sensitive Build Camera vs First-Person Character Movement & Full 1990s Asset List Import', async () => {
+  const {
+    computeBuildCameraMovementStep,
+    computeFirstPersonCharacterMovementStep,
+    APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+    APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+    INITIAL_ASSET_SETS,
+    canAssetBeUpdatedInHotel,
+    upgradeAssetTo1990sHotelVersion,
+    downgradeAssetTo1978Version,
+    buildGemini1990sHotelAssetPromptQueue
+  } = await import('./rules');
 
+  // 1. Build Mode Camera Movement: Space moves camera UP (+dy), Ctrl moves camera DOWN (-dy), WASD pans horizontally
+  const camUp = computeBuildCameraMovementStep({
+    theta: 0,
+    dt: 0.1,
+    keysHeld: new Set(['Space'])
+  });
+  assert.equal(camUp.dy > 0, true, 'Space bar in Build Mode must move the camera vertically UP (+dy)');
+  assert.equal(camUp.upInput, 1);
+
+  const camDown = computeBuildCameraMovementStep({
+    theta: 0,
+    dt: 0.1,
+    keysHeld: new Set(['ControlLeft'])
+  });
+  assert.equal(camDown.dy < 0, true, 'Ctrl key in Build Mode must move the camera vertically DOWN (-dy)');
+  assert.equal(camDown.upInput, -1);
+
+  // Ctrl+C / Ctrl+V / Ctrl+Z editor shortcuts must NOT cause unwanted camera sinking
+  const camShortcutChord = computeBuildCameraMovementStep({
+    theta: 0,
+    dt: 0.1,
+    keysHeld: new Set(['ControlLeft', 'KeyC'])
+  });
+  assert.equal(camShortcutChord.dy, 0, 'Ctrl+C shortcut chord must not move the camera down');
+
+  // 2. First-Person Character Movement: WASD moves character on floor, Ctrl/C crouches eyeHeight, Space grounded jump with gravity
+  const fpWalk = computeFirstPersonCharacterMovementStep({
+    keysHeld: new Set(['KeyW']),
+    yaw: 0,
+    y: 0,
+    vy: 0,
+    eyeHeight: 1.62,
+    dt: 0.1
+  });
+  assert.equal(fpWalk.forwardInput, 1, 'W key in First-Person mode must move the character forward');
+  assert.equal(fpWalk.dz < 0, true, 'At yaw=0, forward movement must advance -Z');
+  assert.equal(fpWalk.nextY, 0, 'Walking must keep character grounded at y=0');
+
+  const fpCrouch = computeFirstPersonCharacterMovementStep({
+    keysHeld: new Set(['ControlLeft']),
+    yaw: 0,
+    y: 0,
+    vy: 0,
+    eyeHeight: 1.62,
+    dt: 0.1
+  });
+  assert.equal(fpCrouch.isCrouching, true, 'Ctrl key in First-Person mode must crouch the character (not sink through floor)');
+  assert.equal(fpCrouch.nextY, 0, 'Crouching in First-Person mode must keep character feet at y=0 on the floor');
+  assert.equal(fpCrouch.nextEyeHeight < 1.62, true, 'Crouching must smoothly lower camera eye height toward 1.02m');
+
+  const fpJumpStart = computeFirstPersonCharacterMovementStep({
+    keysHeld: new Set(['Space']),
+    yaw: 0,
+    y: 0,
+    vy: 0,
+    eyeHeight: 1.62,
+    dt: 0.05
+  });
+  assert.equal(fpJumpStart.didJump, true, 'Space bar in First-Person mode must initiate a grounded jump');
+  assert.equal(fpJumpStart.nextY > 0, true, 'Space bar in First-Person mode must elevate character off the floor');
+  assert.equal(fpJumpStart.nextVy > 0, true);
+
+  // Simulate airborne gravity returning character to floor (no infinite upward flight)
+  let simY = fpJumpStart.nextY;
+  let simVy = fpJumpStart.nextVy;
+  // First step while airborne with Space still held must NOT increase upward velocity
+  const midAirHeldSpace = computeFirstPersonCharacterMovementStep({
+    keysHeld: new Set(['Space']),
+    yaw: 0,
+    y: simY,
+    vy: simVy,
+    eyeHeight: 1.62,
+    dt: 0.05
+  });
+  assert.equal(midAirHeldSpace.didJump, false, 'Holding Space in mid-air must not trigger mid-air flight/double-jump');
+  assert.equal(midAirHeldSpace.nextVy < simVy, true, 'Gravity must decelerate upward velocity even while Space is held');
+
+  for (let step = 0; step < 30; step++) {
+    const airStep = computeFirstPersonCharacterMovementStep({
+      keysHeld: new Set(),
+      yaw: 0,
+      y: simY,
+      vy: simVy,
+      eyeHeight: 1.62,
+      dt: 0.05
+    });
+    simY = airStep.nextY;
+    simVy = airStep.nextVy;
+  }
+  assert.equal(simY, 0, 'Gravity must bring the First-Person character back to the floor (y=0)');
+  assert.equal(simVy, 0);
+
+  // 3. Verify all Newly Imported 1990s Props & Appliances from the Attached List exist and support Updated toggle
+  const newlyImportedUpdatable1990sSubTypes = [
+    'apt_lr_remote_control_90s',
+    'apt_lr_stack_magazines_90s',
+    'apt_lr_throw_pillow_90s',
+    'apt_lr_ficus_houseplant_90s',
+    'apt_lr_framed_wall_art_90s',
+    'apt_lr_cork_coaster_90s',
+    'apt_kit_drip_coffee_maker_90s',
+    'apt_kit_frying_pan_90s',
+    'apt_kit_ceramic_plate_90s',
+    'apt_kit_chef_knife_90s',
+    'apt_kit_pedal_trash_can_90s',
+    'apt_kit_fridge_magnet_90s',
+    'apt_kit_paper_towel_holder_90s',
+    'apt_kit_quilted_oven_mitt_90s',
+    'apt_kit_plastic_container_90s',
+    'apt_kit_wooden_spice_rack_90s',
+    'apt_kit_synthetic_sponge_90s',
+    'apt_bed_pillow_90s',
+    'apt_bed_quilted_comforter_90s',
+    'apt_bed_ceramic_lamp_90s',
+    'apt_bed_plastic_hanger_90s',
+    'apt_bed_wicker_hamper_90s',
+    'apt_bed_wall_mirror_90s',
+    'apt_bath_vinyl_shower_curtain_90s',
+    'apt_bath_plush_mat_90s',
+    'apt_bath_toothbrush_holder_90s',
+    'apt_bath_soap_dispenser_90s',
+    'apt_bath_toilet_brush_90s',
+    'apt_bath_handheld_hairdryer_90s',
+    'apt_bath_small_wastebasket_90s',
+    'apt_bath_first_aid_kit_90s',
+    'apt_bath_towels_90s',
+    'apt_ent_wooden_key_rack_90s',
+    'apt_ent_rubber_doormat_90s',
+    'apt_ent_collapsed_umbrella_90s',
+    'apt_ent_upright_vacuum_90s',
+    'apt_ent_straw_broom_90s',
+    'apt_ent_shoe_rack_90s',
+    'apt_ent_coat_rack_90s'
+  ];
+
+  for (const subType of newlyImportedUpdatable1990sSubTypes) {
+    const bp90s = APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.find((b) => b.subType === subType);
+    assert.equal(Boolean(bp90s), true, `Missing 1990s blueprint from imported list: ${subType}`);
+    assert.equal(bp90s!.era, '1990s');
+    assert.equal(bp90s!.canUpdateInHotel, true);
+    assert.equal(Boolean(bp90s!.predecessor1978Id), true, `${subType} must link back to its 1978 predecessor`);
+
+    // Verify 1978 predecessor upgrades cleanly to this 1990s item and downgrades back
+    const pred1978 = APARTMENT_BUILDING_CATALOG_BLUEPRINTS.find((b) => b.subType === bp90s!.predecessor1978Id);
+    assert.equal(Boolean(pred1978), true, `Missing 1978 predecessor ${bp90s!.predecessor1978Id} for ${subType}`);
+    assert.equal(canAssetBeUpdatedInHotel(pred1978!, APARTMENT_BUILDING_CATALOG_BLUEPRINTS), true);
+
+    const dummyPlaced: PlacedAsset = {
+      id: `test_${pred1978!.subType}`,
+      name: pred1978!.name,
+      category: pred1978!.category,
+      subType: pred1978!.subType,
+      floor: 'lobby',
+      position: [0, 0.5, 0],
+      dimensions: [...pred1978!.defaultDimensions] as [number, number, number],
+      rotationY: 0,
+      color: pred1978!.defaultColor,
+      textureId: pred1978!.defaultTexture,
+      collidable: pred1978!.collidable,
+      era: '1970s'
+    };
+
+    const up = upgradeAssetTo1990sHotelVersion(dummyPlaced, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(up.success, true, `1978 ${pred1978!.subType} must upgrade to ${subType}`);
+    assert.equal(up.upgradedAsset.subType, subType);
+
+    const down = downgradeAssetTo1978Version(up.upgradedAsset, APARTMENT_BUILDING_CATALOG_BLUEPRINTS);
+    assert.equal(down.success, true, `1990s ${subType} must downgrade back to ${pred1978!.subType}`);
+    assert.equal(down.downgradedAsset.subType, pred1978!.subType);
+  }
+
+  // Also verify net-new / secondary 90s items exist in APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS
+  for (const netNewSubType of [
+    'apt_lr_video_game_console_90s',
+    'apt_kit_two_slice_toaster_90s',
+    'apt_kit_cooking_pot_90s',
+    'apt_kit_drinking_glass_90s',
+    'apt_kit_plastic_dish_rack_90s',
+    'apt_bed_frame_metal_90s',
+    'apt_bath_shower_curtain_ring_90s',
+    'apt_ent_plastic_dustpan_90s'
+  ]) {
+    const bp = APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.find((b) => b.subType === netNewSubType);
+    assert.equal(Boolean(bp), true, `Missing net-new 1990s item: ${netNewSubType}`);
+  }
+
+  // 4. Verify the 90's Set for the new items exists in INITIAL_ASSET_SETS
+  const new90sPropsSet = INITIAL_ASSET_SETS.find((s) => s.id === 'set_apt_updated_90s_new_items_collection');
+  assert.equal(Boolean(new90sPropsSet), true, 'set_apt_updated_90s_new_items_collection must exist in INITIAL_ASSET_SETS');
+  assert.equal(new90sPropsSet!.tags.includes('new_90s_item'), true);
+  assert.equal(new90sPropsSet!.items.length >= 8, true, 'Must contain the curated 1990s room props set');
+
+  // 5. Verify Meshy.ai 3D routing on difficult organic/cloth/sculpted 1990s models
+  const promptQueue = buildGemini1990sHotelAssetPromptQueue();
+  const meshyRouted = promptQueue.filter((q) => q.useMeshy3D && q.meshyPipeline === 'meshy-4-image-to-3d');
+  assert.equal(meshyRouted.length >= 10, true, 'Difficult 3D models must be routed to Meshy.ai (meshy-4-image-to-3d)');
+});
+
+test('Subtest 45: Pristine/Unkempt/Updated (90s) Quick Edit Condition Toggle, Procedural Weathering Re-Texture, Unkempt/Aged CSS Flicker Keyed to Global FPS, and Interactive TV White "On" State', async () => {
+  const {
+    resolveAssetConditionVariant,
+    swapAssetConditionVariant,
+    weatherAssetToLate70sStyle,
+    isUnkemptOrAgedAsset,
+    computeUnkemptFlickerCssSpec,
+    sampleUnkemptFlickerIntensity,
+    isTvOrCrtScreenAsset,
+    computeAssetInteractionVisualState,
+    toggleAssetInteractiveState
+  } = await import('./rules');
+  const { ASSET_CATALOG } = await import('./hotelData');
+
+  // 1. Universal 'Pristine / Unkempt / Updated' toggle works on catalog-paired assets AND arbitrary/structural assets
+  const tvAsset: PlacedAsset = {
+    id: 'tv_suite_201',
+    name: '1978 Woodgrain Floor-Console CRT TV (Pristine)',
+    category: 'appliance',
+    subType: 'apt_lr_crt_tv_console_pristine',
+    floor: 'floor2',
+    position: [2, 0.45, -3],
+    dimensions: [0.95, 0.85, 0.58],
+    rotationY: 0,
+    color: '#5c3a21',
+    textureId: 'oak_parquet',
+    collidable: true,
+    conditionVariant: 'pristine',
+    era: '1970s'
+  };
+
+  assert.equal(resolveAssetConditionVariant(tvAsset), 'pristine');
+  assert.equal(isUnkemptOrAgedAsset(tvAsset), false);
+
+  // Swap Pristine -> Unkempt (triggers procedural weathering re-texture & marks unkempt)
+  const toUnkempt = swapAssetConditionVariant(tvAsset, 'unkempt', ASSET_CATALOG);
+  assert.equal(toUnkempt.conditionVariant, 'unkempt');
+  assert.equal(resolveAssetConditionVariant(toUnkempt.swappedAsset), 'unkempt');
+  assert.equal(toUnkempt.retextured, true);
+  assert.equal(isUnkemptOrAgedAsset(toUnkempt.swappedAsset), true);
+  assert.equal(toUnkempt.swappedAsset.tags?.includes('unkempt'), true);
+
+  // Swap Unkempt -> Updated (swaps to 1990s hotel asset set variant & re-textures)
+  const toUpdated90s = swapAssetConditionVariant(toUnkempt.swappedAsset, 'updated', ASSET_CATALOG);
+  assert.equal(toUpdated90s.conditionVariant, 'updated');
+  assert.equal(resolveAssetConditionVariant(toUpdated90s.swappedAsset), 'updated');
+  assert.equal(toUpdated90s.swappedAsset.era, '1990s');
+  assert.equal(toUpdated90s.swappedAsset.subType, 'apt_lr_crt_tv_vcr_90s');
+  assert.equal(toUpdated90s.retextured, true);
+
+  // Swap Updated (90s) -> Pristine (reverts to 1978 Pristine variant)
+  const backToPristine = swapAssetConditionVariant(toUpdated90s.swappedAsset, 'pristine', ASSET_CATALOG);
+  assert.equal(backToPristine.conditionVariant, 'pristine');
+  assert.equal(resolveAssetConditionVariant(backToPristine.swappedAsset), 'pristine');
+  assert.equal(backToPristine.swappedAsset.era, '1970s');
+  assert.equal(backToPristine.swappedAsset.subType, 'apt_lr_crt_tv_console_pristine');
+
+  // Verify general/custom assets without a paired catalog entry also swap cleanly across Pristine / Unkempt / Updated
+  const customWallAsset: PlacedAsset = {
+    id: 'custom_wall_1',
+    name: 'Lobby Partition Wall',
+    category: 'wall',
+    subType: 'interior_plaster_wall',
+    floor: 'lobby',
+    position: [0, 1.5, 0],
+    dimensions: [2, 3, 0.25],
+    rotationY: 0,
+    color: '#f8fafc',
+    textureId: 'plaster_cream',
+    collidable: true
+  };
+  const wallUnkempt = swapAssetConditionVariant(customWallAsset, 'unkempt', ASSET_CATALOG);
+  assert.equal(wallUnkempt.swappedAsset.conditionVariant, 'unkempt');
+  assert.equal(isUnkemptOrAgedAsset(wallUnkempt.swappedAsset), true);
+  const wallUpdated = swapAssetConditionVariant(wallUnkempt.swappedAsset, 'updated', ASSET_CATALOG);
+  assert.equal(wallUpdated.swappedAsset.conditionVariant, 'updated');
+  assert.equal(wallUpdated.swappedAsset.era, '1990s');
+
+  // Verify backward compatibility of single-arg weatherAssetToLate70sStyle
+  const legacyWeathered = weatherAssetToLate70sStyle({
+    ...customWallAsset,
+    color: '#10b981'
+  });
+  assert.equal(legacyWeathered.color, '#4a5438');
+
+  // 2. Subtle 'flicker' animation effect for assets marked as 'unkempt' or 'aged' keyed to globalAnimationFps
+  const flicker8Fps = computeUnkemptFlickerCssSpec(8, toUnkempt.swappedAsset.id);
+  const flicker24Fps = computeUnkemptFlickerCssSpec(24, toUnkempt.swappedAsset.id);
+  assert.equal(flicker8Fps.fps, 8);
+  assert.equal(flicker24Fps.fps, 24);
+  assert.equal(flicker24Fps.stepCount > flicker8Fps.stepCount, true);
+  assert.notEqual(flicker8Fps.animationDurationSec, flicker24Fps.animationDurationSec);
+
+  const sampleA = sampleUnkemptFlickerIntensity(0.5, 8, toUnkempt.swappedAsset.id);
+  assert.equal(sampleA.opacity >= 0.8 && sampleA.opacity <= 1.0, true);
+  assert.equal(sampleA.brightnessMultiplier >= 0.8 && sampleA.brightnessMultiplier <= 1.05, true);
+
+  // 3. Interactive State Change: Interacting with a TV turns the screen a white "on" (#ffffff)
+  assert.equal(isTvOrCrtScreenAsset(tvAsset), true);
+  const initialTvVisual = computeAssetInteractionVisualState(tvAsset);
+  assert.equal(initialTvVisual.isActivated, false);
+  assert.equal(initialTvVisual.screenState, 'off');
+
+  const toggledTvOn = toggleAssetInteractiveState(tvAsset);
+  assert.equal(toggledTvOn.updatedAsset.isActivated, true);
+  assert.equal(toggledTvOn.visualState.isActivated, true);
+  assert.equal(toggledTvOn.visualState.interactionKind, 'tv_screen');
+  assert.equal(toggledTvOn.visualState.screenState, 'white_on');
+  assert.equal(toggledTvOn.visualState.screenColorHex, '#ffffff');
+  assert.equal(toggledTvOn.visualState.screenEmissiveHex, '#ffffff');
+  assert.equal(toggledTvOn.visualState.emitsLight, true);
+  assert.equal(toggledTvOn.message.includes('white "ON"'), true);
+
+  // Toggling the TV again turns the screen back OFF
+  const toggledTvOff = toggleAssetInteractiveState(toggledTvOn.updatedAsset);
+  assert.equal(toggledTvOff.updatedAsset.isActivated, false);
+  assert.equal(toggledTvOff.visualState.screenState, 'off');
+});
+
+test('Subtest 46: Early-1990s Hotel & Apartment 70-Item Meshy.ai Text-to-Image-to-3D Catalog & Multi-Design Visual Variant Switcher', async () => {
+  const {
+    APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS,
+    ASSET_VISUAL_DESIGN_FAMILIES,
+    buildGemini1990sHotelAssetPromptQueue,
+    getAssetVisualDesignVariants,
+    swapAssetVisualDesign
+  } = await import('./apartmentUpdated1990sData');
+  const { ASSET_CATALOG } = await import('./hotelData');
+
+  // 1. Verify all newly modeled early-1990s items from the uploaded list are registered with compositeParts & meshy_3d
+  const expectedUploadedSubtypes = [
+    // Entryway Lobby
+    'apt_front_door_intercom_90s',
+    'apt_mailboxes_90s',
+    'apt_fire_extinguisher_90s',
+    'apt_smoke_detector_disc_90s',
+    'apt_exit_sign_stencil_red_90s',
+    'apt_concrete_stairwell_step_90s',
+    'apt_carpeted_stairwell_step_90s',
+    'apt_elevator_interior_panel_90s',
+    'apt_shared_washing_machine_90s',
+    'apt_shared_dryer_90s',
+    'apt_hvac_vent_grill_90s',
+    'apt_cast_iron_radiator_90s',
+    'apt_utility_meter_90s',
+    'apt_trash_chute_door_90s',
+    'apt_hallway_dome_fixture_90s',
+    'apt_breaker_panel_90s',
+    // Living Room & Shared Areas
+    'apt_lr_crt_tv_vcr_90s',
+    'apt_lr_remote_control_90s',
+    'apt_lr_floral_sofa_90s',
+    'apt_lr_particle_glass_coffee_table_90s',
+    'apt_lr_stack_magazines_90s',
+    'apt_lr_throw_pillow_90s',
+    'apt_lr_ficus_houseplant_90s',
+    'apt_lr_framed_wall_art_90s',
+    'apt_lr_brass_pleated_floor_lamp_90s',
+    'apt_lr_geometric_area_rug_90s',
+    'apt_lr_cork_coaster_90s',
+    'apt_lr_video_game_console_90s',
+    // Kitchen & Dining
+    'apt_kit_drip_coffee_maker_90s',
+    'apt_kit_two_slice_toaster_90s',
+    'apt_kit_rotary_microwave_90s',
+    'apt_kit_cooking_pot_90s',
+    'apt_kit_frying_pan_90s',
+    'apt_kit_ceramic_plate_90s',
+    'apt_kit_drinking_glass_90s',
+    'apt_kit_chef_knife_90s',
+    'apt_kit_plastic_dish_rack_90s',
+    'apt_kit_pedal_trash_can_90s',
+    'apt_kit_fridge_magnet_90s',
+    'apt_kit_paper_towel_holder_90s',
+    'apt_kit_quilted_oven_mitt_90s',
+    'apt_kit_plastic_container_90s',
+    'apt_kit_wooden_spice_rack_90s',
+    'apt_kit_synthetic_sponge_90s',
+    // Bedroom
+    'apt_bed_frame_metal_90s',
+    'apt_bed_pillow_90s',
+    'apt_bed_quilted_comforter_90s',
+    'apt_bed_veneered_nightstand_90s',
+    'apt_bed_ceramic_lamp_90s',
+    'apt_bed_plastic_hanger_90s',
+    'apt_bed_four_drawer_dresser_90s',
+    'apt_bed_wicker_hamper_90s',
+    'apt_bed_digital_clock_radio_90s',
+    'apt_bed_wall_mirror_90s',
+    // Bathroom
+    'apt_bath_vinyl_shower_curtain_90s',
+    'apt_bath_shower_curtain_ring_90s',
+    'apt_bath_plush_mat_90s',
+    'apt_bath_toothbrush_holder_90s',
+    'apt_bath_soap_dispenser_90s',
+    'apt_bath_toilet_brush_90s',
+    'apt_bath_handheld_hairdryer_90s',
+    'apt_bath_small_wastebasket_90s',
+    'apt_bath_first_aid_kit_90s',
+    // Entryway & Utility
+    'apt_ent_wooden_key_rack_90s',
+    'apt_ent_rubber_doormat_90s',
+    'apt_ent_collapsed_umbrella_90s',
+    'apt_ent_upright_vacuum_90s',
+    'apt_ent_straw_broom_90s',
+    'apt_ent_plastic_dustpan_90s',
+    'apt_ent_shoe_rack_90s'
+  ];
+
+  for (const subType of expectedUploadedSubtypes) {
+    const bp = APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS.find((b) => b.subType === subType);
+    assert.ok(bp, `Expected early-1990s blueprint ${subType} to exist in APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS`);
+    assert.equal(bp.era, '1990s');
+    assert.ok(
+      bp.compositeParts && bp.compositeParts.length >= 2,
+      `Expected ${subType} to have multi-part 3D compositeParts`
+    );
+  }
+
+  // 2. Verify Text-to-Image-to-3D queue uses gemini-3.1-flash-lite-image -> meshy-4-image-to-3d
+  const queue = buildGemini1990sHotelAssetPromptQueue();
+  const intercomQueueEntry = queue.find((q) => q.subType === 'apt_front_door_intercom_90s');
+  assert.ok(intercomQueueEntry);
+  assert.equal(intercomQueueEntry.imageModel, 'gemini-3.1-flash-lite-image');
+  assert.equal(intercomQueueEntry.useMeshy3D, true);
+  assert.equal(intercomQueueEntry.meshyPipeline, 'meshy-4-image-to-3d');
+  assert.equal(intercomQueueEntry.prompt.includes('orthographic three-quarter view'), true);
+
+  // 3. Verify asset types with multiple models expose all visual designs and swap cleanly
+  assert.equal(Object.keys(ASSET_VISUAL_DESIGN_FAMILIES).length >= 20, true);
+  const sofaDesigns = getAssetVisualDesignVariants('apt_hotel_sofa_90s', ASSET_CATALOG);
+  assert.equal(sofaDesigns.some((d) => d.subType === 'apt_hotel_sofa_90s'), true);
+  assert.equal(sofaDesigns.some((d) => d.subType === 'apt_lr_floral_sofa_90s'), true);
+
+  const placedSofa: PlacedAsset = {
+    id: 'sofa_test_1',
+    name: '1990s Teal & Mauve Commercial Hotel Sofa',
+    category: 'furniture',
+    subType: 'apt_hotel_sofa_90s',
+    floor: 'floor2',
+    position: [1, 0.44, -2],
+    dimensions: [2.2, 0.88, 0.95],
+    rotationY: 0,
+    color: '#1b4332',
+    textureId: 'wallpaper_damask',
+    collidable: true,
+    era: '1990s',
+    conditionVariant: 'updated'
+  };
+
+  const swappedSofa = swapAssetVisualDesign(placedSofa, 'apt_lr_floral_sofa_90s', ASSET_CATALOG);
+  assert.equal(swappedSofa.swappedAsset.subType, 'apt_lr_floral_sofa_90s');
+  assert.equal(swappedSofa.swappedAsset.conditionVariant, 'updated');
+  assert.ok(swappedSofa.swappedAsset.compositeParts && swappedSofa.swappedAsset.compositeParts.length >= 4);
+
+  const cycledSofa = swapAssetVisualDesign(placedSofa, 'next', ASSET_CATALOG);
+  assert.equal(cycledSofa.swappedAsset.subType, 'apt_lr_floral_sofa_90s');
+});
+
+test('WINDOWS taskbar removes Sound Board button across all modes and Tools button brings obscured/off-screen window to front before toggling closed', async () => {
+  const {
+    getTaskbarWindowIdsForMode,
+    createDefaultStudioWindows,
+    normalizeStudioWindowsState,
+    handleTaskbarWindowButtonClick
+  } = await import('./rules');
+
+  // 1. Verify 'audio' (Sound Board) is removed from WINDOWS taskbar in all modes
+  for (const mode of ['architect', 'character', 'soundboard', 'walkthrough'] as const) {
+    const modeWinIds = getTaskbarWindowIdsForMode(mode);
+    assert.equal(
+      modeWinIds.includes('audio'),
+      false,
+      `Expected 'audio' (Sound Board) to be excluded from WINDOWS bar in ${mode} mode`
+    );
+  }
+
+  // 2. Verify 'tools' is present in architect/walkthrough modes and has valid default bounds
+  const archIds = getTaskbarWindowIdsForMode('architect');
+  assert.equal(archIds.includes('tools'), true);
+  assert.equal(archIds.includes('layers'), true);
+
+  let wins = createDefaultStudioWindows();
+  // Simulate another window ('catalog') having higher zIndex than 'tools'
+  wins = {
+    ...wins,
+    tools: { ...wins.tools, isOpen: true, isMinimized: false, zIndex: 21 },
+    catalog: { ...wins.catalog, isOpen: true, isMinimized: false, zIndex: 30 }
+  };
+
+  // Clicking Tools button when obscured by Catalog brings Tools to front instead of closing it
+  const step1 = handleTaskbarWindowButtonClick(wins, 'tools', 'architect', 1280, 720);
+  assert.equal(step1.action, 'focused');
+  assert.equal(step1.windowState.isOpen, true);
+  assert.equal(step1.windowState.zIndex > wins.catalog.zIndex, true);
+
+  // Clicking Tools button again when it is already top-most closes it
+  const step2 = handleTaskbarWindowButtonClick(step1.windows, 'tools', 'architect', 1280, 720);
+  assert.equal(step2.action, 'closed');
+  assert.equal(step2.windowState.isOpen, false);
+
+  // Clicking Tools button when closed reopens and focuses it
+  const step3 = handleTaskbarWindowButtonClick(step2.windows, 'tools', 'architect', 1280, 720);
+  assert.equal(step3.action, 'opened');
+  assert.equal(step3.windowState.isOpen, true);
+
+  // 3. Verify normalizeStudioWindowsState clamps off-screen persisted coordinates into viewport
+  const corrupted = {
+    tools: { x: 4000, y: 3000, isOpen: true, zIndex: 25 }
+  };
+  const recovered = normalizeStudioWindowsState(corrupted, 1280, 720);
+  assert.equal(recovered.tools.x <= 1280 - recovered.tools.width, true);
+  assert.equal(recovered.tools.y <= 720 - recovered.tools.height, true);
+});
+
+test('Build Mode Snap-to-Asset Placement and Variable Snap-to-Grid Size: SNAP_GRID_SIZE_OPTIONS, computeBuildPlacementPosition, and moveMultipleAssetsByDelta', async () => {
+  const {
+    SNAP_GRID_SIZE_OPTIONS,
+    DEFAULT_SNAP_GRID_SIZE,
+    normalizeSnapGridSize,
+    snapToGrid,
+    computeBuildPlacementPosition,
+    moveMultipleAssetsByDelta
+  } = await import('./rules');
+
+  // 1. Verify variable grid step options (0m Free, 0.1m, 0.25m, 0.5m, 1.0m, 2.0m)
+  assert.deepEqual(SNAP_GRID_SIZE_OPTIONS, [0, 0.1, 0.25, 0.5, 1.0, 2.0]);
+  assert.equal(DEFAULT_SNAP_GRID_SIZE, 0.5);
+  assert.equal(normalizeSnapGridSize(-1), 0.5);
+  assert.equal(normalizeSnapGridSize(0.1), 0.1);
+  assert.equal(normalizeSnapGridSize(0), 0);
+
+  // 2. Verify snapToGrid across variable grid sizes without floating-point drift
+  assert.equal(snapToGrid(1.23, 0.1), 1.2);
+  assert.equal(snapToGrid(1.37, 0.25), 1.25);
+  assert.equal(snapToGrid(1.38, 0.25), 1.5);
+  assert.equal(snapToGrid(1.38, 0.5), 1.5);
+  assert.equal(snapToGrid(1.38, 1.0), 1.0);
+  assert.equal(snapToGrid(1.38, 2.0), 2.0);
+  assert.equal(snapToGrid(1.3842, 0), 1.3842);
+
+  // 3. Verify computeBuildPlacementPosition snaps flush against an existing asset when snapToAssetEnabled is true
+  const anchorDesk: PlacedAsset = {
+    id: 'desk_anchor_1',
+    name: 'Lobby Night Clerk Desk',
+    category: 'furniture',
+    subType: 'lobby_desk',
+    floor: 'lobby',
+    position: [2.0, 0.5, 2.0],
+    rotationY: 0,
+    dimensions: [2.0, 1.0, 1.0], // halfW = 1.0, halfD = 0.5
+    color: '#472a18',
+    textureId: 'oak_parquet',
+    collidable: true
+  };
+
+  // Placing a 1.0m x 1.0m x 0.8m cabinet (halfW=0.5, halfD=0.4) near the south face (z = 2.0 + 0.5 + 0.4 = 2.9)
+  const snappedPlacement = computeBuildPlacementPosition({
+    rawX: 2.18,
+    rawZ: 3.1,
+    dimensions: [1.0, 1.0, 0.8],
+    rotationY: 0,
+    category: 'furniture',
+    subType: 'side_cabinet',
+    floor: 'lobby',
+    floorAssets: [anchorDesk],
+    gridStep: 0.1,
+    snapToAssetEnabled: true
+  });
+  assert.equal(snappedPlacement.snappedToId, 'desk_anchor_1');
+  assert.equal(snappedPlacement.snappedFace, 'south');
+  assert.equal(snappedPlacement.z, 2.9); // Flush against south face of desk (2.0 + 0.5 + 0.4)
+
+  // 4. When snapToAssetEnabled is false, computeBuildPlacementPosition uses only the variable grid step
+  const gridOnlyPlacement025 = computeBuildPlacementPosition({
+    rawX: 2.18,
+    rawZ: 3.1,
+    dimensions: [1.0, 1.0, 0.8],
+    rotationY: 0,
+    category: 'furniture',
+    subType: 'side_cabinet',
+    floor: 'lobby',
+    floorAssets: [anchorDesk],
+    gridStep: 0.25,
+    snapToAssetEnabled: false
+  });
+  assert.equal(gridOnlyPlacement025.snappedToId, null);
+  assert.equal(gridOnlyPlacement025.x, 2.25);
+  assert.equal(gridOnlyPlacement025.z, 3.0);
+
+  // 5. Verify moveMultipleAssetsByDelta respects variable gridStep (0.1m, 0.25m, 1.0m)
+  const moved01 = moveMultipleAssetsByDelta(
+    [anchorDesk],
+    ['desk_anchor_1'],
+    'desk_anchor_1',
+    2.34,
+    2.12,
+    63.5,
+    { surfaceSnap: false, gridStep: 0.1 }
+  );
+  assert.equal(moved01[0].position[0], 2.3);
+  assert.equal(moved01[0].position[2], 2.1);
+});
+
+test('Error-Handling Wrappers & Rapid Variant/Catalog Toggling Resilience: safeExecuteCatalogOrVariantCallback, swapAssetConditionVariant, swapAssetVisualDesign, and era upgrade/downgrade', async () => {
+  const {
+    safeExecuteCatalogOrVariantCallback,
+    swapAssetConditionVariant,
+    swapAssetVisualDesign,
+    upgradeAssetTo1990sHotelVersion,
+    downgradeAssetTo1978Version
+  } = await import('./rules');
+  const { ASSET_CATALOG } = await import('./hotelData');
+
+  // 1. Verify safeExecuteCatalogOrVariantCallback catches runtime exceptions and returns fallback without crashing UI
+  let capturedBanner = '';
+  const fallbackResult = safeExecuteCatalogOrVariantCallback(
+    () => {
+      throw new Error('Simulated rapid toggle race condition');
+    },
+    'safe_fallback',
+    'TestRapidToggle',
+    (msg) => {
+      capturedBanner = msg;
+    }
+  );
+  assert.equal(fallbackResult, 'safe_fallback');
+  assert.equal(capturedBanner.includes('TestRapidToggle'), true);
+
+  // 2. Verify swapAssetConditionVariant, swapAssetVisualDesign, upgradeAssetTo1990sHotelVersion, and downgradeAssetTo1978Version
+  // handle null/undefined/malformed inputs gracefully without throwing TypeError
+  const nullCondRes = swapAssetConditionVariant(
+    null as unknown as PlacedAsset,
+    'updated',
+    ASSET_CATALOG
+  );
+  assert.equal(nullCondRes.conditionVariant, 'updated');
+  assert.equal(nullCondRes.retextured, false);
+
+  const nullDesignRes = swapAssetVisualDesign(
+    undefined as unknown as PlacedAsset,
+    'next',
+    ASSET_CATALOG
+  );
+  assert.equal(Boolean(nullDesignRes.swappedAsset), true);
+
+  const nullUpgradeRes = upgradeAssetTo1990sHotelVersion(
+    null as unknown as PlacedAsset,
+    ASSET_CATALOG
+  );
+  assert.equal(nullUpgradeRes.success, false);
+
+  const nullDowngradeRes = downgradeAssetTo1978Version(
+    undefined as unknown as PlacedAsset,
+    ASSET_CATALOG
+  );
+  assert.equal(nullDowngradeRes.success, false);
+
+  // 3. Stress-test 60 rapid sequential variant & visual design toggles on a real asset
+  let asset: PlacedAsset = {
+    id: 'rapid_toggle_tv',
+    name: '1978 Woodgrain Console CRT Television',
+    category: 'appliance',
+    subType: 'apt_lr_console_tv_pristine',
+    floor: 'lobby',
+    position: [0, 0.5, 0],
+    rotationY: 0,
+    dimensions: [0.95, 0.85, 0.55],
+    color: '#4a2f1d',
+    textureId: 'oak_parquet',
+    collidable: true,
+    conditionVariant: 'pristine'
+  };
+
+  const cycleOrder: Array<'pristine' | 'unkempt' | 'updated'> = ['unkempt', 'updated', 'pristine'];
+  for (let i = 0; i < 60; i++) {
+    const targetCond = cycleOrder[i % cycleOrder.length];
+    const condSwap = safeExecuteCatalogOrVariantCallback(
+      () => swapAssetConditionVariant(asset, targetCond, ASSET_CATALOG),
+      null,
+      `RapidCycle_${i}`
+    );
+    assert.ok(condSwap);
+    assert.equal(condSwap.conditionVariant, targetCond);
+    asset = condSwap.swappedAsset;
+
+    if (i % 2 === 0) {
+      const designSwap = safeExecuteCatalogOrVariantCallback(
+        () => swapAssetVisualDesign(asset, 'next', ASSET_CATALOG),
+        null,
+        `RapidDesign_${i}`
+      );
+      assert.ok(designSwap);
+      asset = designSwap.swappedAsset;
+    }
+  }
+  assert.equal(Array.isArray(asset.position) && asset.position.length === 3, true);
+  assert.equal(Array.isArray(asset.dimensions) && asset.dimensions.length === 3, true);
+});
+
+test('Subtest 50: Room High-Suspicion Detection & Hotel Ambience Audio Triggering', async () => {
+  const {
+    evaluateRoomSuspicionLevel,
+    isAgentInRoom,
+    computeHotelAmbienceSpec,
+    normalizeRoomString
+  } = await import('./rules');
+  const {
+    BUILTIN_SOUND_EFFECTS,
+    BUILTIN_BGM_TRACKS
+  } = await import('./audioEngine');
+
+  // 1. Verify Sound Effect & BGM Catalog Integration
+  assert.ok(BUILTIN_SOUND_EFFECTS.hotel_ambience, 'hotel_ambience must be in BUILTIN_SOUND_EFFECTS');
+  assert.equal(BUILTIN_SOUND_EFFECTS.hotel_ambience.type, 'hotel_ambience');
+  assert.equal(BUILTIN_SOUND_EFFECTS.hotel_ambience.baseFrequency, 48);
+  assert.equal(BUILTIN_SOUND_EFFECTS.hotel_ambience.reverbPreset, 'grand_lobby');
+
+  const bgmTrack = BUILTIN_BGM_TRACKS.find((t) => t.id === 'bgm_hotel_ambience');
+  assert.ok(bgmTrack, 'bgm_hotel_ambience must be in BUILTIN_BGM_TRACKS');
+  assert.equal(bgmTrack!.bpm, 48);
+  assert.equal(bgmTrack!.scale, 'diminished');
+  assert.ok(bgmTrack!.melody.length >= 4);
+  assert.ok(bgmTrack!.bass.length >= 3);
+
+  // 2. Procedural Ambience Spec Generator
+  const specLow = computeHotelAmbienceSpec({ intensity: 0.2 });
+  const specHigh = computeHotelAmbienceSpec({ intensity: 0.9 });
+  assert.ok(specLow.baseFrequency <= specHigh.baseFrequency);
+  assert.ok(specLow.filterCutoff! <= specHigh.filterCutoff!);
+  assert.equal(specLow.noiseColor, 'pink');
+  assert.equal(specHigh.reverbPreset, 'grand_lobby');
+
+  // 3. Normalized Room String Matching
+  assert.equal(normalizeRoomString('Room 101'), 'room 101');
+  assert.equal(normalizeRoomString('Front Desk & Registry'), 'front desk registry');
+  assert.equal(normalizeRoomString(''), '');
+
+  // 4. Room Agents & Suspicion Evaluation
+  const testAgents: HotelAgentProfile[] = [
+    {
+      id: 'agent_eleanor',
+      name: 'Eleanor Vance',
+      role: 'tenant',
+      roomNumber: 'Room 101',
+      floor: 'floor1',
+      position: [-4.5, 0, -4.2],
+      status: 'present',
+      occupation: 'Retired Opera Contralto',
+      personality: 'Observant',
+      secretTruth: 'Secrets in wall',
+      knownFacts: [],
+      memories: [],
+      suspicionLevel: 75, // High suspicion >= 60
+      trustLevel: 45,
+      appearance: {} as unknown as any,
+      stats: { physic: 2, agility: 2, mind: 6, endurance: 3, pointsRemaining: 0 },
+      assignedTraits: []
+    },
+    {
+      id: 'agent_arthur',
+      name: 'Arthur Pendelton',
+      role: 'registrar',
+      roomNumber: 'Front Desk',
+      floor: 'lobby',
+      position: [0, 0, -6.6],
+      status: 'present',
+      occupation: 'Building Super',
+      personality: 'Formal',
+      secretTruth: 'Forged logs',
+      knownFacts: [],
+      memories: [],
+      suspicionLevel: 40, // Low suspicion < 60
+      trustLevel: 50,
+      appearance: {} as unknown as any,
+      stats: { physic: 3, agility: 2, mind: 5, endurance: 4, pointsRemaining: 0 },
+      assignedTraits: []
+    },
+    {
+      id: 'agent_silas',
+      name: 'Silas Thorne',
+      role: 'tenant',
+      roomNumber: 'Room 201',
+      floor: 'floor2',
+      position: [-4.5, 0, -4.2],
+      status: 'present',
+      occupation: 'Watchmaker',
+      personality: 'Reclusive',
+      secretTruth: 'Hidden wires',
+      knownFacts: [],
+      memories: [],
+      suspicionLevel: 88, // Very high suspicion
+      trustLevel: 25,
+      appearance: {} as unknown as any,
+      stats: { physic: 2, agility: 3, mind: 7, endurance: 3, pointsRemaining: 0 },
+      assignedTraits: []
+    },
+    {
+      id: 'agent_dictaphone',
+      name: 'Tape #9 (Dictaphone)',
+      role: 'helper_entity', // Sentient item, must NOT trigger suspicion
+      roomNumber: 'Room 101',
+      floor: 'floor1',
+      position: [-4.5, 0, -4.2],
+      status: 'present',
+      occupation: 'Helper',
+      personality: 'Helpful',
+      secretTruth: 'Tape',
+      knownFacts: [],
+      memories: [],
+      suspicionLevel: 95,
+      trustLevel: 100,
+      appearance: {} as unknown as any,
+      stats: { physic: 1, agility: 1, mind: 8, endurance: 5, pointsRemaining: 0 },
+      assignedTraits: []
+    },
+    {
+      id: 'agent_vanished',
+      name: 'Julian Sterling',
+      role: 'tenant',
+      roomNumber: 'Room 101',
+      floor: 'floor1',
+      position: [-4.5, 0, -4.2],
+      status: 'vanished', // Vanished from hotel, must NOT trigger
+      occupation: 'Missing Tenant',
+      personality: 'Vanished',
+      secretTruth: 'None',
+      knownFacts: [],
+      memories: [],
+      suspicionLevel: 99,
+      trustLevel: 0,
+      appearance: {} as unknown as any,
+      stats: { physic: 2, agility: 2, mind: 2, endurance: 2, pointsRemaining: 0 },
+      assignedTraits: []
+    }
+  ];
+
+  // Helper entity and vanished agents are properly excluded
+  assert.equal(isAgentInRoom(testAgents[3], 'Room 101', 'floor1'), false);
+  assert.equal(isAgentInRoom(testAgents[4], 'Room 101', 'floor1'), false);
+
+  // A. Room 101 on floor1 contains Eleanor Vance (suspicion: 75% >= 60%) -> Triggers Ambience Loop!
+  const res101 = evaluateRoomSuspicionLevel('Room 101', 'floor1', testAgents, undefined, 60);
+  assert.equal(res101.hasHighSuspicion, true);
+  assert.equal(res101.highestSuspicion, 75);
+  assert.equal(res101.ambienceLoopActive, true);
+  assert.equal(res101.triggeringAgents.length, 1);
+  assert.equal(res101.triggeringAgents[0].name, 'Eleanor Vance');
+
+  // B. Grand Brick Lobby on lobby contains Arthur Pendelton (suspicion: 40% < 60%) -> Does NOT trigger
+  const resLobby = evaluateRoomSuspicionLevel('Front Desk & Registry', 'lobby', testAgents, undefined, 60);
+  assert.equal(resLobby.hasHighSuspicion, false);
+  assert.equal(resLobby.highestSuspicion, 40);
+  assert.equal(resLobby.ambienceLoopActive, false);
+  assert.equal(resLobby.triggeringAgents.length, 0);
+
+  // C. Lowering threshold to 35% on Lobby causes Arthur (40% >= 35%) to trigger
+  const resLobbyLowerThresh = evaluateRoomSuspicionLevel('Front Desk & Registry', 'lobby', testAgents, undefined, 35);
+  assert.equal(resLobbyLowerThresh.hasHighSuspicion, true);
+  assert.equal(resLobbyLowerThresh.triggeringAgents.length, 1);
+  assert.equal(resLobbyLowerThresh.triggeringAgents[0].name, 'Arthur Pendelton');
+
+  // D. Empty Room (Room 304 on floor3) -> No agents, no trigger
+  const resEmpty = evaluateRoomSuspicionLevel('Room 304', 'floor3', testAgents, undefined, 60);
+  assert.equal(resEmpty.hasHighSuspicion, false);
+  assert.equal(resEmpty.highestSuspicion, 0);
+  assert.equal(resEmpty.allRoomAgents.length, 0);
+
+  // E. Room 201 on floor2 contains Silas Thorne (suspicion 88% >= 60%) -> Triggers
+  const res201 = evaluateRoomSuspicionLevel('Room 201', 'floor2', testAgents, undefined, 60);
+  assert.equal(res201.hasHighSuspicion, true);
+  assert.equal(res201.highestSuspicion, 88);
+  assert.equal(res201.triggeringAgents[0].name, 'Silas Thorne');
+});
 
 

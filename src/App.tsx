@@ -43,6 +43,8 @@ import {
   toggleStudioWindowMinimize,
   toggleStudioWindowMaximize,
   toggleStudioWindowOpen,
+  normalizeStudioWindowsState,
+  handleTaskbarWindowButtonClick,
   ArchitectForgeProjectSnapshot,
   createProjectSnapshot,
   validateAndParseProjectSnapshot,
@@ -81,7 +83,15 @@ import {
   copySelectedAssetsToClipboard,
   pasteAssetsFromClipboard,
   createAssetSetFromSelection,
-  instantiateAssetSetOnFloor
+  instantiateAssetSetOnFloor,
+  AssetConditionVariant,
+  swapAssetConditionVariant,
+  swapAssetVisualDesign,
+  toggleAssetInteractiveState,
+  DEFAULT_SNAP_GRID_SIZE,
+  normalizeSnapGridSize,
+  safeExecuteCatalogOrVariantCallback,
+  evaluateRoomSuspicionLevel
 } from './game/rules';
 import {
   INITIAL_PLACED_ASSETS,
@@ -216,6 +226,42 @@ export default function App() {
       false
     )
   );
+  const [suspicionAmbienceThreshold, setSuspicionAmbienceThreshold] = useState<number>(60);
+
+  // Updates an agent's suspicion level for interactive testing & simulation
+  const handleUpdateAgentSuspicion = useCallback((agentId: string, nextSuspicion: number) => {
+    setAgents((prev) =>
+      prev.map((ag) => (ag.id === agentId ? { ...ag, suspicionLevel: nextSuspicion } : ag))
+    );
+  }, []);
+
+  // Dynamically trigger the background loop of 'hotel ambience' (creaks, footsteps, whispers)
+  // when the player enters a room with high suspicionLevel agents (>= suspicionAmbienceThreshold)
+  useEffect(() => {
+    const roomSuspicion = evaluateRoomSuspicionLevel(
+      currentRoomLabel,
+      currentFloor,
+      agents,
+      undefined,
+      suspicionAmbienceThreshold
+    );
+
+    if (roomSuspicion.hasHighSuspicion) {
+      const highest = roomSuspicion.highestSuspicion;
+      const trigAgent = roomSuspicion.triggeringAgents[0];
+      audioEngine.triggerSuspicionAmbience(true, {
+        suspicionLevel: highest,
+        roomLabel: currentRoomLabel,
+        agentName: trigAgent?.name || 'Suspicious Resident'
+      });
+    } else {
+      const st = audioEngine.getSuspicionAmbienceState();
+      if (st.isActive) {
+        audioEngine.triggerSuspicionAmbience(false);
+      }
+    }
+  }, [currentRoomLabel, currentFloor, agents, suspicionAmbienceThreshold]);
+
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [marqueeModeActive, setMarqueeModeActive] = useState<boolean>(false);
@@ -229,6 +275,7 @@ export default function App() {
   const [isolateSelectedAsset, setIsolateSelectedAsset] = useState<boolean>(false);
   const [showExteriorWalls, setShowExteriorWalls] = useState<boolean>(false);
   const [surfaceSnapEnabled, setSurfaceSnapEnabled] = useState<boolean>(true);
+  const [snapGridSize, setSnapGridSize] = useState<number>(DEFAULT_SNAP_GRID_SIZE);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [statusBanner, setStatusBanner] = useState<string>(
     `Blank ${GRID_TILE_COUNT}×${GRID_TILE_COUNT} Tile Canvas Ready — Drag any window header to customize layout, save/load Room Blueprints, or press [F] for Quick Edit.`
@@ -257,25 +304,18 @@ export default function App() {
 
   // Floating Window Manager State (persisted to localStorage)
   const [studioWindows, setStudioWindows] = useState<Record<StudioWindowId, StudioWindowState>>(() => {
-    const defaults = createDefaultStudioWindows();
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
     try {
       const saved = localStorage.getItem('architectforge_windows_layout_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return {
-          ...defaults,
-          ...parsed,
-          projects: parsed.projects ? { ...defaults.projects, ...parsed.projects } : defaults.projects,
-          local_fs: parsed.local_fs ? { ...defaults.local_fs, ...parsed.local_fs } : defaults.local_fs,
-          keybindings: parsed.keybindings
-            ? { ...defaults.keybindings, ...parsed.keybindings }
-            : defaults.keybindings
-        };
+        return normalizeStudioWindowsState(parsed, vw, vh);
       }
     } catch {
       // ignore storage error
     }
-    return defaults;
+    return normalizeStudioWindowsState(null, vw, vh);
   });
 
   useEffect(() => {
@@ -285,6 +325,16 @@ export default function App() {
       // ignore storage error
     }
   }, [studioWindows]);
+
+  useEffect(() => {
+    const handleViewportResize = () => {
+      setStudioWindows((prev) =>
+        normalizeStudioWindowsState(prev, window.innerWidth, window.innerHeight)
+      );
+    };
+    window.addEventListener('resize', handleViewportResize);
+    return () => window.removeEventListener('resize', handleViewportResize);
+  }, []);
 
   // Auto-save active 128x128 canvas floor layers & placed objects so work is preserved across reloads
   useEffect(() => {
@@ -327,11 +377,13 @@ export default function App() {
   }, []);
 
   const handleToggleOpenWindow = useCallback((id: StudioWindowId, forceOpen?: boolean) => {
-    setStudioWindows((prev) => toggleStudioWindowOpen(prev, id, forceOpen));
+    setStudioWindows((prev) =>
+      toggleStudioWindowOpen(prev, id, forceOpen, window.innerWidth, window.innerHeight)
+    );
   }, []);
 
   const handleResetWindowLayout = useCallback(() => {
-    const fresh = createDefaultStudioWindows();
+    const fresh = normalizeStudioWindowsState(null, window.innerWidth, window.innerHeight);
     setStudioWindows(fresh);
     setStatusBanner('Reset all floating studio windows to their default workspace layout.');
   }, []);
@@ -1367,43 +1419,59 @@ export default function App() {
     saveItemToDedicatedFolder
   ]);
 
-  // Place new asset blueprint on 128x128 grid (Addition -> tracked on undo stack)
+  // Place new asset blueprint on 128x128 grid (Addition -> tracked on undo stack, supports Snap-to-Asset & Variable Grid Step)
   const handlePlaceBlueprintAt = useCallback(
-    (x: number, z: number) => {
+    (x: number, z: number, rotationY = 0) => {
       if (!activeBlueprint) return;
-      recordUndoSnapshot(`Add "${activeBlueprint.name}"`);
-      const [w, h, d] = activeBlueprint.defaultDimensions;
-      const newAsset: PlacedAsset = {
-        id: `custom_${activeBlueprint.subType}_${Date.now()}`,
-        name: activeBlueprint.name,
-        category: activeBlueprint.category,
-        subType: activeBlueprint.subType,
-        floor: currentFloor,
-        roomNumber: currentRoomLabel,
-        position: [x, h / 2, z],
-        dimensions: [w, h, d],
-        rotationY: 0,
-        color: activeBlueprint.defaultColor,
-        textureId: activeBlueprint.defaultTexture,
-        isSecretPassage: activeBlueprint.isSecretPassage,
-        isOpen: false,
-        collidable: activeBlueprint.collidable,
-        compositeParts: activeBlueprint.compositeParts,
-        tags: activeBlueprint.tags ? [...activeBlueprint.tags] : undefined,
-        soundPresetId: activeBlueprint.soundPresetId,
-        pairedVariantId: activeBlueprint.pairedVariantId,
-        conditionVariant: activeBlueprint.conditionVariant
-      };
-      setAssets((prev) => [...prev, newAsset]);
-      setSelectedAssetId(newAsset.id);
-      setSelectedAssetIds([newAsset.id]);
-      setActiveBlueprint(null);
-      saveItemToDedicatedFolder('environment_3d', newAsset.name, newAsset, newAsset.id);
-      setStatusBanner(
-        `Placed "${newAsset.name}" at (${x}m, ${z}m) — Press [F] to Quick-Edit (resize/color) or [E] to interact.`
+      safeExecuteCatalogOrVariantCallback(
+        () => {
+          recordUndoSnapshot(`Add "${activeBlueprint.name}"`);
+          const [w, h, d] = activeBlueprint.defaultDimensions;
+          const newAsset: PlacedAsset = {
+            id: `custom_${activeBlueprint.subType}_${Date.now()}`,
+            name: activeBlueprint.name,
+            category: activeBlueprint.category,
+            subType: activeBlueprint.subType,
+            floor: currentFloor,
+            roomNumber: currentRoomLabel,
+            position: [x, h / 2, z],
+            dimensions: [w, h, d],
+            rotationY,
+            color: activeBlueprint.defaultColor,
+            textureId: activeBlueprint.defaultTexture,
+            isSecretPassage: activeBlueprint.isSecretPassage,
+            isOpen: false,
+            collidable: activeBlueprint.collidable,
+            compositeParts: activeBlueprint.compositeParts,
+            tags: activeBlueprint.tags ? [...activeBlueprint.tags] : undefined,
+            soundPresetId: activeBlueprint.soundPresetId,
+            pairedVariantId: activeBlueprint.pairedVariantId,
+            conditionVariant: activeBlueprint.conditionVariant
+          };
+          setAssets((prev) => [...prev, newAsset]);
+          setSelectedAssetId(newAsset.id);
+          setSelectedAssetIds([newAsset.id]);
+          setActiveBlueprint(null);
+          saveItemToDedicatedFolder('environment_3d', newAsset.name, newAsset, newAsset.id);
+          setStatusBanner(
+            `Placed "${newAsset.name}" at (${x}m, ${z}m) [Grid: ${
+              snapGridSize === 0 ? 'Free' : `${snapGridSize}m`
+            }${surfaceSnapEnabled ? ' · Snap-to-Asset ON' : ''}] — Press [F] to Quick-Edit or [E] to interact.`
+          );
+        },
+        undefined,
+        'App.handlePlaceBlueprintAt'
       );
     },
-    [activeBlueprint, currentFloor, currentRoomLabel, recordUndoSnapshot, saveItemToDedicatedFolder]
+    [
+      activeBlueprint,
+      currentFloor,
+      currentRoomLabel,
+      recordUndoSnapshot,
+      saveItemToDedicatedFolder,
+      snapGridSize,
+      surfaceSnapEnabled
+    ]
   );
 
   // Place a row of wall segments along grid (drag-placement in one unified operation)
@@ -1477,7 +1545,7 @@ export default function App() {
     [assets, selectedAssetIds, recordUndoSnapshot]
   );
 
-  // Drag-move selected asset (or all multi-selected assets simultaneously, with optional flush Surface Snapping!)
+  // Drag-move selected asset (or all multi-selected assets simultaneously, with optional flush Surface Snapping & Variable Grid Step!)
   const handleMoveSelectedAssetTo = useCallback(
     (assetId: string, x: number, z: number) => {
       setAssets((prev) =>
@@ -1488,11 +1556,11 @@ export default function App() {
           x,
           z,
           63.5,
-          { surfaceSnap: surfaceSnapEnabled }
+          { surfaceSnap: surfaceSnapEnabled, gridStep: snapGridSize }
         )
       );
     },
-    [selectedAssetIds, surfaceSnapEnabled]
+    [selectedAssetIds, surfaceSnapEnabled, snapGridSize]
   );
 
   // Immediately align the currently selected asset flush against the nearest wall or surface on the floor
@@ -1506,7 +1574,8 @@ export default function App() {
     recordUndoSnapshot(`Surface-snap "${target.name}"`);
     const { updatedAssets, snappedToName, snappedFace } = snapAssetToClosestSurfaceNow(
       assets,
-      selectedAssetId
+      selectedAssetId,
+      snapGridSize
     );
     if (snappedToName) {
       soundFX.playPlaceAsset();
@@ -1522,7 +1591,7 @@ export default function App() {
         `No nearby wall or surface found on this floor within snapping range for "${target.name}".`
       );
     }
-  }, [assets, selectedAssetId, recordUndoSnapshot]);
+  }, [assets, selectedAssetId, recordUndoSnapshot, snapGridSize]);
 
   // Batch resize, recolor, rotate, or change hinge swing mode on selected asset(s) from the [F] Quick Edit Window
   const handleBatchModifySelected = useCallback(
@@ -1622,57 +1691,164 @@ export default function App() {
   );
 
   // Dedicated "E" key interaction handler across Walkthrough & 3D Asset Builder modes
+  // Toggles doors/secret passages AND toggles interactive state on TVs (white "on" screen), lamps, monitors, radios, appliances, and plumbing!
   const handleInteractWithAssetKeyE = useCallback(
     (asset: PlacedAsset) => {
       setSelectedAssetId(asset.id);
       setSelectedAssetIds((prev) => (prev.includes(asset.id) ? prev : [asset.id]));
       setActiveBlueprint(null);
 
-      if (asset.isSecretPassage || asset.category === 'door') {
+      if (asset.isSecretPassage || asset.category === 'door' || asset.category === 'secret_wall') {
         handleToggleAssetOpen(asset);
         return;
       }
 
+      recordUndoSnapshot(`Interact with "${asset.name}"`);
       soundFX.playClueFound();
-      setStatusBanner(
-        `Interacted [E] with "${asset.name}" (${asset.dimensions[0]}m × ${asset.dimensions[1]}m × ${asset.dimensions[2]}m, ${asset.textureId}) — Press [F] to open Quick Edit.`
+      const { updatedAsset, visualState, message } = toggleAssetInteractiveState(asset);
+      setAssets((prev) => prev.map((a) => (a.id === asset.id ? updatedAsset : a)));
+      saveItemToDedicatedFolder('environment_3d', updatedAsset.name, updatedAsset, updatedAsset.id);
+      setStatusBanner(`${message} (${visualState.statusSummary}) — Press [F] to open Quick Edit.`);
+    },
+    [handleToggleAssetOpen, recordUndoSnapshot, saveItemToDedicatedFolder]
+  );
+
+  // Swap selected asset(s) between 'pristine', 'unkempt', and 'updated' (1990s asset set) and re-texture via procedural weathering
+  const handleSwapConditionVariant = useCallback(
+    (targetVariant: AssetConditionVariant) => {
+      safeExecuteCatalogOrVariantCallback(
+        () => {
+          const targetIds =
+            selectedAssetIds.length > 0
+              ? selectedAssetIds
+              : selectedAssetId
+              ? [selectedAssetId]
+              : [];
+          if (targetIds.length === 0) return;
+
+          recordUndoSnapshot(`Swap condition to "${targetVariant}" (${targetIds.length} asset(s))`);
+          soundFX.playPlaceAsset();
+
+          const idSet = new Set(targetIds);
+          let lastMessage = '';
+          setAssets((prev) =>
+            prev.map((a) => {
+              if (!idSet.has(a.id)) return a;
+              const res = swapAssetConditionVariant(a, targetVariant, catalogAssets);
+              lastMessage = res.message;
+              saveItemToDedicatedFolder(
+                'environment_3d',
+                res.swappedAsset.name,
+                res.swappedAsset,
+                res.swappedAsset.id
+              );
+              return res.swappedAsset;
+            })
+          );
+
+          setStatusBanner(
+            targetIds.length > 1
+              ? `🎭 Swapped ${targetIds.length} selected assets to "${targetVariant.toUpperCase()}" variant & re-textured via procedural weathering!`
+              : lastMessage || `Swapped asset condition to "${targetVariant}".`
+          );
+        },
+        undefined,
+        `App.handleSwapConditionVariant(${targetVariant})`,
+        setStatusBanner
       );
     },
-    [handleToggleAssetOpen]
+    [selectedAssetIds, selectedAssetId, catalogAssets, recordUndoSnapshot, saveItemToDedicatedFolder]
+  );
+
+  // Atomic visual design swapper (cycles or selects among Meshy.ai 3D visual design variants without stale closures)
+  const handleSwapVisualDesign = useCallback(
+    (targetSubType: string | 'next') => {
+      safeExecuteCatalogOrVariantCallback(
+        () => {
+          const targetIds =
+            selectedAssetIds.length > 0
+              ? selectedAssetIds
+              : selectedAssetId
+              ? [selectedAssetId]
+              : [];
+          if (targetIds.length === 0) return;
+
+          recordUndoSnapshot(`Swap visual design (${targetSubType})`);
+          soundFX.playPlaceAsset();
+
+          const idSet = new Set(targetIds);
+          let lastMessage = '';
+          setAssets((prev) =>
+            prev.map((a) => {
+              if (!idSet.has(a.id)) return a;
+              const res = swapAssetVisualDesign(a, targetSubType, catalogAssets);
+              lastMessage = res.message;
+              saveItemToDedicatedFolder(
+                'environment_3d',
+                res.swappedAsset.name,
+                res.swappedAsset,
+                res.swappedAsset.id
+              );
+              return res.swappedAsset;
+            })
+          );
+
+          if (lastMessage) {
+            setStatusBanner(lastMessage);
+          }
+        },
+        undefined,
+        `App.handleSwapVisualDesign(${targetSubType})`,
+        setStatusBanner
+      );
+    },
+    [selectedAssetIds, selectedAssetId, catalogAssets, recordUndoSnapshot, saveItemToDedicatedFolder]
   );
 
   // Update asset properties from the inspector (Modification -> tracked on undo stack; applies Surface Snapping when X/Z moves if enabled)
   const handleUpdateAsset = useCallback(
-    (updated: PlacedAsset) => {
-      recordUndoSnapshot(`Modify "${updated.name}"`);
-      setAssets((prev) => {
-        const existing = prev.find((a) => a.id === updated.id);
-        let finalAsset = updated;
-        if (
-          surfaceSnapEnabled &&
-          existing &&
-          (existing.position[0] !== updated.position[0] ||
-            existing.position[2] !== updated.position[2])
-        ) {
-          const snap = computeSurfaceSnappedPosition(
-            updated,
-            updated.position[0],
-            updated.position[2],
-            prev
+    (updated: PlacedAsset, customMessage?: string) => {
+      if (!updated || !updated.id) return;
+      safeExecuteCatalogOrVariantCallback(
+        () => {
+          recordUndoSnapshot(`Modify "${updated.name}"`);
+          setAssets((prev) => {
+            const existing = prev.find((a) => a.id === updated.id);
+            let finalAsset = updated;
+            if (
+              surfaceSnapEnabled &&
+              existing &&
+              (existing.position[0] !== updated.position[0] ||
+                existing.position[2] !== updated.position[2])
+            ) {
+              const snap = computeSurfaceSnappedPosition(
+                updated,
+                updated.position[0],
+                updated.position[2],
+                prev,
+                2.2,
+                snapGridSize
+              );
+              if (snap.snappedToId) {
+                finalAsset = {
+                  ...updated,
+                  position: [snap.x, updated.position[1], snap.z],
+                  rotationY: snap.rotationY
+                };
+              }
+            }
+            return prev.map((a) => (a.id === updated.id ? finalAsset : a));
+          });
+          setStatusBanner(
+            customMessage || `Modified "${updated.name}" — Use Undo (Ctrl+Z) to revert.`
           );
-          if (snap.snappedToId) {
-            finalAsset = {
-              ...updated,
-              position: [snap.x, updated.position[1], snap.z],
-              rotationY: snap.rotationY
-            };
-          }
-        }
-        return prev.map((a) => (a.id === updated.id ? finalAsset : a));
-      });
-      setStatusBanner(`Modified "${updated.name}" — Use Undo (Ctrl+Z) to revert.`);
+        },
+        undefined,
+        'App.handleUpdateAsset',
+        setStatusBanner
+      );
     },
-    [recordUndoSnapshot, surfaceSnapEnabled]
+    [recordUndoSnapshot, surfaceSnapEnabled, snapGridSize]
   );
 
   // Delete asset (or all multi-selected assets) from floor (Deletion -> tracked on undo stack)
@@ -3150,7 +3326,16 @@ export default function App() {
     selectedAssetIds.length > 0 ? selectedAssetIds.length : selectedAsset ? 1 : 0;
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden select-none font-['DM_Sans'] text-slate-100">
+    <main
+      style={
+        {
+          '--global-anim-fps': globalAnimationFps,
+          '--flicker-steps': Math.max(4, Math.round(globalAnimationFps * 2)),
+          '--flicker-duration': `${(16 / Math.max(1, globalAnimationFps)).toFixed(2)}s`
+        } as React.CSSProperties
+      }
+      className="relative w-screen h-screen overflow-hidden select-none font-['DM_Sans'] text-slate-100"
+    >
       {/* Hidden File Input for Importing JSON Asset Packs */}
       <input
         ref={fileInputRef}
@@ -3210,6 +3395,8 @@ export default function App() {
         footstepsEnabled={footstepsEnabled}
         keybindings={keybindings}
         globalAnimationFps={globalAnimationFps}
+        snapGridSize={snapGridSize}
+        snapToAssetPlacement={surfaceSnapEnabled}
       />
 
       {/* 2. FLOATING [F] QUICK EDIT WINDOW TO THE RIGHT OF THE SELECTED ASSET */}
@@ -3226,6 +3413,11 @@ export default function App() {
           onCopySelected={handleCopySelectedAssets}
           onPasteClipboard={handlePasteClipboardAssets}
           clipboardCount={assetClipboard?.items?.length || 0}
+          catalogAssets={catalogAssets}
+          onUpdateAsset={handleUpdateAsset}
+          onSwapConditionVariant={handleSwapConditionVariant}
+          onSwapVisualDesign={handleSwapVisualDesign}
+          globalAnimationFps={globalAnimationFps}
           onSaveSelectionAsSet={(setName) =>
             handleSaveSelectionAsAssetSet(
               setName,
@@ -3341,6 +3533,8 @@ export default function App() {
                       setStatusBanner(
                         '🎵 3 · Sound Board Active — Create new sounds or assign specific sounds to 3D assets and blueprints!'
                       );
+                    } else {
+                      handleToggleOpenWindow('audio', false);
                     }
                   }}
                   className={`px-3.5 py-1 rounded-full text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
@@ -3380,17 +3574,37 @@ export default function App() {
                     key={winId}
                     type="button"
                     data-testid={legacyTestId}
+                    title={
+                      isVisible
+                        ? `Click to focus ${win.title} to front (or click again when focused to hide)`
+                        : `Open ${win.title}`
+                    }
                     onClick={() => {
-                      if (!win || !win.isOpen) {
-                        handleToggleOpenWindow(winId, true);
-                        handleFocusWindow(winId);
-                        if (winId === 'local_fs') refreshLocalDiskFoldersStatus();
-                      } else if (win.isMinimized) {
-                        handleToggleMinimizeWindow(winId);
-                        handleFocusWindow(winId);
-                      } else {
-                        handleToggleOpenWindow(winId, false);
-                      }
+                      setStudioWindows((prev) => {
+                        const result = handleTaskbarWindowButtonClick(
+                          prev,
+                          winId,
+                          mode,
+                          window.innerWidth,
+                          window.innerHeight
+                        );
+                        if (winId === 'local_fs' && result.action !== 'closed') {
+                          refreshLocalDiskFoldersStatus();
+                        }
+                        const label = result.windowState.title || result.windowState.shortTitle;
+                        if (result.action === 'opened') {
+                          setStatusBanner(`Opened ${label} window.`);
+                        } else if (result.action === 'restored') {
+                          setStatusBanner(`Restored ${label} window.`);
+                        } else if (result.action === 'focused') {
+                          setStatusBanner(`Brought ${label} window to front.`);
+                        } else {
+                          setStatusBanner(
+                            `Closed ${label} window — click "${result.windowState.shortTitle}" in the WINDOWS bar to reopen.`
+                          );
+                        }
+                        return result.windows;
+                      });
                     }}
                     className={`px-2 py-0.5 rounded-full font-bold transition-all ${
                       isVisible
@@ -3589,6 +3803,12 @@ export default function App() {
             activeBlueprintSubType={activeBlueprint?.subType || null}
             onAssignSoundToAsset={handleAssignSoundToAsset}
             onAssignSoundToBlueprint={handleAssignSoundToBlueprint}
+            currentRoomLabel={currentRoomLabel}
+            currentFloor={currentFloor}
+            agents={agents}
+            suspicionAmbienceThreshold={suspicionAmbienceThreshold}
+            onUpdateSuspicionThreshold={setSuspicionAmbienceThreshold}
+            onUpdateAgentSuspicion={handleUpdateAgentSuspicion}
           />
         )}
 
@@ -3694,13 +3914,31 @@ export default function App() {
               const next = !prev;
               setStatusBanner(
                 next
-                  ? '🧲 Surface Snapping ENABLED — Moving objects automatically aligns them flush against the closest wall or surface!'
-                  : 'Surface Snapping DISABLED — Moving objects snaps to the standard 0.5m tile grid.'
+                  ? `🧲 Snap-to-Asset Placement & Surface Snapping ENABLED — Placing or moving objects automatically aligns them flush against the closest asset or wall (Grid: ${
+                      snapGridSize === 0 ? 'Free' : `${snapGridSize}m`
+                    })!`
+                  : `Snap-to-Asset Placement DISABLED — Placing or moving objects snaps strictly to the ${
+                      snapGridSize === 0 ? 'Free (0m)' : `${snapGridSize}m`
+                    } tile grid.`
               );
               return next;
             });
           }}
           onSnapSelectedToSurfaceNow={handleSnapSelectedToSurfaceNow}
+          snapGridSize={snapGridSize}
+          onChangeSnapGridSize={(nextSize) => {
+            const norm = normalizeSnapGridSize(nextSize);
+            setSnapGridSize(norm);
+            setStatusBanner(
+              norm === 0
+                ? '📐 Snap-to-Grid Size set to Free (0m) — Unsnapped continuous placement active.'
+                : `📐 Snap-to-Grid Size set to ${norm}m (${
+                    surfaceSnapEnabled ? 'with Snap-to-Asset Placement ON' : 'Grid-only'
+                  }).`
+            );
+          }}
+          onSwapConditionVariant={handleSwapConditionVariant}
+          onSwapVisualDesign={handleSwapVisualDesign}
           roomBlueprints={roomBlueprints}
           onSaveRoomBlueprint={handleSaveRoomBlueprint}
           onUpdateRoomBlueprint={handleUpdateRoomBlueprint}

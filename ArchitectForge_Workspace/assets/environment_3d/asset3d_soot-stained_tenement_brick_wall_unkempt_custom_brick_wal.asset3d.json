@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "2.0.0",
+  "savedAt": "2026-11-02T15:39:53.474Z",
+  "category": "environment_3d",
+  "folderPath": "ArchitectForge_Workspace/assets/environment_3d",
+  "itemName": "Soot-Stained Tenement Brick Wall [Unkempt]",
+  "data": {
+    "id": "custom_brick_wall_segment_1793633966660_0_wh33",
+    "name": "Soot-Stained Tenement Brick Wall [Unkempt]",
+    "category": "wall",
+    "subType": "brick_wall_segment",
+    "floor": "lobby",
+    "roomNumber": "Ground Floor · Layer L1",
+    "position": [
+      -0.5,
+      1.5,
+      -1.5
+    ],
+    "dimensions": [
+      3,
+      3,
+      0.35
+    ],
+    "rotationY": 0,
+    "color": "#3d1a14",
+    "textureId": "nyc_old_brick",
+    "isOpen": false,
+    "collidable": true,
+    "tags": [
+      "architecture",
+      "wall",
+      "brick",
+      "masonry",
+      "structural",
+      "late-70s",
+      "unkempt",
+      "aged",
+      "weathered"
+    ],
+    "conditionVariant": "unkempt",
+    "era": "1970s",
+    "predecessor1978Id": "brick_wall_segment",
+    "paired1990sId": "brick_wall_segment"
+  }
+}

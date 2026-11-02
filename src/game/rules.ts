@@ -49,6 +49,8 @@ export interface CompositeSubPart {
 
 export type HingeSwingMode = 'right_hinge' | 'left_hinge' | 'pocket_slide';
 
+export type AssetConditionVariant = 'pristine' | 'unkempt' | 'updated';
+
 export interface PlacedAsset {
   id: string;
   name: string;
@@ -64,6 +66,8 @@ export interface PlacedAsset {
   customTextureUrl?: string;
   isSecretPassage?: boolean;
   isOpen?: boolean;
+  isActivated?: boolean;
+  interactionStateLabel?: string;
   openProgress?: number;
   hingeSwingMode?: HingeSwingMode;
   hingeTransitionStartMs?: number;
@@ -78,7 +82,7 @@ export interface PlacedAsset {
   tags?: string[];
   soundPresetId?: string;
   pairedVariantId?: string;
-  conditionVariant?: 'pristine' | 'unkempt';
+  conditionVariant?: AssetConditionVariant;
   era?: '1970s' | '1980s' | '1990s' | 'timeless';
   canUpdateInHotel?: boolean;
   structuralConstraint?: string;
@@ -757,9 +761,21 @@ export const INITIAL_CLUES: ClueItem[] = [
   }
 ];
 
+export const SNAP_GRID_SIZE_OPTIONS = [0, 0.1, 0.25, 0.5, 1.0, 2.0] as const;
+export type SnapGridSize = (typeof SNAP_GRID_SIZE_OPTIONS)[number];
+export const DEFAULT_SNAP_GRID_SIZE: SnapGridSize = 0.5;
+
+export function normalizeSnapGridSize(step: number | undefined | null): number {
+  if (typeof step !== 'number' || !Number.isFinite(step) || step < 0) {
+    return DEFAULT_SNAP_GRID_SIZE;
+  }
+  return Number(step.toFixed(4));
+}
+
 export function snapToGrid(value: number, step = 0.5): number {
-  if (step <= 0) return value;
-  return Math.round(value / step) * step;
+  if (!Number.isFinite(value)) return 0;
+  if (!Number.isFinite(step) || step <= 0) return Number(value.toFixed(4));
+  return Number((Math.round(value / step) * step).toFixed(4));
 }
 
 export function clampDimension(value: number, min = 0.25, max = 12): number {
@@ -962,6 +978,7 @@ const BRIGHT_TO_FADED_70S_COLOR_MAP: Record<string, string> = {
   '#5c3824': '#3b2314',
   '#451a03': '#2b180a',
   '#0d9488': '#4a5438',
+  '#10b981': '#4a5438',
   '#0f766e': '#3d452e',
   '#7e22ce': '#5c4628',
   '#38bdf8': '#576b59',
@@ -978,12 +995,98 @@ const BRIGHT_TO_FADED_70S_COLOR_MAP: Record<string, string> = {
   '#166534': '#2f3e26'
 };
 
+const UNKEMPT_GRIME_COLOR_MAP: Record<string, string> = {
+  '#8f8777': '#635c4e',
+  '#8a8170': '#5e5749',
+  '#877f70': '#595347',
+  '#7d7559': '#544e3a',
+  '#78705e': '#4f493c',
+  '#592820': '#3d1a14',
+  '#4a181b': '#300f11',
+  '#3b2314': '#26160c',
+  '#4a5438': '#333b26',
+  '#6e562f': '#4d3b1f',
+  '#5e4c2e': '#42351f',
+  '#c59223': '#785712',
+  '#dfd7c5': '#918978',
+  '#cbd5e1': '#64748b',
+  '#e2e8f0': '#6b7280',
+  '#451a03': '#291002'
+};
+
+const UPDATED_1990S_COLOR_MAP: Record<string, string> = {
+  '#592820': '#475569',
+  '#8a8170': '#cbd5e1',
+  '#3b2314': '#4a2c17',
+  '#4a181b': '#134e4a',
+  '#4a5438': '#143d2b',
+  '#6e562f': '#786438',
+  '#5e4c2e': '#94a3b8',
+  '#8f8777': '#e2e8f0',
+  '#78705e': '#9ca3af',
+  '#c59223': '#e2e8f0',
+  '#4f5e34': '#1e293b'
+};
+
+function darkenHexForUnkempt(hex: string): string {
+  const clean = (hex || '').trim().toLowerCase();
+  if (UNKEMPT_GRIME_COLOR_MAP[clean]) return UNKEMPT_GRIME_COLOR_MAP[clean];
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(clean);
+  if (!m) return hex;
+  const r = Math.max(12, Math.round(parseInt(m[1], 16) * 0.74));
+  const g = Math.max(12, Math.round(parseInt(m[2], 16) * 0.72));
+  const b = Math.max(10, Math.round(parseInt(m[3], 16) * 0.68));
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
 /**
  * Pure helper that converts any legacy bright/90s asset colors and labels into the
- * faded, unmaintained Late-70s / Early-80s dark mystery thriller aesthetic.
+ * faded, unmaintained Late-70s / Early-80s dark mystery thriller aesthetic, OR when
+ * `targetVariantOverride` ('pristine' | 'unkempt' | 'updated') is specified, applies
+ * variant-specific procedural weathering and re-texturing metadata.
  */
-export function weatherAssetToLate70sStyle(asset: PlacedAsset): PlacedAsset {
+export function weatherAssetToLate70sStyle(
+  asset: PlacedAsset,
+  targetVariantOverride?: AssetConditionVariant
+): PlacedAsset {
   const lowerColor = (asset.color || '').toLowerCase();
+
+  // If explicit variant override is requested, apply variant-aware procedural re-texturing
+  if (targetVariantOverride === 'updated') {
+    const updatedColor = UPDATED_1990S_COLOR_MAP[lowerColor] || asset.color;
+    const baseName = (asset.name || '')
+      .replace(/\s*\[(Pristine|Unkempt|Updated|1990s)\]/gi, '')
+      .trim();
+    const updatedName =
+      baseName.includes('1990s') || baseName.includes('90s')
+        ? baseName
+        : `${baseName} [Updated 90s]`;
+    const updatedParts = asset.compositeParts
+      ? asset.compositeParts.map((part) => {
+          const pColor = (part.color || '').toLowerCase();
+          return {
+            ...part,
+            color: UPDATED_1990S_COLOR_MAP[pColor] || part.color,
+            roughness: Math.max(0.2, Math.min(0.75, part.roughness * 0.85)),
+            metalness: Math.min(0.9, part.metalness + 0.08)
+          };
+        })
+      : undefined;
+    const filteredTags = (asset.tags || []).filter(
+      (t) => t !== 'pristine' && t !== 'unkempt' && t !== 'weathered' && t !== 'aged'
+    );
+    const nextTags = Array.from(new Set([...filteredTags, '1990s', 'hotel-updated', 'updated']));
+    return {
+      ...asset,
+      name: updatedName,
+      color: updatedColor,
+      conditionVariant: 'updated',
+      era: '1990s',
+      tags: nextTags,
+      compositeParts: updatedParts
+    };
+  }
+
   const mappedColor = BRIGHT_TO_FADED_70S_COLOR_MAP[lowerColor] || asset.color;
   const weatheredName = (asset.name || '')
     .replace(/90s CRT Hotel TV & VHS Combo/gi, 'Late-70s Woodgrain CRT TV & VCR Combo')
@@ -1007,14 +1110,73 @@ export function weatherAssetToLate70sStyle(asset: PlacedAsset): PlacedAsset {
     ? asset.compositeParts.map((part) => {
         const pColor = (part.color || '').toLowerCase();
         const pEmissive = (part.emissive || '').toLowerCase();
+        const baseMappedColor = BRIGHT_TO_FADED_70S_COLOR_MAP[pColor] || part.color;
         return {
           ...part,
-          color: BRIGHT_TO_FADED_70S_COLOR_MAP[pColor] || part.color,
+          color:
+            targetVariantOverride === 'unkempt'
+              ? darkenHexForUnkempt(baseMappedColor)
+              : baseMappedColor,
           emissive: pEmissive ? BRIGHT_TO_FADED_70S_COLOR_MAP[pEmissive] || part.emissive : part.emissive,
-          roughness: Math.min(0.95, Math.max(part.roughness, 0.35))
+          roughness:
+            targetVariantOverride === 'unkempt'
+              ? Math.min(0.98, Math.max(part.roughness + 0.14, 0.55))
+              : Math.min(0.95, Math.max(part.roughness, 0.35))
         };
       })
     : undefined;
+
+  if (targetVariantOverride === 'unkempt') {
+    const cleanBaseName = weatheredName
+      .replace(/\s*\[(Pristine|Unkempt|Updated|Updated 90s|1990s)\]/gi, '')
+      .trim();
+    const unkemptName = cleanBaseName.toLowerCase().includes('unkempt')
+      ? cleanBaseName
+      : `${cleanBaseName} [Unkempt]`;
+    const filteredTags = (asset.tags || []).filter(
+      (t) => t !== 'pristine' && t !== '1990s' && t !== 'hotel-updated' && t !== 'updated'
+    );
+    const nextTags = Array.from(new Set([...filteredTags, 'unkempt', 'aged', 'weathered']));
+    return {
+      ...asset,
+      name: unkemptName,
+      color: darkenHexForUnkempt(mappedColor),
+      conditionVariant: 'unkempt',
+      era: '1970s',
+      tags: nextTags,
+      inspectText: weatheredInspect,
+      compositeParts: weatheredParts
+    };
+  }
+
+  if (targetVariantOverride === 'pristine') {
+    const cleanBaseName = weatheredName
+      .replace(/\s*\[(Pristine|Unkempt|Updated|Updated 90s|1990s)\]/gi, '')
+      .trim();
+    const pristineName = cleanBaseName.toLowerCase().includes('pristine')
+      ? cleanBaseName
+      : `${cleanBaseName} [Pristine]`;
+    const filteredTags = (asset.tags || []).filter(
+      (t) =>
+        t !== 'unkempt' &&
+        t !== 'weathered' &&
+        t !== 'aged' &&
+        t !== '1990s' &&
+        t !== 'hotel-updated' &&
+        t !== 'updated'
+    );
+    const nextTags = Array.from(new Set([...filteredTags, 'pristine']));
+    return {
+      ...asset,
+      name: pristineName,
+      color: mappedColor,
+      conditionVariant: 'pristine',
+      era: '1970s',
+      tags: nextTags,
+      inspectText: weatheredInspect,
+      compositeParts: weatheredParts
+    };
+  }
 
   return {
     ...asset,
@@ -1457,18 +1619,31 @@ export interface SurfaceSnapResult {
 }
 
 /**
- * Pure helper that calculates a flush surface/wall-snapped position and rotation
- * for an asset being moved near other walls or surfaces on the same floor.
+ * Pure helper that calculates a flush surface/wall/asset-snapped position and rotation
+ * for an asset being placed or moved near other walls, surfaces, or assets on the same floor.
  */
 export function computeSurfaceSnappedPosition(
   movingAsset: PlacedAsset,
   rawTargetX: number,
   rawTargetZ: number,
   floorAssets: PlacedAsset[],
-  snapThreshold = 2.2
+  snapThreshold = 2.2,
+  gridStep = 0.5
 ): SurfaceSnapResult {
-  const candidates = floorAssets.filter(
+  const safeStep = normalizeSnapGridSize(gridStep);
+  const tangentStep = safeStep > 0 ? safeStep : 0.25;
+  const safeMovingDims: [number, number, number] =
+    Array.isArray(movingAsset?.dimensions) && movingAsset.dimensions.length === 3
+      ? [
+          Number(movingAsset.dimensions[0]) || 1,
+          Number(movingAsset.dimensions[1]) || 1,
+          Number(movingAsset.dimensions[2]) || 1
+        ]
+      : [1, 1, 1];
+
+  const candidates = (Array.isArray(floorAssets) ? floorAssets : []).filter(
     (other) =>
+      Boolean(other) &&
       other.id !== movingAsset.id &&
       other.floor === movingAsset.floor &&
       other.category !== 'floor_tile'
@@ -1478,10 +1653,18 @@ export function computeSurfaceSnappedPosition(
   let bestResult: SurfaceSnapResult | null = null;
 
   for (const other of candidates) {
-    const [ox, , oz] = other.position;
+    const [ox, , oz] = Array.isArray(other.position) ? other.position : [0, 0, 0];
+    const safeOtherDims: [number, number, number] =
+      Array.isArray(other.dimensions) && other.dimensions.length === 3
+        ? [
+            Number(other.dimensions[0]) || 1,
+            Number(other.dimensions[1]) || 1,
+            Number(other.dimensions[2]) || 1
+          ]
+        : [1, 1, 1];
     const { halfW: otherHalfW, halfD: otherHalfD } = getOrientedFootprint(
-      other.dimensions,
-      other.rotationY
+      safeOtherDims,
+      other.rotationY || 0
     );
 
     const isOtherWallLike =
@@ -1498,7 +1681,7 @@ export function computeSurfaceSnappedPosition(
     ];
 
     for (const face of faces) {
-      let alignedRotationY = movingAsset.rotationY;
+      let alignedRotationY = movingAsset.rotationY || 0;
       if (isOtherWallLike && movingAsset.category !== 'wall') {
         if (face === 'south' || face === 'north') {
           alignedRotationY = 0;
@@ -1508,7 +1691,7 @@ export function computeSurfaceSnappedPosition(
       }
 
       const { halfW: movHalfW, halfD: movHalfD } = getOrientedFootprint(
-        movingAsset.dimensions,
+        safeMovingDims,
         alignedRotationY
       );
 
@@ -1517,19 +1700,39 @@ export function computeSurfaceSnappedPosition(
 
       if (face === 'south') {
         const clampedX = Math.max(ox - otherHalfW, Math.min(ox + otherHalfW, rawTargetX));
-        candX = Math.abs(clampedX - ox) < 0.25 ? ox : snapToGrid(clampedX, 0.25);
+        candX =
+          Math.abs(clampedX - ox) < Math.min(0.25, tangentStep)
+            ? ox
+            : safeStep > 0
+              ? snapToGrid(clampedX, safeStep)
+              : Number(clampedX.toFixed(3));
         candZ = Number((oz + otherHalfD + movHalfD).toFixed(3));
       } else if (face === 'north') {
         const clampedX = Math.max(ox - otherHalfW, Math.min(ox + otherHalfW, rawTargetX));
-        candX = Math.abs(clampedX - ox) < 0.25 ? ox : snapToGrid(clampedX, 0.25);
+        candX =
+          Math.abs(clampedX - ox) < Math.min(0.25, tangentStep)
+            ? ox
+            : safeStep > 0
+              ? snapToGrid(clampedX, safeStep)
+              : Number(clampedX.toFixed(3));
         candZ = Number((oz - otherHalfD - movHalfD).toFixed(3));
       } else if (face === 'east') {
         const clampedZ = Math.max(oz - otherHalfD, Math.min(oz + otherHalfD, rawTargetZ));
-        candZ = Math.abs(clampedZ - oz) < 0.25 ? oz : snapToGrid(clampedZ, 0.25);
+        candZ =
+          Math.abs(clampedZ - oz) < Math.min(0.25, tangentStep)
+            ? oz
+            : safeStep > 0
+              ? snapToGrid(clampedZ, safeStep)
+              : Number(clampedZ.toFixed(3));
         candX = Number((ox + otherHalfW + movHalfW).toFixed(3));
       } else if (face === 'west') {
         const clampedZ = Math.max(oz - otherHalfD, Math.min(oz + otherHalfD, rawTargetZ));
-        candZ = Math.abs(clampedZ - oz) < 0.25 ? oz : snapToGrid(clampedZ, 0.25);
+        candZ =
+          Math.abs(clampedZ - oz) < Math.min(0.25, tangentStep)
+            ? oz
+            : safeStep > 0
+              ? snapToGrid(clampedZ, safeStep)
+              : Number(clampedZ.toFixed(3));
         candX = Number((ox - otherHalfW - movHalfW).toFixed(3));
       }
 
@@ -1553,12 +1756,104 @@ export function computeSurfaceSnappedPosition(
   }
 
   return {
-    x: snapToGrid(rawTargetX, 0.5),
-    z: snapToGrid(rawTargetZ, 0.5),
-    rotationY: movingAsset.rotationY,
+    x: snapToGrid(rawTargetX, safeStep),
+    z: snapToGrid(rawTargetZ, safeStep),
+    rotationY: movingAsset.rotationY || 0,
     snappedToId: null,
     snappedToName: null,
     snappedFace: null
+  };
+}
+
+export interface BuildPlacementSnapResult {
+  x: number;
+  z: number;
+  rotationY: number;
+  snappedToId: string | null;
+  snappedToName: string | null;
+  snappedFace: 'north' | 'south' | 'east' | 'west' | null;
+  gridStepUsed: number;
+}
+
+/**
+ * Pure helper for Build Mode placement & live ghost preview:
+ * Supports both variable snap-to-grid size (`0.1m`, `0.25m`, `0.5m`, `1.0m`, `2.0m`, or `0` Free)
+ * and magnetic snap-to-asset flush alignment against nearby placed assets on the active floor.
+ */
+export function computeBuildPlacementPosition(params: {
+  rawX: number;
+  rawZ: number;
+  dimensions: [number, number, number];
+  rotationY?: number;
+  category?: AssetCategory;
+  subType?: string;
+  floor?: FloorId;
+  floorAssets?: PlacedAsset[];
+  gridStep?: number;
+  snapToAssetEnabled?: boolean;
+  snapThreshold?: number;
+  halfGrid?: number;
+  excludeAssetIds?: string[];
+}): BuildPlacementSnapResult {
+  const safeStep = normalizeSnapGridSize(params.gridStep);
+  const halfGrid = params.halfGrid ?? GRID_TILE_COUNT / 2 - 0.5;
+  const clampedRawX = Math.max(-halfGrid, Math.min(halfGrid, Number(params.rawX) || 0));
+  const clampedRawZ = Math.max(-halfGrid, Math.min(halfGrid, Number(params.rawZ) || 0));
+  const baseRotationY = Number(params.rotationY) || 0;
+  const floor: FloorId = params.floor ?? 'lobby';
+  const excludeSet = new Set(params.excludeAssetIds ?? []);
+
+  if (params.snapToAssetEnabled && Array.isArray(params.floorAssets) && params.floorAssets.length > 0) {
+    const filteredFloorAssets = params.floorAssets.filter(
+      (a) => Boolean(a) && a.floor === floor && !excludeSet.has(a.id)
+    );
+    const probeAsset: PlacedAsset = {
+      id: '__build_placement_probe__',
+      name: params.subType || 'Blueprint Probe',
+      category: params.category || 'furniture',
+      subType: params.subType || 'probe',
+      floor,
+      position: [clampedRawX, (params.dimensions?.[1] || 1) / 2, clampedRawZ],
+      rotationY: baseRotationY,
+      dimensions:
+        Array.isArray(params.dimensions) && params.dimensions.length === 3
+          ? [params.dimensions[0], params.dimensions[1], params.dimensions[2]]
+          : [1, 1, 1],
+      color: '#ffffff',
+      textureId: 'wood_panels',
+      collidable: true
+    };
+
+    const snapRes = computeSurfaceSnappedPosition(
+      probeAsset,
+      clampedRawX,
+      clampedRawZ,
+      filteredFloorAssets,
+      params.snapThreshold ?? 1.85,
+      safeStep
+    );
+
+    if (snapRes.snappedToId) {
+      return {
+        x: Number(Math.max(-halfGrid, Math.min(halfGrid, snapRes.x)).toFixed(4)),
+        z: Number(Math.max(-halfGrid, Math.min(halfGrid, snapRes.z)).toFixed(4)),
+        rotationY: snapRes.rotationY,
+        snappedToId: snapRes.snappedToId,
+        snappedToName: snapRes.snappedToName,
+        snappedFace: snapRes.snappedFace,
+        gridStepUsed: safeStep
+      };
+    }
+  }
+
+  return {
+    x: Number(Math.max(-halfGrid, Math.min(halfGrid, snapToGrid(clampedRawX, safeStep))).toFixed(4)),
+    z: Number(Math.max(-halfGrid, Math.min(halfGrid, snapToGrid(clampedRawZ, safeStep))).toFixed(4)),
+    rotationY: baseRotationY,
+    snappedToId: null,
+    snappedToName: null,
+    snappedFace: null,
+    gridStepUsed: safeStep
   };
 }
 
@@ -1567,7 +1862,8 @@ export function computeSurfaceSnappedPosition(
  */
 export function snapAssetToClosestSurfaceNow(
   assets: PlacedAsset[],
-  targetAssetId: string
+  targetAssetId: string,
+  gridStep = 0.5
 ): {
   updatedAssets: PlacedAsset[];
   snappedToName: string | null;
@@ -1583,7 +1879,8 @@ export function snapAssetToClosestSurfaceNow(
     target.position[0],
     target.position[2],
     sameFloorAssets,
-    64 // Search across entire floor when explicitly triggered
+    64, // Search across entire floor when explicitly triggered
+    gridStep
   );
   if (!snapRes.snappedToId) {
     return { updatedAssets: assets, snappedToName: null, snappedFace: null };
@@ -1606,7 +1903,8 @@ export function snapAssetToClosestSurfaceNow(
 
 /**
  * Pure helper to move one or multiple selected assets simultaneously by the snapped delta of the anchor asset.
- * When surfaceSnap is enabled, the anchor asset aligns flush to the closest wall or surface within snapThreshold.
+ * When surfaceSnap is enabled, the anchor asset aligns flush to the closest wall, surface, or placed asset within snapThreshold.
+ * Supports variable snap-to-grid size via `options.gridStep`.
  */
 export function moveMultipleAssetsByDelta(
   assets: PlacedAsset[],
@@ -1615,11 +1913,12 @@ export function moveMultipleAssetsByDelta(
   targetX: number,
   targetZ: number,
   halfGrid = GRID_TILE_COUNT / 2 - 0.5,
-  options?: { surfaceSnap?: boolean; snapThreshold?: number }
+  options?: { surfaceSnap?: boolean; snapThreshold?: number; gridStep?: number }
 ): PlacedAsset[] {
   const anchor = assets.find((a) => a.id === anchorAssetId);
   if (!anchor) return assets;
 
+  const safeStep = normalizeSnapGridSize(options?.gridStep);
   const idsToMove = selectedIds.includes(anchorAssetId) ? selectedIds : [anchorAssetId];
   const idSet = new Set(idsToMove);
 
@@ -1632,19 +1931,20 @@ export function moveMultipleAssetsByDelta(
       targetX,
       targetZ,
       nonSelectedFloorAssets,
-      options.snapThreshold ?? 2.2
+      options.snapThreshold ?? 2.2,
+      safeStep
     );
-    const dx = Number((snapped.x - anchor.position[0]).toFixed(3));
-    const dz = Number((snapped.z - anchor.position[2]).toFixed(3));
+    const dx = Number((snapped.x - anchor.position[0]).toFixed(4));
+    const dz = Number((snapped.z - anchor.position[2]).toFixed(4));
     if (dx === 0 && dz === 0 && snapped.rotationY === anchor.rotationY) return assets;
 
     return assets.map((a) => {
       if (!idSet.has(a.id)) return a;
       const nextX = Number(
-        Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)).toFixed(3)
+        Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)).toFixed(4)
       );
       const nextZ = Number(
-        Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)).toFixed(3)
+        Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)).toFixed(4)
       );
       return {
         ...a,
@@ -1654,14 +1954,14 @@ export function moveMultipleAssetsByDelta(
     });
   }
 
-  const dx = snapToGrid(targetX - anchor.position[0], 0.5);
-  const dz = snapToGrid(targetZ - anchor.position[2], 0.5);
+  const dx = snapToGrid(targetX - anchor.position[0], safeStep);
+  const dz = snapToGrid(targetZ - anchor.position[2], safeStep);
   if (dx === 0 && dz === 0) return assets;
 
   return assets.map((a) => {
     if (!idSet.has(a.id)) return a;
-    const nextX = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)), 0.5);
-    const nextZ = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)), 0.5);
+    const nextX = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[0] + dx)), safeStep);
+    const nextZ = snapToGrid(Math.max(-halfGrid, Math.min(halfGrid, a.position[2] + dz)), safeStep);
     return {
       ...a,
       position: [nextX, a.dimensions[1] / 2, nextZ]
@@ -3511,24 +3811,24 @@ export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindo
       title: 'Build Mode Tools',
       shortTitle: '🛠 Tools',
       x: 12,
-      y: 485,
+      y: 438,
       width: 255,
-      height: 295,
+      height: 274,
       minWidth: 220,
       minHeight: 190,
       isOpen: true,
       isMinimized: false,
       isMaximized: false,
-      zIndex: 21
+      zIndex: 25
     },
     catalog: {
       id: 'catalog',
       title: 'Visual Asset Catalog & AI Forge',
       shortTitle: '📦 Asset Catalog',
       x: 275,
-      y: 445,
+      y: 438,
       width: 475,
-      height: 345,
+      height: 274,
       minWidth: 320,
       minHeight: 200,
       isOpen: true,
@@ -3541,9 +3841,9 @@ export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindo
       title: '3D Object Inspector',
       shortTitle: '🔍 Inspector',
       x: 758,
-      y: 445,
+      y: 438,
       width: 335,
-      height: 345,
+      height: 274,
       minWidth: 260,
       minHeight: 200,
       isOpen: true,
@@ -3558,7 +3858,7 @@ export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindo
       x: 12,
       y: 74,
       width: 325,
-      height: 362,
+      height: 356,
       minWidth: 270,
       minHeight: 230,
       isOpen: true,
@@ -3579,7 +3879,7 @@ export function createDefaultStudioWindows(): Record<StudioWindowId, StudioWindo
       isOpen: true,
       isMinimized: false,
       isMaximized: false,
-      zIndex: 25
+      zIndex: 21
     },
     char_appearance: {
       id: 'char_appearance',
@@ -3794,7 +4094,9 @@ export function toggleStudioWindowMaximize(
 export function toggleStudioWindowOpen(
   windows: Record<StudioWindowId, StudioWindowState>,
   id: StudioWindowId,
-  forceOpen?: boolean
+  forceOpen?: boolean,
+  viewportW = 1280,
+  viewportH = 800
 ): Record<StudioWindowId, StudioWindowState> {
   const defaults = createDefaultStudioWindows();
   const target = windows[id] || defaults[id];
@@ -3803,21 +4105,210 @@ export function toggleStudioWindowOpen(
   const nextOpen = forceOpen !== undefined ? forceOpen : !target.isOpen;
 
   const defaultSpec = defaults[id] || target;
-  const safeX = typeof target.x === 'number' && isFinite(target.x) && target.x > -100 && target.x < 2500 ? target.x : defaultSpec.x;
-  const safeY = typeof target.y === 'number' && isFinite(target.y) && target.y > -50 && target.y < 1800 ? target.y : defaultSpec.y;
+  const safeW = Math.max(target.minWidth || 200, target.width || defaultSpec.width);
+  const safeH = Math.max(target.minHeight || 150, target.height || defaultSpec.height);
+  const rawX = typeof target.x === 'number' && isFinite(target.x) && target.x > -100 && target.x < 2500 ? target.x : defaultSpec.x;
+  const rawY = typeof target.y === 'number' && isFinite(target.y) && target.y > -50 && target.y < 1800 ? target.y : defaultSpec.y;
+  const safeX = nextOpen
+    ? Math.max(8, Math.min(Math.max(8, viewportW - Math.min(safeW, viewportW - 16)), Math.round(rawX)))
+    : rawX;
+  const safeY = nextOpen
+    ? Math.max(52, Math.min(Math.max(52, viewportH - Math.min(safeH, viewportH - 64)), Math.round(rawY)))
+    : rawY;
 
   return {
     ...windows,
     [id]: {
+      ...defaultSpec,
       ...target,
+      id,
+      title: defaultSpec.title,
+      shortTitle: defaultSpec.shortTitle,
       x: safeX,
       y: safeY,
-      width: Math.max(target.minWidth || 200, target.width || defaultSpec.width),
-      height: Math.max(target.minHeight || 150, target.height || defaultSpec.height),
+      width: safeW,
+      height: safeH,
       isOpen: nextOpen,
       isMinimized: nextOpen ? false : target.isMinimized,
       zIndex: nextOpen ? maxZ + 1 : target.zIndex
     }
+  };
+}
+
+export function normalizeStudioWindowsState(
+  saved: Partial<Record<StudioWindowId, Partial<StudioWindowState>>> | null | undefined,
+  viewportW = 1280,
+  viewportH = 800
+): Record<StudioWindowId, StudioWindowState> {
+  const defaults = createDefaultStudioWindows();
+  if (!saved || typeof saved !== 'object') {
+    return defaults;
+  }
+  const normalized = { ...defaults };
+  for (const id of Object.keys(defaults) as StudioWindowId[]) {
+    const def = defaults[id];
+    const raw = saved[id];
+    if (!raw || typeof raw !== 'object') {
+      normalized[id] = def;
+      continue;
+    }
+    const width =
+      typeof raw.width === 'number' && isFinite(raw.width)
+        ? Math.max(def.minWidth, Math.min(viewportW - 16, Math.round(raw.width)))
+        : def.width;
+    const height =
+      typeof raw.height === 'number' && isFinite(raw.height)
+        ? Math.max(def.minHeight, Math.min(viewportH - 64, Math.round(raw.height)))
+        : def.height;
+    const rawX = typeof raw.x === 'number' && isFinite(raw.x) ? raw.x : def.x;
+    const rawY = typeof raw.y === 'number' && isFinite(raw.y) ? raw.y : def.y;
+    const x = Math.max(8, Math.min(Math.max(8, viewportW - Math.min(width, viewportW - 16)), Math.round(rawX)));
+    const y = Math.max(52, Math.min(Math.max(52, viewportH - Math.min(height, viewportH - 64)), Math.round(rawY)));
+
+    normalized[id] = {
+      ...def,
+      ...raw,
+      id,
+      title: def.title,
+      shortTitle: def.shortTitle,
+      minWidth: def.minWidth,
+      minHeight: def.minHeight,
+      x,
+      y,
+      width,
+      height,
+      isOpen: typeof raw.isOpen === 'boolean' ? raw.isOpen : def.isOpen,
+      isMinimized: typeof raw.isMinimized === 'boolean' ? raw.isMinimized : def.isMinimized,
+      isMaximized: typeof raw.isMaximized === 'boolean' ? raw.isMaximized : def.isMaximized,
+      zIndex: typeof raw.zIndex === 'number' && isFinite(raw.zIndex) ? raw.zIndex : def.zIndex
+    };
+  }
+  return normalized;
+}
+
+export type TaskbarWindowAction = 'opened' | 'restored' | 'focused' | 'closed';
+
+export interface TaskbarWindowClickResult {
+  windows: Record<StudioWindowId, StudioWindowState>;
+  action: TaskbarWindowAction;
+  windowState: StudioWindowState;
+}
+
+export function handleTaskbarWindowButtonClick(
+  windows: Record<StudioWindowId, StudioWindowState>,
+  id: StudioWindowId,
+  mode: EditorWorkspaceModeId = 'architect',
+  viewportW = 1280,
+  viewportH = 800
+): TaskbarWindowClickResult {
+  const defaults = createDefaultStudioWindows();
+  const def = defaults[id];
+  const target = windows[id] ? { ...def, ...windows[id] } : def;
+  const maxZ = Object.values(windows).reduce((acc, w) => Math.max(acc, w?.zIndex || 20), 20);
+
+  const safeW = Math.max(def.minWidth || 200, target.width || def.width);
+  const safeH = Math.max(def.minHeight || 150, target.height || def.height);
+  const clampedX = Math.max(
+    8,
+    Math.min(Math.max(8, viewportW - Math.min(safeW, viewportW - 16)), Math.round(target.x ?? def.x))
+  );
+  const clampedY = Math.max(
+    52,
+    Math.min(Math.max(52, viewportH - Math.min(safeH, viewportH - 64)), Math.round(target.y ?? def.y))
+  );
+
+  // 1. Closed -> open, clamp into viewport, and bring to front
+  if (!target.isOpen) {
+    const nextWin: StudioWindowState = {
+      ...target,
+      id,
+      title: def.title,
+      shortTitle: def.shortTitle,
+      x: clampedX,
+      y: clampedY,
+      width: safeW,
+      height: safeH,
+      isOpen: true,
+      isMinimized: false,
+      zIndex: maxZ + 1
+    };
+    return {
+      windows: { ...windows, [id]: nextWin },
+      action: 'opened',
+      windowState: nextWin
+    };
+  }
+
+  // 2. Minimized -> unminimize, clamp into viewport, and bring to front
+  if (target.isMinimized) {
+    const nextWin: StudioWindowState = {
+      ...target,
+      id,
+      title: def.title,
+      shortTitle: def.shortTitle,
+      x: clampedX,
+      y: clampedY,
+      width: safeW,
+      height: safeH,
+      isOpen: true,
+      isMinimized: false,
+      isMaximized: false,
+      zIndex: maxZ + 1
+    };
+    return {
+      windows: { ...windows, [id]: nextWin },
+      action: 'restored',
+      windowState: nextWin
+    };
+  }
+
+  // 3. Open & unminimized: check if another visible window in this mode has a strictly higher zIndex or if off-screen
+  const modeWinIds = getTaskbarWindowIdsForMode(mode);
+  const otherVisibleMaxZ = modeWinIds.reduce((acc, wId) => {
+    if (wId === id) return acc;
+    const w = windows[wId] || defaults[wId];
+    if (w && w.isOpen && !w.isMinimized) {
+      return Math.max(acc, w.zIndex || 20);
+    }
+    return acc;
+  }, 0);
+
+  const isOffScreen =
+    Math.abs((target.x ?? def.x) - clampedX) > 12 || Math.abs((target.y ?? def.y) - clampedY) > 12;
+
+  if (target.zIndex < otherVisibleMaxZ || isOffScreen) {
+    const nextWin: StudioWindowState = {
+      ...target,
+      id,
+      title: def.title,
+      shortTitle: def.shortTitle,
+      x: clampedX,
+      y: clampedY,
+      width: safeW,
+      height: safeH,
+      isOpen: true,
+      isMinimized: false,
+      zIndex: maxZ + 1
+    };
+    return {
+      windows: { ...windows, [id]: nextWin },
+      action: 'focused',
+      windowState: nextWin
+    };
+  }
+
+  // 4. Already top-most visible window on screen -> toggle closed
+  const nextWin: StudioWindowState = {
+    ...target,
+    id,
+    title: def.title,
+    shortTitle: def.shortTitle,
+    isOpen: false
+  };
+  return {
+    windows: { ...windows, [id]: nextWin },
+    action: 'closed',
+    windowState: nextWin
   };
 }
 
@@ -7115,6 +7606,218 @@ export function isActionKeyHeld(
   return false;
 }
 
+export interface BuildCameraMovementStep {
+  forwardInput: number;
+  rightInput: number;
+  upInput: number;
+  isSprinting: boolean;
+  moveSpeed: number;
+  dx: number;
+  dy: number;
+  dz: number;
+}
+
+/**
+ * Computes 3D Build / Camera Mode ('architect' | 'soundboard') movement where keyboard keys
+ * control the camera position and elevation:
+ * - W/S or ArrowUp/ArrowDown pan camera forward/backward along camera yaw (`theta`)
+ * - A/D or ArrowLeft/ArrowRight pan camera left/right
+ * - Space / PageUp (`camera_up`) elevates camera vertically up
+ * - Ctrl (`ControlLeft`/`ControlRight`) / C / PageDown (`camera_down`) lowers camera vertically down
+ *   (automatically suppressed during Ctrl+C, Ctrl+V, Ctrl+Z editor shortcut chords)
+ * - Shift (`sprint_camera`) doubles camera translation speed
+ */
+export function computeBuildCameraMovementStep(params: {
+  theta: number;
+  dt: number;
+  keysHeld: ReadonlySet<string>;
+  bindings?: KeybindingsMap;
+}): BuildCameraMovementStep {
+  const kb = params.bindings || DEFAULT_KEYBINDINGS;
+  const { keysHeld, theta, dt } = params;
+
+  const isCtrlHeld = keysHeld.has('ControlLeft') || keysHeld.has('ControlRight');
+  const isEditorShortcutChord =
+    isCtrlHeld &&
+    (keysHeld.has('KeyC') ||
+      keysHeld.has('KeyV') ||
+      keysHeld.has('KeyZ') ||
+      keysHeld.has('KeyY') ||
+      keysHeld.has('KeyX'));
+
+  let forwardInput = 0;
+  let rightInput = 0;
+  let upInput = 0;
+
+  if (!isEditorShortcutChord) {
+    if (isActionKeyHeld('move_forward', keysHeld, kb)) forwardInput += 1;
+    if (isActionKeyHeld('move_backward', keysHeld, kb)) forwardInput -= 1;
+    if (isActionKeyHeld('move_right', keysHeld, kb)) rightInput += 1;
+    if (isActionKeyHeld('move_left', keysHeld, kb)) rightInput -= 1;
+
+    if (isActionKeyHeld('camera_up', keysHeld, kb) || keysHeld.has('Space')) {
+      upInput += 1;
+    }
+    if (isActionKeyHeld('camera_down', keysHeld, kb) || isCtrlHeld) {
+      upInput -= 1;
+    }
+  }
+
+  const isSprinting = isActionKeyHeld('sprint_camera', keysHeld, kb);
+  const moveSpeed = (isSprinting ? 24.0 : 12.0) * dt;
+  const { dx, dy, dz } =
+    forwardInput !== 0 || rightInput !== 0 || upInput !== 0
+      ? computeFirstPersonCameraDisplacement(theta, forwardInput, rightInput, upInput, moveSpeed)
+      : { dx: 0, dy: 0, dz: 0 };
+
+  return {
+    forwardInput,
+    rightInput,
+    upInput,
+    isSprinting,
+    moveSpeed,
+    dx,
+    dy,
+    dz
+  };
+}
+
+export interface FirstPersonCharacterMovementStep {
+  forwardInput: number;
+  strafeInput: number;
+  turnDelta: number;
+  isCrouching: boolean;
+  isSprinting: boolean;
+  speedMetersPerSec: number;
+  dx: number;
+  dz: number;
+  nextYaw: number;
+  targetEyeHeight: number;
+  nextEyeHeight: number;
+  nextY: number;
+  nextVy: number;
+  isGrounded: boolean;
+  didJump: boolean;
+}
+
+/**
+ * Computes standard First-Person Mode ('walkthrough') character movement where keyboard keys
+ * move the physical character along the floor rather than free-flying the camera:
+ * - W/S or ArrowUp/ArrowDown walk the character forward/backward
+ * - A/D strafe the character left/right
+ * - Q / ArrowLeft / ArrowRight rotate character yaw
+ * - Ctrl (`ControlLeft`/`ControlRight`) or C (`stealth_crouch`) crouches the character
+ *   (smoothly lowering eyeHeight from 1.62m to 1.02m, slowing to 2.45m/s stealth speed, silencing footsteps)
+ * - Space triggers a grounded character jump (`vy = 3.8` m/s) with gravity (`12.5` m/s²) returning `y` to `0` on the floor
+ * - Shift (`sprint_camera`) when standing increases character movement speed to a brisk walk/sprint (`6.4` m/s)
+ */
+export function computeFirstPersonCharacterMovementStep(params: {
+  yaw: number;
+  eyeHeight: number;
+  y: number;
+  vy: number;
+  dt: number;
+  keysHeld: ReadonlySet<string>;
+  crouchToggled?: boolean;
+  bindings?: KeybindingsMap;
+}): FirstPersonCharacterMovementStep {
+  const kb = params.bindings || DEFAULT_KEYBINDINGS;
+  const { keysHeld, dt } = params;
+
+  const turnSpeed = 1.95 * dt;
+  let turnDelta = 0;
+  if (isActionKeyHeld('turn_left', keysHeld, kb)) turnDelta += turnSpeed;
+  if (isActionKeyHeld('turn_right', keysHeld, kb)) turnDelta -= turnSpeed;
+  const nextYaw = params.yaw + turnDelta;
+
+  const isCrouching =
+    Boolean(params.crouchToggled) ||
+    isActionKeyHeld('stealth_crouch', keysHeld, kb) ||
+    keysHeld.has('ControlLeft') ||
+    keysHeld.has('ControlRight');
+
+  const isSprinting = !isCrouching && isActionKeyHeld('sprint_camera', keysHeld, kb);
+
+  const targetEyeHeight = isCrouching ? 1.02 : 1.62;
+  const nextEyeHeight =
+    params.eyeHeight + (targetEyeHeight - params.eyeHeight) * Math.min(1, 12 * dt);
+
+  let forwardInput = 0;
+  let strafeInput = 0;
+  if (isActionKeyHeld('move_forward', keysHeld, kb)) forwardInput += 1;
+  if (isActionKeyHeld('move_backward', keysHeld, kb)) forwardInput -= 1;
+
+  // In Walk mode, ArrowLeft/ArrowRight default to turning unless explicitly only bound to strafing
+  const strafeLeftHeld = (kb.move_left || []).some(
+    (code) => keysHeld.has(code) && !(kb.turn_left || []).includes(code)
+  );
+  const strafeRightHeld = (kb.move_right || []).some(
+    (code) => keysHeld.has(code) && !(kb.turn_right || []).includes(code)
+  );
+  if (strafeLeftHeld) strafeInput -= 1;
+  if (strafeRightHeld) strafeInput += 1;
+
+  const speedMetersPerSec = isCrouching ? 2.45 : isSprinting ? 6.4 : 4.5;
+  const stepDist = speedMetersPerSec * dt;
+
+  // Normalize diagonal input so diagonal walking doesn't exceed straight speed
+  const inputMag = Math.hypot(forwardInput, strafeInput);
+  const normForward = inputMag > 1 ? forwardInput / inputMag : forwardInput;
+  const normStrafe = inputMag > 1 ? strafeInput / inputMag : strafeInput;
+
+  const forwardX = -Math.sin(nextYaw);
+  const forwardZ = -Math.cos(nextYaw);
+  const rightX = Math.cos(nextYaw);
+  const rightZ = -Math.sin(nextYaw);
+
+  const dx = (forwardX * normForward + rightX * normStrafe) * stepDist;
+  const dz = (forwardZ * normForward + rightZ * normStrafe) * stepDist;
+
+  // Grounded First-Person Jump & Gravity (Space jumps from floor y=0; never flies infinitely)
+  let nextY = Math.max(0, Number.isFinite(params.y) ? params.y : 0);
+  let nextVy = Number.isFinite(params.vy) ? params.vy : 0;
+  let didJump = false;
+
+  const wasGrounded = nextY <= 0.001;
+  if (wasGrounded && keysHeld.has('Space') && !isCrouching) {
+    nextVy = 3.8;
+    didJump = true;
+  }
+
+  if (nextY > 0 || nextVy > 0) {
+    nextY += nextVy * dt;
+    nextVy -= 12.5 * dt;
+    if (nextY <= 0) {
+      nextY = 0;
+      nextVy = 0;
+    }
+  } else {
+    nextY = 0;
+    nextVy = 0;
+  }
+
+  const isGrounded = nextY <= 0.001;
+
+  return {
+    forwardInput,
+    strafeInput,
+    turnDelta,
+    isCrouching,
+    isSprinting,
+    speedMetersPerSec,
+    dx,
+    dz,
+    nextYaw,
+    targetEyeHeight,
+    nextEyeHeight,
+    nextY,
+    nextVy,
+    isGrounded,
+    didJump
+  };
+}
+
+
 // ============================================================================
 // MESHY.AI AUTO-RIGGING & LOW-FRAME CHARACTER ANIMATION ENGINE
 // (Alterations 1, 2, and 3 — Global FPS Stepper, Keyframe Decimation,
@@ -7627,20 +8330,18 @@ export function getTaskbarWindowIdsForMode(mode: EditorWorkspaceModeId): StudioW
       'local_fs',
       'projects',
       'keybindings',
-      'audio',
       'char_appearance',
       'char_ai',
       'layers'
     ];
   }
   if (mode === 'soundboard') {
-    return ['audio', 'local_fs', 'projects', 'keybindings', 'layers'];
+    return ['local_fs', 'projects', 'keybindings', 'layers'];
   }
   return [
     'local_fs',
     'projects',
     'keybindings',
-    'audio',
     'blueprints',
     'tools',
     'catalog',
@@ -7833,7 +8534,7 @@ export interface SearchableBlueprintLike {
   animationSpec?: string;
   soundPresetId?: string;
   pairedVariantId?: string;
-  conditionVariant?: 'pristine' | 'unkempt';
+  conditionVariant?: AssetConditionVariant;
   compositeParts?: CompositeSubPart[];
   referenceImageUrl?: string;
   era?: '1970s' | '1980s' | '1990s' | 'timeless';
@@ -8808,12 +9509,17 @@ export interface AssetClipboardItem {
   isSecretPassage?: boolean;
   hingeSwingMode?: HingeSwingMode;
   isOpen?: boolean;
+  isActivated?: boolean;
+  interactionStateLabel?: string;
   collidable: boolean;
   compositeParts?: CompositeSubPart[];
   tags?: string[];
   soundPresetId?: string;
   pairedVariantId?: string;
-  conditionVariant?: 'pristine' | 'unkempt';
+  conditionVariant?: AssetConditionVariant;
+  era?: '1970s' | '1980s' | '1990s' | 'timeless';
+  predecessor1978Id?: string;
+  paired1990sId?: string;
 }
 
 export interface AssetClipboardPayload {
@@ -9273,4 +9979,1089 @@ export function searchAndFilterAssetSets(
         return haystack.includes(cleanTok);
       });
   });
+}
+
+// ============================================================================
+// UNIFIED PRISTINE / UNKEMPT / UPDATED (90S) VARIANT SWAP & PROCEDURAL WEATHERING,
+// FPS-KEYED UNKEMPT/AGED HORROR FLICKER, & INTERACTIVE ASSET STATE CHANGES
+// ============================================================================
+
+/**
+ * Resolves the active condition variant ('pristine' | 'unkempt' | 'updated') for any placed asset or blueprint.
+ */
+export function resolveAssetConditionVariant(
+  asset: Partial<PlacedAsset> | SearchableBlueprintLike | null | undefined
+): AssetConditionVariant {
+  if (!asset) return 'pristine';
+  const cond = (asset as Partial<PlacedAsset>).conditionVariant;
+  if (cond === 'updated' || cond === 'unkempt' || cond === 'pristine') {
+    return cond;
+  }
+  const era = (asset as Partial<PlacedAsset>).era;
+  const sub = (asset.subType || '').toLowerCase();
+  const name = (asset.name || '').toLowerCase();
+  const tags = (asset.tags || []).map((t) => t.toLowerCase());
+
+  if (
+    era === '1990s' ||
+    sub.endsWith('_90s') ||
+    sub.includes('_90s_') ||
+    tags.includes('1990s') ||
+    tags.includes('hotel-updated') ||
+    tags.includes('updated') ||
+    name.includes('[updated')
+  ) {
+    return 'updated';
+  }
+
+  if (
+    sub.endsWith('_unkempt') ||
+    sub.includes('unkempt') ||
+    tags.includes('unkempt') ||
+    tags.includes('aged') ||
+    name.includes('unkempt')
+  ) {
+    return 'unkempt';
+  }
+
+  return 'pristine';
+}
+
+/**
+ * Swaps ANY asset's condition variant between 'pristine', 'unkempt', and 'updated' (the 1990s asset set)
+ * based on its `conditionVariant` metadata, matching catalog blueprints if available, and triggers
+ * procedural weathering re-texturing via `weatherAssetToLate70sStyle`.
+ */
+export function swapAssetConditionVariant(
+  asset: PlacedAsset,
+  targetVariant: AssetConditionVariant,
+  allBlueprints: readonly SearchableBlueprintLike[] = []
+): {
+  swappedAsset: PlacedAsset;
+  conditionVariant: AssetConditionVariant;
+  retextured: boolean;
+  message: string;
+} {
+  const safeVariant: AssetConditionVariant =
+    targetVariant === 'unkempt' || targetVariant === 'updated' || targetVariant === 'pristine'
+      ? targetVariant
+      : 'pristine';
+
+  if (!asset || typeof asset !== 'object') {
+    const fallbackAsset: PlacedAsset = {
+      id: 'fallback_asset',
+      name: 'Fallback Hotel Asset',
+      category: 'furniture',
+      subType: 'fallback_asset',
+      floor: 'lobby',
+      position: [0, 0.5, 0],
+      rotationY: 0,
+      dimensions: [1, 1, 1],
+      color: '#736555',
+      textureId: 'wood_panels',
+      collidable: true,
+      conditionVariant: safeVariant
+    };
+    return {
+      swappedAsset: fallbackAsset,
+      conditionVariant: safeVariant,
+      retextured: false,
+      message: 'Skipped variant swap: asset reference was undefined.'
+    };
+  }
+
+  const combinedBlueprints: SearchableBlueprintLike[] = [
+    ...(Array.isArray(allBlueprints) ? allBlueprints.filter(Boolean) : []),
+    ...APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+    ...APARTMENT_1990S_HOTEL_CATALOG_BLUEPRINTS
+  ];
+
+  const safePos: [number, number, number] =
+    Array.isArray(asset.position) && asset.position.length === 3
+      ? [asset.position[0], asset.position[1], asset.position[2]]
+      : [0, 0.5, 0];
+  const safeDims: [number, number, number] =
+    Array.isArray(asset.dimensions) && asset.dimensions.length === 3
+      ? [asset.dimensions[0], asset.dimensions[1], asset.dimensions[2]]
+      : [1, 1, 1];
+
+  let working: PlacedAsset = {
+    ...asset,
+    subType: asset.subType || 'custom_asset',
+    position: safePos,
+    dimensions: safeDims,
+    compositeParts: Array.isArray(asset.compositeParts)
+      ? asset.compositeParts.filter(Boolean).map((p) => ({ ...p }))
+      : undefined,
+    tags: Array.isArray(asset.tags) ? [...asset.tags] : undefined
+  };
+
+  const currentVariant = resolveAssetConditionVariant(working);
+
+  if (safeVariant === 'updated') {
+    // If currently in 'unkempt', check if toggling to pristine first reveals a 1990s upgrade mapping
+    let candidateFor90s = working;
+    if (
+      !getUpdated1990sVariantSubtype(candidateFor90s.subType, combinedBlueprints) &&
+      !candidateFor90s.paired1990sId
+    ) {
+      const toggled = togglePlacedAssetConditionVariant(candidateFor90s, combinedBlueprints);
+      if (toggled) {
+        candidateFor90s = toggled;
+      }
+    }
+
+    const upgradeRes = upgradeAssetTo1990sHotelVersion(candidateFor90s, combinedBlueprints);
+    if (upgradeRes.success) {
+      working = {
+        ...upgradeRes.upgradedAsset,
+        predecessor1978Id: candidateFor90s.predecessor1978Id || candidateFor90s.subType,
+        conditionVariant: 'updated',
+        era: '1990s'
+      };
+      const swappedAsset = weatherAssetToLate70sStyle(working, 'updated');
+      return {
+        swappedAsset,
+        conditionVariant: 'updated',
+        retextured: true,
+        message: `Swapped "${asset.name}" to Updated (1990s Set): "${swappedAsset.name}" & procedurally re-textured.`
+      };
+    }
+
+    // Fallback for any asset (including custom/architectural items without a separate 90s blueprint):
+    // swap conditionVariant metadata and trigger procedural weathering re-texture for 'updated'
+    const swappedAsset = weatherAssetToLate70sStyle(
+      {
+        ...working,
+        predecessor1978Id: working.predecessor1978Id || working.subType,
+        conditionVariant: 'updated',
+        era: '1990s'
+      },
+      'updated'
+    );
+    return {
+      swappedAsset,
+      conditionVariant: 'updated',
+      retextured: true,
+      message: `Swapped "${asset.name}" to Updated (1990s Set) & procedurally re-textured.`
+    };
+  }
+
+  // Target is 'pristine' or 'unkempt':
+  // 1. If currently in 'updated' (1990s), downgrade to 1978 baseline first
+  if (currentVariant === 'updated' || working.era === '1990s' || working.subType.endsWith('_90s')) {
+    const downRes = downgradeAssetTo1978Version(working, combinedBlueprints);
+    if (downRes.success) {
+      working = downRes.downgradedAsset;
+    } else {
+      const fallbackPred =
+        working.predecessor1978Id ||
+        getPredecessor1978Subtype(working.subType, combinedBlueprints);
+      if (fallbackPred) {
+        working = {
+          ...working,
+          subType: fallbackPred,
+          era: '1970s',
+          conditionVariant: fallbackPred.endsWith('_unkempt') ? 'unkempt' : 'pristine'
+        };
+      }
+    }
+  }
+
+  // 2. Check if we need to swap between 1978 _pristine and _unkempt paired blueprints
+  const needsPairSwap =
+    resolveAssetConditionVariant(working) !== safeVariant ||
+    (safeVariant === 'unkempt' && working.subType.endsWith('_pristine')) ||
+    (safeVariant === 'pristine' && working.subType.endsWith('_unkempt'));
+
+  if (needsPairSwap) {
+    const swappedPair = togglePlacedAssetConditionVariant(working, combinedBlueprints);
+    if (
+      swappedPair &&
+      ((safeVariant === 'unkempt' && swappedPair.subType.endsWith('_unkempt')) ||
+        (safeVariant === 'pristine' && swappedPair.subType.endsWith('_pristine')) ||
+        resolveAssetConditionVariant(swappedPair) === safeVariant)
+    ) {
+      working = swappedPair;
+    } else if (working.subType.endsWith('_pristine') && safeVariant === 'unkempt') {
+      const unkSub = working.subType.replace(/_pristine$/, '_unkempt');
+      const bp = combinedBlueprints.find((b) => b.subType === unkSub);
+      if (bp) {
+        working = {
+          ...working,
+          name: bp.name,
+          subType: bp.subType,
+          category: bp.category,
+          color: bp.defaultColor,
+          textureId: bp.defaultTexture,
+          dimensions: [...bp.defaultDimensions] as [number, number, number],
+          compositeParts: bp.compositeParts ? bp.compositeParts.map((p) => ({ ...p })) : working.compositeParts,
+          pairedVariantId: working.subType,
+          conditionVariant: 'unkempt',
+          tags: bp.tags ? [...bp.tags] : working.tags
+        };
+      } else {
+        working = {
+          ...working,
+          subType: unkSub,
+          pairedVariantId: working.subType,
+          conditionVariant: 'unkempt'
+        };
+      }
+    } else if (working.subType.endsWith('_unkempt') && safeVariant === 'pristine') {
+      const prisSub = working.subType.replace(/_unkempt$/, '_pristine');
+      const bp = combinedBlueprints.find((b) => b.subType === prisSub);
+      if (bp) {
+        working = {
+          ...working,
+          name: bp.name,
+          subType: bp.subType,
+          category: bp.category,
+          color: bp.defaultColor,
+          textureId: bp.defaultTexture,
+          dimensions: [...bp.defaultDimensions] as [number, number, number],
+          compositeParts: bp.compositeParts ? bp.compositeParts.map((p) => ({ ...p })) : working.compositeParts,
+          pairedVariantId: working.subType,
+          conditionVariant: 'pristine',
+          tags: bp.tags ? [...bp.tags] : working.tags
+        };
+      } else {
+        working = {
+          ...working,
+          subType: prisSub,
+          pairedVariantId: working.subType,
+          conditionVariant: 'pristine'
+        };
+      }
+    }
+  }
+
+  // 3. Always run the procedural weathering function to re-texture and normalize metadata for safeVariant
+  const swappedAsset = weatherAssetToLate70sStyle(
+    {
+      ...working,
+      conditionVariant: safeVariant,
+      era: '1970s'
+    },
+    safeVariant
+  );
+
+  return {
+    swappedAsset,
+    conditionVariant: safeVariant,
+    retextured: true,
+    message:
+      safeVariant === 'unkempt'
+        ? `Swapped "${asset.name}" to Unkempt (1978 Grime + Flicker) & procedurally re-textured.`
+        : `Swapped "${asset.name}" to Pristine (1978 Intact) & procedurally re-textured.`
+  };
+}
+
+/**
+ * Determines whether an asset or blueprint is marked as 'unkempt' or 'aged'
+ * for the horror/thriller subtle flicker animation effect.
+ */
+export function isUnkemptOrAgedAsset(
+  asset: Partial<PlacedAsset> | SearchableBlueprintLike | null | undefined
+): boolean {
+  if (!asset) return false;
+  const cond = (asset as Partial<PlacedAsset>).conditionVariant;
+  if (cond === 'unkempt') return true;
+  if (cond === 'pristine' || cond === 'updated') {
+    // Only return true if explicitly tagged 'aged' or 'unkempt'
+    const explicitTags = (asset.tags || []).map((t) => t.toLowerCase());
+    if (explicitTags.includes('unkempt') || explicitTags.includes('aged')) {
+      return true;
+    }
+    return false;
+  }
+
+  const sub = (asset.subType || '').toLowerCase();
+  const name = (asset.name || '').toLowerCase();
+  const desc = (
+    (asset as Partial<PlacedAsset>).inspectText ||
+    (asset as SearchableBlueprintLike).description ||
+    ''
+  ).toLowerCase();
+  const tags = (asset.tags || []).map((t) => t.toLowerCase());
+
+  if (
+    sub.includes('unkempt') ||
+    sub.includes('aged') ||
+    tags.includes('unkempt') ||
+    tags.includes('aged') ||
+    name.includes('unkempt') ||
+    name.includes('aged') ||
+    desc.includes('unkempt') ||
+    desc.includes('aged')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Computes the CSS animation properties for the subtle 'flicker' effect on 'unkempt' or 'aged'
+ * assets, keyed directly to the global animation FPS state (`globalAnimationFps`).
+ */
+export function computeUnkemptFlickerCssSpec(
+  globalFps: number,
+  assetSeed = 'default'
+): {
+  isFlickering: boolean;
+  fps: number;
+  steps: number;
+  stepCount: number;
+  durationSec: number;
+  delaySec: number;
+  animationDurationSec: string;
+  animationDelaySec: string;
+  className: string;
+  styleVars: Record<string, string>;
+} {
+  const safeFps = Math.max(0, Math.min(60, Math.round(globalFps || 0)));
+  if (safeFps <= 0) {
+    return {
+      isFlickering: false,
+      fps: 0,
+      steps: 1,
+      stepCount: 1,
+      durationSec: 0,
+      delaySec: 0,
+      animationDurationSec: '0s',
+      animationDelaySec: '0s',
+      className: '',
+      styleVars: {
+        '--global-anim-fps': '0',
+        '--flicker-steps': '1',
+        '--flicker-duration': '0s',
+        '--flicker-delay': '0s'
+      }
+    };
+  }
+
+  // Deterministic phase offset from assetSeed so multiple unkempt items don't flicker in unison
+  let hash = 0;
+  for (let i = 0; i < assetSeed.length; i++) {
+    hash = (hash * 31 + assetSeed.charCodeAt(i)) >>> 0;
+  }
+
+  // Cycle duration and discrete step count both scale with globalFps
+  const cycleSeconds = Number(Math.max(0.8, Math.min(3.2, 16 / safeFps)).toFixed(2));
+  const steps = Math.max(4, Math.round(safeFps * 2));
+  const delaySec = Number(((hash % 17) * 0.11).toFixed(2));
+  const animationDurationSec = `${cycleSeconds}s`;
+  const animationDelaySec = `-${delaySec}s`;
+
+  return {
+    isFlickering: true,
+    fps: safeFps,
+    steps,
+    stepCount: steps,
+    durationSec: cycleSeconds,
+    delaySec,
+    animationDurationSec,
+    animationDelaySec,
+    className: 'unkempt-aged-flicker',
+    styleVars: {
+      '--global-anim-fps': String(safeFps),
+      '--flicker-steps': String(steps),
+      '--flicker-duration': animationDurationSec,
+      '--flicker-delay': animationDelaySec
+    }
+  };
+}
+
+/**
+ * Samples the subtle horror/thriller 3D flicker intensity at a given continuous time (seconds),
+ * quantized to discrete frames at `globalFps` so 3D meshes and lights of 'unkempt' / 'aged' assets
+ * step in lockstep with the global animation FPS state.
+ */
+export function sampleUnkemptFlickerIntensity(
+  timeSec: number,
+  globalFps: number,
+  assetSeed = 'default'
+): {
+  steppedTimeSec: number;
+  stepIndex: number;
+  intensityMultiplier: number;
+  brightnessMultiplier: number;
+  emissiveMultiplier: number;
+  opacityMultiplier: number;
+  opacity: number;
+  isFlickerDip: boolean;
+  isDip: boolean;
+} {
+  const safeFps = Math.max(1, Math.min(60, Math.round(globalFps || DEFAULT_GLOBAL_ANIMATION_FPS)));
+  const stepIndex = Math.floor(Math.max(0, timeSec) * safeFps);
+  const steppedTimeSec = stepIndex / safeFps;
+
+  let seedHash = 2166136261;
+  for (let i = 0; i < assetSeed.length; i++) {
+    seedHash ^= assetSeed.charCodeAt(i);
+    seedHash = Math.imul(seedHash, 16777619) >>> 0;
+  }
+
+  // Deterministic pseudo-random wave per quantized frame step
+  const phase = (stepIndex + (seedHash % 97)) * 0.6180339887;
+  const waveA = Math.sin(phase * 2.3);
+  const waveB = Math.cos(phase * 5.7 + (seedHash % 13));
+  const combined = waveA * 0.6 + waveB * 0.4;
+
+  // Subtle horror micro-dip on ~15% of quantized steps
+  const isFlickerDip = combined < -0.58;
+  const rawIntensity = isFlickerDip
+    ? Number((0.82 + (combined + 1) * 0.08).toFixed(3))
+    : Number((0.94 + combined * 0.05).toFixed(3));
+  const rawEmissive = isFlickerDip ? 0.62 : Number((0.92 + combined * 0.08).toFixed(3));
+  const rawOpacity = isFlickerDip ? 0.88 : Number((0.96 + combined * 0.03).toFixed(3));
+
+  const intensityMultiplier = Math.max(0.8, Math.min(1.05, rawIntensity));
+  const emissiveMultiplier = Math.max(0.55, Math.min(1.1, rawEmissive));
+  const opacityMultiplier = Math.max(0.84, Math.min(1.0, rawOpacity));
+
+  return {
+    steppedTimeSec,
+    stepIndex,
+    intensityMultiplier,
+    brightnessMultiplier: intensityMultiplier,
+    emissiveMultiplier,
+    opacityMultiplier,
+    opacity: opacityMultiplier,
+    isFlickerDip,
+    isDip: isFlickerDip
+  };
+}
+
+/**
+ * Returns true if the given asset is a Television / CRT TV / VCR combo unit.
+ */
+export function isTvOrCrtScreenAsset(
+  asset: Partial<PlacedAsset> | SearchableBlueprintLike | null | undefined
+): boolean {
+  if (!asset) return false;
+  const sub = (asset.subType || '').toLowerCase();
+  const name = (asset.name || '').toLowerCase();
+  const tags = (asset.tags || []).map((t) => t.toLowerCase());
+
+  if (
+    sub.includes('television') ||
+    sub.includes('crt_tv') ||
+    sub.includes('tv_crt') ||
+    sub === 'tv' ||
+    sub.includes('_tv_') ||
+    sub.endsWith('_tv') ||
+    name.includes('television') ||
+    name.includes('crt tv') ||
+    name.includes('hotel tv') ||
+    tags.includes('tv') ||
+    tags.includes('television')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export type InteractiveAssetKind =
+  | 'tv_screen'
+  | 'computer_monitor'
+  | 'lamp_light'
+  | 'audio_device'
+  | 'appliance'
+  | 'plumbing_fixture'
+  | 'door_passage'
+  | 'general_prop';
+
+export interface AssetInteractionVisualState {
+  isInteractive: boolean;
+  interactionKind: InteractiveAssetKind;
+  isActivated: boolean;
+  screenState: 'white_on' | 'amber_on' | 'off' | 'none';
+  screenColorHex: string;
+  screenEmissiveHex: string;
+  screenEmissiveIntensity: number;
+  emissiveIntensity: number;
+  emitsLight: boolean;
+  lightColorHex: string;
+  lightIntensity: number;
+  lightDistance: number;
+  statusLabel: string;
+  statusSummary: string;
+  actionPromptLabel: string;
+}
+
+/**
+ * Computes the visual & lighting state of an asset based on its interaction state (`isActivated` / `isOpen`).
+ * Specifically, interacting with a TV turns its screen a bright white "on" (`#ffffff` + white static glow).
+ */
+export function computeAssetInteractionVisualState(
+  asset: Partial<PlacedAsset> | null | undefined
+): AssetInteractionVisualState {
+  if (!asset) {
+    return {
+      isInteractive: false,
+      interactionKind: 'general_prop',
+      isActivated: false,
+      screenState: 'none',
+      screenColorHex: '#18221c',
+      screenEmissiveHex: '#000000',
+      screenEmissiveIntensity: 0,
+      emissiveIntensity: 0,
+      emitsLight: false,
+      lightColorHex: '#ffffff',
+      lightIntensity: 0,
+      lightDistance: 0,
+      statusLabel: 'IDLE',
+      statusSummary: 'IDLE',
+      actionPromptLabel: 'Interact [E]'
+    };
+  }
+
+  const sub = (asset.subType || '').toLowerCase();
+  const name = (asset.name || '').toLowerCase();
+  const cat = asset.category;
+  const isActivated = Boolean(asset.isActivated);
+
+  if (asset.isSecretPassage || cat === 'door' || cat === 'secret_wall') {
+    const isOpen = Boolean(asset.isOpen);
+    const statusLabel = isOpen ? 'OPEN' : 'CLOSED';
+    return {
+      isInteractive: true,
+      interactionKind: 'door_passage',
+      isActivated: isOpen,
+      screenState: 'none',
+      screenColorHex: asset.color || '#3b2314',
+      screenEmissiveHex: '#000000',
+      screenEmissiveIntensity: 0,
+      emissiveIntensity: 0,
+      emitsLight: false,
+      lightColorHex: '#f59e0b',
+      lightIntensity: 0,
+      lightDistance: 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isOpen ? 'Close Hinge [E]' : 'Open Hinge [E]'
+    };
+  }
+
+  // 1. Television / CRT TV: Interacting turns the screen a glowing white "on" state!
+  if (isTvOrCrtScreenAsset(asset)) {
+    const screenEmissiveIntensity = isActivated ? 1.45 : 0.06;
+    const lightIntensity = isActivated ? 1.35 : 0;
+    const statusLabel = isActivated ? 'ON · WHITE SCREEN' : 'OFF · SCREEN DARK';
+    return {
+      isInteractive: true,
+      interactionKind: 'tv_screen',
+      isActivated,
+      screenState: isActivated ? 'white_on' : 'off',
+      screenColorHex: isActivated ? '#ffffff' : '#18221c',
+      screenEmissiveHex: isActivated ? '#ffffff' : '#0a120d',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#ffffff',
+      lightIntensity,
+      lightDistance: isActivated ? 5.5 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? '📺 Turn TV OFF [E]' : '📺 Turn TV ON (White Screen) [E]'
+    };
+  }
+
+  // 2. Computer / Terminal / Video Game Console
+  if (
+    sub.includes('computer') ||
+    sub.includes('terminal') ||
+    sub.includes('monitor') ||
+    sub.includes('console') ||
+    name.includes('terminal') ||
+    name.includes('computer') ||
+    name.includes('console')
+  ) {
+    const screenEmissiveIntensity = isActivated ? 1.15 : 0.08;
+    const lightIntensity = isActivated ? 0.95 : 0;
+    const statusLabel = isActivated ? 'POWERED ON' : 'STANDBY OFF';
+    return {
+      isInteractive: true,
+      interactionKind: 'computer_monitor',
+      isActivated,
+      screenState: isActivated ? 'white_on' : 'off',
+      screenColorHex: isActivated ? '#f8fafc' : '#1f2e23',
+      screenEmissiveHex: isActivated ? '#e2e8f0' : '#0f172a',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#e2e8f0',
+      lightIntensity,
+      lightDistance: isActivated ? 4.2 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? 'Power OFF [E]' : 'Power ON [E]'
+    };
+  }
+
+  // 3. Lamps / Sconces / Ceiling Fixtures / Exit Signs
+  if (
+    cat === 'lighting' ||
+    sub.includes('lamp') ||
+    sub.includes('sconce') ||
+    sub.includes('fixture') ||
+    sub.includes('chandelier') ||
+    sub.includes('exit_sign') ||
+    sub.includes('flashlight')
+  ) {
+    const screenEmissiveIntensity = isActivated ? 1.25 : 0.05;
+    const lightIntensity = isActivated ? 1.4 : 0;
+    const statusLabel = isActivated ? 'ILLUMINATED ON' : 'SWITCHED OFF';
+    return {
+      isInteractive: true,
+      interactionKind: 'lamp_light',
+      isActivated,
+      screenState: 'none',
+      screenColorHex: isActivated ? '#fef3c7' : '#574c3d',
+      screenEmissiveHex: isActivated ? '#fbbf24' : '#1c1917',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#fde68a',
+      lightIntensity,
+      lightDistance: isActivated ? 6.5 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? '💡 Switch Light OFF [E]' : '💡 Switch Light ON [E]'
+    };
+  }
+
+  // 4. Audio / Radio / Dictaphone / Record Player / Telephone / Intercom / Alarm Clock
+  if (
+    sub.includes('radio') ||
+    sub.includes('record_player') ||
+    sub.includes('phonograph') ||
+    sub.includes('cassette') ||
+    sub.includes('dictaphone') ||
+    sub.includes('phone') ||
+    sub.includes('intercom') ||
+    sub.includes('alarm_clock')
+  ) {
+    const screenEmissiveIntensity = isActivated ? 0.85 : 0;
+    const lightIntensity = isActivated ? 0.55 : 0;
+    const statusLabel = isActivated ? 'ACTIVE · TRANSMITTING' : 'IDLE · SILENT';
+    return {
+      isInteractive: true,
+      interactionKind: 'audio_device',
+      isActivated,
+      screenState: 'none',
+      screenColorHex: isActivated ? '#fef08a' : asset.color || '#5e4c2e',
+      screenEmissiveHex: isActivated ? '#f59e0b' : '#000000',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#f59e0b',
+      lightIntensity,
+      lightDistance: isActivated ? 2.8 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? '📻 Stop / Mute [E]' : '📻 Activate Device [E]'
+    };
+  }
+
+  // 5. Bathroom & Kitchen Plumbing (Sink, Bathtub, Shower, Toilet)
+  if (
+    sub.includes('sink') ||
+    sub.includes('vanity') ||
+    sub.includes('bathtub') ||
+    sub.includes('tub') ||
+    sub.includes('shower') ||
+    sub.includes('toilet') ||
+    sub.includes('faucet')
+  ) {
+    const screenEmissiveIntensity = isActivated ? 0.45 : 0;
+    const lightIntensity = isActivated ? 0.4 : 0;
+    const statusLabel = isActivated ? 'WATER RUNNING' : 'VALVE CLOSED';
+    return {
+      isInteractive: true,
+      interactionKind: 'plumbing_fixture',
+      isActivated,
+      screenState: 'none',
+      screenColorHex: isActivated ? '#bae6fd' : asset.color || '#877f70',
+      screenEmissiveHex: isActivated ? '#38bdf8' : '#000000',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#bae6fd',
+      lightIntensity,
+      lightDistance: isActivated ? 2.5 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? '🚰 Turn Water OFF [E]' : '🚰 Turn Water ON [E]'
+    };
+  }
+
+  // 6. Kitchen & Building Appliances (Stove, Fridge, Microwave, Toaster, Coffee Maker, Radiator, AC, Washer/Dryer)
+  if (
+    cat === 'appliance' ||
+    sub.includes('fridge') ||
+    sub.includes('refrigerator') ||
+    sub.includes('range') ||
+    sub.includes('stove') ||
+    sub.includes('oven') ||
+    sub.includes('microwave') ||
+    sub.includes('toaster') ||
+    sub.includes('coffee') ||
+    sub.includes('kettle') ||
+    sub.includes('radiator') ||
+    sub.includes('washer') ||
+    sub.includes('dryer') ||
+    sub.includes('ac') ||
+    sub.includes('vending')
+  ) {
+    const screenEmissiveIntensity = isActivated ? 0.9 : 0;
+    const lightIntensity = isActivated ? 0.85 : 0;
+    const statusLabel = isActivated ? 'RUNNING · ON' : 'OFF';
+    return {
+      isInteractive: true,
+      interactionKind: 'appliance',
+      isActivated,
+      screenState: 'none',
+      screenColorHex: isActivated ? '#fde68a' : asset.color || '#7d7559',
+      screenEmissiveHex: isActivated ? '#f97316' : '#000000',
+      screenEmissiveIntensity,
+      emissiveIntensity: screenEmissiveIntensity,
+      emitsLight: lightIntensity > 0,
+      lightColorHex: '#fdba74',
+      lightIntensity,
+      lightDistance: isActivated ? 3.8 : 0,
+      statusLabel,
+      statusSummary: statusLabel,
+      actionPromptLabel: isActivated ? '⚡ Turn Appliance OFF [E]' : '⚡ Turn Appliance ON [E]'
+    };
+  }
+
+  const screenEmissiveIntensity = isActivated ? 0.35 : 0;
+  const statusLabel = isActivated ? 'INSPECTED · ACTIVE' : 'STANDBY';
+  return {
+    isInteractive: true,
+    interactionKind: 'general_prop',
+    isActivated,
+    screenState: 'none',
+    screenColorHex: isActivated ? '#fef3c7' : asset.color || '#8a8170',
+    screenEmissiveHex: isActivated ? '#d97706' : '#000000',
+    screenEmissiveIntensity,
+    emissiveIntensity: screenEmissiveIntensity,
+    emitsLight: false,
+    lightColorHex: '#fde68a',
+    lightIntensity: 0,
+    lightDistance: 0,
+    statusLabel,
+    statusSummary: statusLabel,
+    actionPromptLabel: isActivated ? 'Reset State [E]' : 'Interact [E]'
+  };
+}
+
+/**
+ * Pure helper that toggles an asset's interactive state (`isActivated`) when interacted with ([E] or click),
+ * updating composite sub-parts (e.g., turning a TV's screen mesh bright white `#ffffff` "on") and returning
+ * the updated asset + visual state + status banner message.
+ */
+export function toggleAssetInteractiveState(asset: PlacedAsset): {
+  updatedAsset: PlacedAsset;
+  visualState: AssetInteractionVisualState;
+  bannerMessage: string;
+  message: string;
+} {
+  const nextActivated = !asset.isActivated;
+  const draft: PlacedAsset = {
+    ...asset,
+    isActivated: nextActivated
+  };
+  const visualState = computeAssetInteractionVisualState(draft);
+  draft.interactionStateLabel = visualState.statusLabel;
+
+  // Update compositeParts if present (e.g. phosphor_crt_screen, screen, shade, lens, coil, display)
+  if (draft.compositeParts && draft.compositeParts.length > 0) {
+    let matchedScreenOrBulb = false;
+    draft.compositeParts = draft.compositeParts.map((part) => {
+      const pid = (part.id || '').toLowerCase();
+      if (
+        visualState.interactionKind === 'tv_screen' &&
+        (pid.includes('screen') || pid.includes('crt') || pid.includes('phosphor') || pid.includes('display'))
+      ) {
+        matchedScreenOrBulb = true;
+        return {
+          ...part,
+          color: nextActivated ? '#ffffff' : '#18221c',
+          emissive: nextActivated ? '#ffffff' : '#0a120d',
+          roughness: nextActivated ? 0.1 : 0.28
+        };
+      }
+      if (
+        visualState.interactionKind === 'computer_monitor' &&
+        (pid.includes('screen') || pid.includes('phosphor') || pid.includes('display'))
+      ) {
+        matchedScreenOrBulb = true;
+        return {
+          ...part,
+          color: nextActivated ? '#f8fafc' : '#1f2e23',
+          emissive: nextActivated ? '#e2e8f0' : '#0f172a'
+        };
+      }
+      if (
+        visualState.interactionKind === 'lamp_light' &&
+        (pid.includes('shade') || pid.includes('bulb') || pid.includes('lens') || pid.includes('face') || pid.includes('globe'))
+      ) {
+        matchedScreenOrBulb = true;
+        return {
+          ...part,
+          emissive: nextActivated ? '#fbbf24' : undefined
+        };
+      }
+      if (
+        visualState.interactionKind === 'appliance' &&
+        (pid.includes('coil') || pid.includes('burner') || pid.includes('fascia') || pid.includes('display'))
+      ) {
+        matchedScreenOrBulb = true;
+        return {
+          ...part,
+          emissive: nextActivated ? '#f97316' : undefined
+        };
+      }
+      return part;
+    });
+
+    // If a TV had compositeParts without an explicit screen part, append a front white screen part
+    if (visualState.interactionKind === 'tv_screen' && !matchedScreenOrBulb) {
+      const [w, h, d] = draft.dimensions;
+      draft.compositeParts = [
+        ...draft.compositeParts,
+        {
+          id: 'phosphor_crt_screen',
+          shape: 'box',
+          offset: [0, h * 0.52, d * 0.48],
+          size: [w * 0.68, h * 0.54, 0.04],
+          color: nextActivated ? '#ffffff' : '#18221c',
+          roughness: nextActivated ? 0.1 : 0.25,
+          metalness: 0.2,
+          emissive: nextActivated ? '#ffffff' : '#0a120d'
+        }
+      ];
+    }
+  }
+
+  const bannerMessage =
+    visualState.interactionKind === 'tv_screen'
+      ? nextActivated
+        ? `📺 Interacted [E] with "${asset.name}" — TV Screen turned white "ON" (${visualState.statusLabel})!`
+        : `📺 Interacted [E] with "${asset.name}" — TV Screen turned OFF.`
+      : `Interacted [E] with "${asset.name}" — State: ${visualState.statusLabel}!`;
+
+  return {
+    updatedAsset: draft,
+    visualState,
+    bannerMessage,
+    message: bannerMessage
+  };
+}
+
+export {
+  ASSET_VISUAL_DESIGN_FAMILIES,
+  getAssetVisualDesignVariants,
+  swapAssetVisualDesign
+} from './apartmentUpdated1990sData';
+
+/**
+ * Error-handling wrapper for any UI button/select callback that interacts with `ASSET_CATALOG`
+ * or individual asset variants (conditionVariant, 1978/1990s era swaps, visual design swaps).
+ * Prevents UI crashes during rapid toggling or transient undefined state.
+ */
+export function safeExecuteCatalogOrVariantCallback<T>(
+  callback: () => T,
+  fallbackValue: T,
+  contextLabel = 'AssetCatalogOrVariantAction',
+  onErrorBanner?: (errorMessage: string) => void
+): T {
+  try {
+    if (typeof callback !== 'function') {
+      return fallbackValue;
+    }
+    return callback();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(`[SafeVariantGuard:${contextLabel}] Prevented UI crash during rapid toggle:`, detail);
+    if (typeof onErrorBanner === 'function') {
+      try {
+        onErrorBanner(`Protected against rapid toggle error (${contextLabel}): ${detail}`);
+      } catch {
+        // Ignore nested banner errors
+      }
+    }
+    return fallbackValue;
+  }
+}
+
+/**
+ * ============================================================================
+ * HOTEL AMBIENCE & HIGH SUSPICION ROOM DETECTION SYSTEM
+ * ============================================================================
+ * Evaluates whether the player has entered a room containing high suspicionLevel
+ * agents (e.g. >= 60%) to dynamically trigger the background loop of hotel
+ * ambience (distant creaks, muffled footsteps, and faint whispering).
+ */
+
+export interface RoomSuspicionState {
+  hasHighSuspicion: boolean;
+  highestSuspicion: number;
+  threshold: number;
+  triggeringAgents: HotelAgentProfile[];
+  allRoomAgents: HotelAgentProfile[];
+  roomLabel: string;
+  floor: FloorId;
+  ambienceLoopActive: boolean;
+  reason: string;
+}
+
+export function normalizeRoomString(room: string): string {
+  if (!room) return '';
+  return room
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Evaluates whether an agent belongs to a room based on roomNumber label match,
+ * floor match, or proximity coordinates.
+ */
+export function isAgentInRoom(
+  agent: HotelAgentProfile,
+  roomLabel: string,
+  floor: FloorId,
+  playerPos?: [number, number, number]
+): boolean {
+  if (!agent || agent.role === 'helper_entity' || agent.status === 'vanished') {
+    return false;
+  }
+
+  // Floor must match
+  if (agent.floor !== floor) {
+    return false;
+  }
+
+  const normTarget = normalizeRoomString(roomLabel);
+  const normAgentRoom = normalizeRoomString(agent.roomNumber || '');
+
+  // Direct label equality or bidirectional substring inclusion
+  if (normAgentRoom && normTarget) {
+    if (normAgentRoom === normTarget) return true;
+    if (normTarget.includes(normAgentRoom) || normAgentRoom.includes(normTarget)) {
+      return true;
+    }
+    // Room number digits match (e.g. '101' in 'Room 101' and 'Suite 101')
+    const agentDigits = normAgentRoom.match(/\d{3}/)?.[0];
+    const targetDigits = normTarget.match(/\d{3}/)?.[0];
+    if (agentDigits && targetDigits && agentDigits === targetDigits) {
+      return true;
+    }
+  }
+
+  // Position proximity fallback if player position is provided
+  if (playerPos && Array.isArray(agent.position) && agent.position.length >= 3) {
+    const dist = Math.hypot(agent.position[0] - playerPos[0], agent.position[2] - playerPos[2]);
+    if (dist <= 6.5) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Evaluates the suspicion level of all agents in a given room.
+ * When one or more agents have suspicionLevel >= threshold, flags hasHighSuspicion: true.
+ */
+export function evaluateRoomSuspicionLevel(
+  roomLabel: string,
+  floor: FloorId,
+  agents: HotelAgentProfile[],
+  playerPos?: [number, number, number],
+  threshold = 60
+): RoomSuspicionState {
+  const safeAgents = Array.isArray(agents) ? agents : [];
+  const safeThreshold = Math.max(10, Math.min(100, threshold));
+
+  const allRoomAgents = safeAgents.filter((agent) =>
+    isAgentInRoom(agent, roomLabel, floor, playerPos)
+  );
+
+  const triggeringAgents = allRoomAgents
+    .filter((agent) => (agent.suspicionLevel ?? 0) >= safeThreshold)
+    .sort((a, b) => (b.suspicionLevel ?? 0) - (a.suspicionLevel ?? 0));
+
+  const highestSuspicion = triggeringAgents.length > 0
+    ? (triggeringAgents[0].suspicionLevel ?? 0)
+    : (allRoomAgents.length > 0
+        ? Math.max(...allRoomAgents.map((a) => a.suspicionLevel ?? 0))
+        : 0);
+
+  const hasHighSuspicion = triggeringAgents.length > 0;
+
+  let reason = 'No agents present in room';
+  if (allRoomAgents.length > 0) {
+    if (hasHighSuspicion) {
+      const names = triggeringAgents.map((a) => `${a.name} (${a.suspicionLevel}%)`).join(', ');
+      reason = `High suspicion detected (${highestSuspicion}% >= ${safeThreshold}% threshold): ${names}`;
+    } else {
+      reason = `Room agents below threshold (${highestSuspicion}% < ${safeThreshold}%)`;
+    }
+  }
+
+  return {
+    hasHighSuspicion,
+    highestSuspicion,
+    threshold: safeThreshold,
+    triggeringAgents,
+    allRoomAgents,
+    roomLabel,
+    floor,
+    ambienceLoopActive: hasHighSuspicion,
+    reason
+  };
+}
+
+/**
+ * Procedural SFX output spec for the Hotel Paranormal Ambience loop
+ * (distant timber creaks, muffled footsteps, and faint whispering).
+ */
+export function computeHotelAmbienceSpec(options?: {
+  intensity?: number;
+}): ProceduralSfxOutput {
+  const intensity = Math.max(0.1, Math.min(1.0, options?.intensity ?? 0.6));
+  const baseFreq = Math.round(48 + intensity * 6);
+  const filterCutoff = Math.round(520 + intensity * 180);
+
+  return {
+    id: `sfx_hotel_ambience_loop_${Math.round(intensity * 100)}`,
+    name: 'Hotel Ambience Loop (Creaks, Footsteps, Whispers)',
+    type: 'custom',
+    durationSeconds: 3.5,
+    oscillatorType: 'sine',
+    baseFrequency: baseFreq,
+    pitchBend: 16,
+    attack: 0.6,
+    decay: 1.1,
+    sustain: 0.75,
+    release: 1.2,
+    filterType: 'bandpass',
+    filterCutoff,
+    filterResonance: 3.4,
+    noiseMix: 0.62,
+    noiseColor: 'pink',
+    fmRatio: 1.82,
+    fmDepth: Math.round(42 * intensity),
+    subOscMix: 0.52,
+    distortion: 0.08,
+    reverb: 0.72,
+    reverbPreset: 'grand_lobby'
+  };
 }

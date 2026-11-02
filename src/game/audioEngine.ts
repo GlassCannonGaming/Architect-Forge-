@@ -21,6 +21,7 @@ export type SoundEffectType =
   | 'clue_discover'
   | 'heartbeat'
   | 'clock_tick'
+  | 'hotel_ambience'
   | 'custom';
 
 import {
@@ -346,6 +347,30 @@ export const BUILTIN_SOUND_EFFECTS: Record<SoundEffectType, SoundEffectSpec> = {
     distortion: 0.1,
     reverb: 0.1
   },
+  hotel_ambience: {
+    id: 'sfx_hotel_ambience',
+    name: 'Hotel Ambience Loop (Creaks & Whispers)',
+    type: 'hotel_ambience',
+    durationSeconds: 3.4,
+    oscillatorType: 'sine',
+    baseFrequency: 48,
+    pitchBend: 16,
+    attack: 0.7,
+    decay: 1.1,
+    sustain: 0.75,
+    release: 1.2,
+    filterType: 'bandpass',
+    filterCutoff: 640,
+    filterResonance: 3.2,
+    noiseMix: 0.65,
+    noiseColor: 'pink',
+    fmRatio: 1.85,
+    fmDepth: 55,
+    subOscMix: 0.52,
+    distortion: 0.08,
+    reverb: 0.72,
+    reverbPreset: 'grand_lobby'
+  },
   custom: {
     id: 'sfx_custom_init',
     name: 'Atmospheric Corridor Resonance',
@@ -369,6 +394,29 @@ export const BUILTIN_SOUND_EFFECTS: Record<SoundEffectType, SoundEffectSpec> = {
 
 // Built-in Background Music Presets
 export const BUILTIN_BGM_TRACKS: MusicTrackSpec[] = [
+  {
+    id: 'bgm_hotel_ambience',
+    title: 'Hotel Paranormal Ambience Loop',
+    mood: 'Distant timber creaks, muffled footsteps, and faint whispering across hollow walls',
+    bpm: 48,
+    scale: 'diminished',
+    rootNote: 'C',
+    chords: ['Cm', 'Cdim', 'Fm', 'G7b9'],
+    droneFreq: 48.0,
+    reverbAmount: 0.75,
+    filterCutoff: 580,
+    melody: [
+      { note: 'C4', freq: 261.63, timeOffset: 0, duration: 2.5, velocity: 0.5 },
+      { note: 'D#4', freq: 311.13, timeOffset: 2.5, duration: 1.5, velocity: 0.45 },
+      { note: 'F#4', freq: 369.99, timeOffset: 4.0, duration: 2.0, velocity: 0.55 },
+      { note: 'G4', freq: 392.0, timeOffset: 6.0, duration: 2.0, velocity: 0.5 }
+    ],
+    bass: [
+      { note: 'C2', freq: 65.41, timeOffset: 0, duration: 4.0, velocity: 0.85 },
+      { note: 'F#2', freq: 92.5, timeOffset: 4.0, duration: 2.0, velocity: 0.8 },
+      { note: 'G2', freq: 98.0, timeOffset: 6.0, duration: 2.0, velocity: 0.85 }
+    ]
+  },
   {
     id: 'bgm_lobby_noir',
     title: 'Lobby Lounge Noir',
@@ -513,6 +561,23 @@ class AudioEngineSingleton {
   private bgmIntervalId: number | null = null;
   private scheduledVoices: Array<{ stop: () => void }> = [];
 
+  // Procedural Hotel Ambience Loop State (Creaks, Footsteps, Whispers)
+  private ambienceGain: GainNode | null = null;
+  private isAmbienceLoopActive = false;
+  private ambienceIntervalId: number | null = null;
+  private ambienceVoices: Array<{ stop: () => void }> = [];
+  private suspicionTriggerState: {
+    isActive: boolean;
+    suspicionLevel: number;
+    roomLabel: string;
+    agentName: string;
+  } = {
+    isActive: false,
+    suspicionLevel: 0,
+    roomLabel: '',
+    agentName: ''
+  };
+
   // Settings
   private masterVol = 0.8;
   private sfxVol = 0.85;
@@ -542,8 +607,12 @@ class AudioEngineSingleton {
       this.bgmGain = this.ctx.createGain();
       this.bgmGain.gain.setValueAtTime(this.bgmVol, this.ctx.currentTime);
 
+      this.ambienceGain = this.ctx.createGain();
+      this.ambienceGain.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+
       this.sfxGain.connect(this.masterCompressor);
       this.bgmGain.connect(this.masterCompressor);
+      this.ambienceGain.connect(this.masterCompressor);
       this.masterCompressor.connect(this.masterGain);
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
@@ -1168,6 +1237,248 @@ class AudioEngineSingleton {
       track: this.activeBgmTrack
     };
   }
+
+  /**
+   * Starts the continuous background loop of 'hotel ambience'
+   * (distant timber creaks, muffled footsteps, and faint whispering).
+   * Generates dynamic acoustic variations with sub-bass room tone,
+   * random creaking timber sweeps, filtered footsteps, and formant-filtered whispering.
+   */
+  public startHotelAmbienceLoop(options?: { intensity?: number; reason?: string }): void {
+    try {
+      const ctx = this.initContext();
+      if (!this.ambienceGain) return;
+
+      const intensity = Math.max(0.1, Math.min(1.0, options?.intensity ?? 0.65));
+      const now = ctx.currentTime;
+
+      // Smoothly fade in ambience bus
+      const targetVol = Math.max(0.2, Math.min(0.85, 0.35 + intensity * 0.45));
+      this.ambienceGain.gain.cancelScheduledValues(now);
+      this.ambienceGain.gain.setValueAtTime(Math.max(0.0001, this.ambienceGain.gain.value), now);
+      this.ambienceGain.gain.linearRampToValueAtTime(targetVol, now + 1.2);
+
+      if (this.isAmbienceLoopActive && this.ambienceIntervalId !== null) {
+        return; // Already running, volume updated
+      }
+
+      this.isAmbienceLoopActive = true;
+
+      // 1. Continuous Sub-Bass Room Drone & Resonant Boiler Hum (48Hz)
+      const droneOsc = ctx.createOscillator();
+      droneOsc.type = 'sine';
+      droneOsc.frequency.setValueAtTime(48.0, now);
+
+      const subDrone = ctx.createOscillator();
+      subDrone.type = 'triangle';
+      subDrone.frequency.setValueAtTime(96.0, now);
+      subDrone.detune.setValueAtTime(7, now);
+
+      const droneFilter = ctx.createBiquadFilter();
+      droneFilter.type = 'lowpass';
+      droneFilter.frequency.setValueAtTime(140, now);
+
+      const droneGain = ctx.createGain();
+      droneGain.gain.setValueAtTime(0.001, now);
+      droneGain.gain.linearRampToValueAtTime(0.12 * intensity, now + 1.5);
+
+      droneOsc.connect(droneFilter);
+      subDrone.connect(droneFilter);
+      droneFilter.connect(droneGain);
+      droneGain.connect(this.ambienceGain);
+
+      droneOsc.start(now);
+      subDrone.start(now);
+      this.ambienceVoices.push(
+        { stop: () => { try { droneOsc.stop(); } catch {} } },
+        { stop: () => { try { subDrone.stop(); } catch {} } }
+      );
+
+      // 2. Scheduler for procedural creaks, muffled footsteps, and faint whispering
+      const triggerAtmosphericEvent = () => {
+        if (!this.isAmbienceLoopActive || !this.ctx || !this.ambienceGain) return;
+        const actx = this.ctx;
+        const t = actx.currentTime;
+
+        // Event A: Distant Timber Creak (wooden structure settling)
+        if (Math.random() < 0.65) {
+          const creakOsc = actx.createOscillator();
+          creakOsc.type = 'sawtooth';
+          const startPitch = 85 + Math.random() * 55;
+          const endPitch = startPitch - (25 + Math.random() * 30);
+          creakOsc.frequency.setValueAtTime(startPitch, t);
+          creakOsc.frequency.exponentialRampToValueAtTime(Math.max(35, endPitch), t + 0.7);
+
+          const creakFilter = actx.createBiquadFilter();
+          creakFilter.type = 'bandpass';
+          creakFilter.Q.setValueAtTime(4.2, t);
+          creakFilter.frequency.setValueAtTime(320 + Math.random() * 260, t);
+
+          const creakPanner = actx.createStereoPanner();
+          creakPanner.pan.setValueAtTime((Math.random() * 2 - 1) * 0.75, t);
+
+          const creakGain = actx.createGain();
+          creakGain.gain.setValueAtTime(0.001, t);
+          creakGain.gain.linearRampToValueAtTime(0.08 * intensity, t + 0.15);
+          creakGain.gain.exponentialRampToValueAtTime(0.0008, t + 0.75);
+
+          creakOsc.connect(creakFilter);
+          creakFilter.connect(creakPanner);
+          creakPanner.connect(creakGain);
+          creakGain.connect(this.ambienceGain);
+
+          creakOsc.start(t);
+          creakOsc.stop(t + 0.8);
+        }
+
+        // Event B: Muffled Footstep pacing (low frequency thump from floor/ceiling)
+        if (Math.random() < 0.7) {
+          const stepDelay = Math.random() * 0.8;
+          const stepTime = t + stepDelay;
+
+          // Pair of footsteps (left then right heel)
+          [0, 0.42 + Math.random() * 0.1].forEach((offset, idx) => {
+            const sTime = stepTime + offset;
+            const stepOsc = actx.createOscillator();
+            stepOsc.type = 'sine';
+            stepOsc.frequency.setValueAtTime(58 - idx * 4, sTime);
+            stepOsc.frequency.exponentialRampToValueAtTime(36, sTime + 0.12);
+
+            const stepFilter = actx.createBiquadFilter();
+            stepFilter.type = 'lowpass';
+            stepFilter.frequency.setValueAtTime(180, sTime);
+
+            const stepPanner = actx.createStereoPanner();
+            stepPanner.pan.setValueAtTime(idx === 0 ? -0.35 : 0.35, sTime);
+
+            const stepGain = actx.createGain();
+            stepGain.gain.setValueAtTime(0.001, sTime);
+            stepGain.gain.linearRampToValueAtTime(0.14 * intensity, sTime + 0.02);
+            stepGain.gain.exponentialRampToValueAtTime(0.001, sTime + 0.16);
+
+            stepOsc.connect(stepFilter);
+            stepFilter.connect(stepPanner);
+            stepPanner.connect(stepGain);
+            stepGain.connect(this.ambienceGain!);
+
+            stepOsc.start(sTime);
+            stepOsc.stop(sTime + 0.18);
+          });
+        }
+
+        // Event C: Faint Whispering (formant-filtered breathing through walls)
+        if (Math.random() < 0.8) {
+          const whisperDur = 1.4 + Math.random() * 0.9;
+          const noiseBuf = this.createShapedNoiseBuffer(actx, whisperDur, 'pink', 0.8);
+          const noiseSrc = actx.createBufferSource();
+          noiseSrc.buffer = noiseBuf;
+
+          // Dual formant bandpasses mimicking human whisper sibilants ("shhh / esss")
+          const f1 = actx.createBiquadFilter();
+          f1.type = 'bandpass';
+          f1.Q.setValueAtTime(5.0, t);
+          f1.frequency.setValueAtTime(920 + (Math.random() * 2 - 1) * 80, t);
+
+          const f2 = actx.createBiquadFilter();
+          f2.type = 'bandpass';
+          f2.Q.setValueAtTime(4.5, t);
+          f2.frequency.setValueAtTime(2350 + (Math.random() * 2 - 1) * 150, t);
+
+          // LFO tremolo modulation
+          const whisperGain = actx.createGain();
+          whisperGain.gain.setValueAtTime(0.001, t);
+          whisperGain.gain.linearRampToValueAtTime(0.075 * intensity, t + whisperDur * 0.35);
+          whisperGain.gain.exponentialRampToValueAtTime(0.001, t + whisperDur);
+
+          const whisperPanner = actx.createStereoPanner();
+          whisperPanner.pan.setValueAtTime((Math.random() * 2 - 1) * 0.55, t);
+
+          noiseSrc.connect(f1);
+          noiseSrc.connect(f2);
+          f1.connect(whisperGain);
+          f2.connect(whisperGain);
+          whisperGain.connect(whisperPanner);
+          whisperPanner.connect(this.ambienceGain);
+
+          noiseSrc.start(t);
+          noiseSrc.stop(t + whisperDur + 0.05);
+        }
+      };
+
+      // Fire immediately and then repeat every 2.6s
+      triggerAtmosphericEvent();
+      this.ambienceIntervalId = window.setInterval(triggerAtmosphericEvent, 2600);
+    } catch (err) {
+      console.warn('AudioEngine startHotelAmbienceLoop error:', err);
+    }
+  }
+
+  /**
+   * Smoothly stops the hotel ambience loop with an exponential fade.
+   */
+  public stopHotelAmbienceLoop(fadeSec = 1.2): void {
+    if (!this.isAmbienceLoopActive) return;
+    this.isAmbienceLoopActive = false;
+
+    if (this.ambienceIntervalId !== null) {
+      clearInterval(this.ambienceIntervalId);
+      this.ambienceIntervalId = null;
+    }
+
+    if (this.ambienceGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.ambienceGain.gain.cancelScheduledValues(now);
+      this.ambienceGain.gain.setValueAtTime(Math.max(0.0001, this.ambienceGain.gain.value), now);
+      this.ambienceGain.gain.linearRampToValueAtTime(0.0001, now + Math.max(0.2, fadeSec));
+    }
+
+    window.setTimeout(() => {
+      if (!this.isAmbienceLoopActive) {
+        this.ambienceVoices.forEach((v) => v.stop());
+        this.ambienceVoices = [];
+      }
+    }, Math.max(200, fadeSec * 1000 + 50));
+  }
+
+  /**
+   * Dynamically triggers or releases the hotel ambience loop when entering/leaving
+   * a room with high-suspicion agents.
+   */
+  public triggerSuspicionAmbience(
+    active: boolean,
+    options?: { suspicionLevel?: number; roomLabel?: string; agentName?: string }
+  ): void {
+    this.suspicionTriggerState = {
+      isActive: active,
+      suspicionLevel: options?.suspicionLevel ?? 0,
+      roomLabel: options?.roomLabel ?? '',
+      agentName: options?.agentName ?? ''
+    };
+
+    if (active) {
+      const intensity = (options?.suspicionLevel ?? 60) / 100;
+      this.startHotelAmbienceLoop({
+        intensity,
+        reason: `suspicion_${options?.agentName || 'unknown'}`
+      });
+    } else {
+      this.stopHotelAmbienceLoop(1.5);
+    }
+  }
+
+  public getSuspicionAmbienceState(): {
+    isActive: boolean;
+    suspicionLevel: number;
+    roomLabel: string;
+    agentName: string;
+  } {
+    return { ...this.suspicionTriggerState };
+  }
+
+  public isHotelAmbiencePlaying(): boolean {
+    return this.isAmbienceLoopActive;
+  }
+
 
   /**
    * Offline renders a SoundEffectSpec to a 16-bit Stereo PCM WAV Blob with FM, shaped noise, state-variable filter, and stereo Schroeder reverb.

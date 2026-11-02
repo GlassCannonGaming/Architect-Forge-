@@ -10,7 +10,8 @@ import {
   inferDefaultAssetBlueprintTags,
   parseBlueprintTagsInput,
   DEFAULT_CHARACTER_VOICE_PROFILES,
-  APARTMENT_BUILDING_CATALOG_BLUEPRINTS
+  APARTMENT_BUILDING_CATALOG_BLUEPRINTS,
+  AssetConditionVariant
 } from './rules';
 
 export interface AssetBlueprint {
@@ -30,7 +31,7 @@ export interface AssetBlueprint {
   animationSpec?: string;
   soundPresetId?: string;
   pairedVariantId?: string;
-  conditionVariant?: 'pristine' | 'unkempt';
+  conditionVariant?: AssetConditionVariant;
   era?: '1970s' | '1980s' | '1990s' | 'timeless';
   canUpdateInHotel?: boolean;
   structuralConstraint?: string;

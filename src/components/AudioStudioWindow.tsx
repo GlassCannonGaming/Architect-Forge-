@@ -10,7 +10,11 @@ import {
 import {
   PlacedAsset,
   StudioWindowId,
-  StudioWindowState
+  StudioWindowState,
+  FloorId,
+  HotelAgentProfile,
+  evaluateRoomSuspicionLevel,
+  RoomSuspicionState
 } from '../game/rules';
 import { AssetBlueprint } from '../game/hotelData';
 import { StudioWindowFrame } from './StudioWindowFrame';
@@ -40,6 +44,12 @@ interface AudioStudioWindowProps {
   activeBlueprintSubType?: string | null;
   onAssignSoundToAsset?: (assetId: string, soundPresetId: string, soundName: string) => void;
   onAssignSoundToBlueprint?: (subType: string, soundPresetId: string, soundName: string) => void;
+  currentRoomLabel?: string;
+  currentFloor?: FloorId;
+  agents?: HotelAgentProfile[];
+  suspicionAmbienceThreshold?: number;
+  onUpdateSuspicionThreshold?: (threshold: number) => void;
+  onUpdateAgentSuspicion?: (agentId: string, nextSuspicion: number) => void;
 }
 
 export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
@@ -57,7 +67,13 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
   selectedAssetId = null,
   activeBlueprintSubType = null,
   onAssignSoundToAsset,
-  onAssignSoundToBlueprint
+  onAssignSoundToBlueprint,
+  currentRoomLabel = 'Grand Brick Lobby',
+  currentFloor = 'lobby',
+  agents = [],
+  suspicionAmbienceThreshold = 60,
+  onUpdateSuspicionThreshold,
+  onUpdateAgentSuspicion
 }) => {
   const [activeTab, setActiveTab] = useState<'sfx' | 'bgm' | 'settings'>('sfx');
 
@@ -145,16 +161,67 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
     };
   }, [isBgmPlaying]);
 
-  // Sync BGM playing state from audio engine
+  // Ambience Loop & Suspicion State
+  const [isAmbiencePlaying, setIsAmbiencePlaying] = useState(false);
+  const [suspicionTriggerInfo, setSuspicionTriggerInfo] = useState({
+    isActive: false,
+    suspicionLevel: 0,
+    roomLabel: '',
+    agentName: ''
+  });
+
+  // Real-time evaluation of agents inside current room against suspicion threshold
+  const roomSuspicion: RoomSuspicionState = evaluateRoomSuspicionLevel(
+    currentRoomLabel,
+    currentFloor,
+    agents,
+    undefined,
+    suspicionAmbienceThreshold
+  );
+
+  // Sync BGM and Ambience loop playing state from audio engine
   useEffect(() => {
     const checkState = () => {
       const state = audioEngine.getActiveBgm();
       setIsBgmPlaying(state.isPlaying);
+      setIsAmbiencePlaying(audioEngine.isHotelAmbiencePlaying());
+      setSuspicionTriggerInfo(audioEngine.getSuspicionAmbienceState());
     };
     checkState();
     const interval = setInterval(checkState, 400);
     return () => clearInterval(interval);
   }, []);
+
+  // Handle Manual Ambience Loop Toggle
+  const handleToggleAmbienceLoop = () => {
+    if (isAmbiencePlaying) {
+      audioEngine.stopHotelAmbienceLoop();
+      setIsAmbiencePlaying(false);
+      setSfxFeedback('Stopped Hotel Ambience Loop.');
+    } else {
+      audioEngine.startHotelAmbienceLoop({ intensity: 0.75, reason: 'soundboard_manual' });
+      setIsAmbiencePlaying(true);
+      setSfxFeedback('Playing Hotel Ambience Loop (Creaks, Footsteps, Whispers).');
+    }
+  };
+
+  // Handle Test Suspicion Spike
+  const handleSimulateSuspicionSpike = () => {
+    const targetAgent =
+      roomSuspicion.allRoomAgents[0] || agents.find((a) => a.role !== 'helper_entity');
+    if (targetAgent && onUpdateAgentSuspicion) {
+      onUpdateAgentSuspicion(targetAgent.id, 85);
+      setSfxFeedback(`Spiked ${targetAgent.name}'s suspicion to 85% in ${currentRoomLabel}!`);
+    } else {
+      audioEngine.triggerSuspicionAmbience(true, {
+        suspicionLevel: 85,
+        roomLabel: currentRoomLabel,
+        agentName: targetAgent?.name || 'Suspicious Resident'
+      });
+      setIsAmbiencePlaying(true);
+      setSfxFeedback(`Simulated 85% Suspicion in ${currentRoomLabel} — Ambience Loop triggered!`);
+    }
+  };
 
   // Handle Preset Sound Selection
   const handleSelectPreset = (type: SoundEffectType) => {
@@ -1043,11 +1110,122 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
           </div>
         </div>
 
-        {/* 3. 3D Spatial HRTF Room Auditioning */}
+        {/* 3. Room Suspicion Ambience Radar & Sound Board Loop */}
+        <div
+          data-testid="soundboard-suspicion-ambience-card"
+          className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span>📻</span>
+              <span>3 · Suspicion Ambience Loop (Creaks, Footsteps, Whispers)</span>
+            </span>
+            <span
+              data-testid="soundboard-ambience-loop-badge"
+              className={`text-[9px] font-mono px-2 py-0.5 rounded-full border ${
+                isAmbiencePlaying
+                  ? suspicionTriggerInfo.isActive
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/60 animate-pulse'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+            >
+              {isAmbiencePlaying
+                ? suspicionTriggerInfo.isActive
+                  ? `🚨 ACTIVE (Room Suspicion: ${suspicionTriggerInfo.suspicionLevel}%)`
+                  : '🔊 ACTIVE (Manual Preview)'
+                : '⚪ STANDBY (Dormant)'}
+            </span>
+          </div>
+
+          {/* Current Room & Detected Agents Info */}
+          <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Current Room:</span>
+              <span className="font-bold text-slate-200 font-mono">
+                {currentRoomLabel} ({currentFloor.toUpperCase()})
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Room Residents:</span>
+              <span className="font-mono text-slate-300">
+                {roomSuspicion.allRoomAgents.length === 0 ? (
+                  <span className="text-slate-500">None present</span>
+                ) : (
+                  roomSuspicion.allRoomAgents
+                    .map((a) => `${a.name} (${a.suspicionLevel}%)`)
+                    .join(', ')
+                )}
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-400 leading-tight">
+              {roomSuspicion.hasHighSuspicion ? (
+                <span className="text-rose-400 font-medium">
+                  ⚠️ Trigger Met: Entering this room automatically triggers the hotel ambience loop!
+                </span>
+              ) : (
+                <span className="text-slate-400">
+                  Ambience triggers automatically when entering a room with an agent at or above the suspicion threshold.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Controls: Trigger/Stop, Threshold options, and Test Spike */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-1.5">
+              <button
+                type="button"
+                data-testid="soundboard-toggle-ambience-btn"
+                onClick={handleToggleAmbienceLoop}
+                className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${
+                  isAmbiencePlaying
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-xs'
+                    : 'bg-amber-600 hover:bg-amber-500 text-white shadow-xs'
+                }`}
+              >
+                <span>{isAmbiencePlaying ? '⏸ Stop Ambience Loop' : '▶ Play Ambience Loop'}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="soundboard-simulate-suspicion-btn"
+                onClick={handleSimulateSuspicionSpike}
+                className="py-1.5 px-2.5 rounded-xl bg-indigo-900/80 hover:bg-indigo-800 border border-indigo-700/60 text-indigo-200 text-xs font-bold transition-colors"
+                title="Simulate high suspicion level (85%) in current room to test audio trigger"
+              >
+                🧪 Spike Suspicion (85%)
+              </button>
+            </div>
+
+            {/* Threshold Selector */}
+            <div className="flex items-center justify-between gap-1 text-[10px] pt-0.5">
+              <span className="text-slate-400">Trigger Threshold:</span>
+              <div className="flex items-center gap-1">
+                {[50, 60, 70, 80].map((th) => (
+                  <button
+                    key={th}
+                    type="button"
+                    data-testid={`suspicion-threshold-${th}`}
+                    onClick={() => onUpdateSuspicionThreshold?.(th)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                      suspicionAmbienceThreshold === th
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-bold'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {th}%{th === 60 ? ' (Def)' : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. 3D Spatial HRTF Room Auditioning */}
         <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
-              3 · 3D HRTF Spatial Room Emitter
+              4 · 3D HRTF Spatial Room Emitter
             </span>
             <span className="text-[10px] font-mono text-indigo-300">Binaural PannerNode</span>
           </div>
@@ -1076,7 +1254,7 @@ export const AudioStudioWindow: React.FC<AudioStudioWindowProps> = ({
           </div>
         </div>
 
-        {/* 4. Quick Export & Mode Tool Switcher */}
+        {/* 5. Quick Export & Mode Tool Switcher */}
         <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             <button
